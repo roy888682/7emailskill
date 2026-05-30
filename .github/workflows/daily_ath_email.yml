@@ -1,11 +1,11 @@
 name: 📈 Daily ATH Stock Email
 
-# 22:00 UTC = 07:00 KST 다음날
-# 0-4 = 일~목(UTC) → 월~금(KST) 실행
 on:
   schedule:
-    - cron: '0 22 * * 0-4'
-  workflow_dispatch:          # 수동 실행 (테스트용)
+    # 22:00 UTC = 07:00 KST 다음날
+    # 1-5 = 월~금(UTC) → 화~토(KST) 실행 → 월~금 거래일 커버
+    - cron: '0 22 * * 1-5'
+  workflow_dispatch:
 
 jobs:
   send-ath-email:
@@ -31,7 +31,3 @@ jobs:
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           RECIPIENT_EMAIL:    ${{ secrets.RECIPIENT_EMAIL }}
         run: python src/main.py
-
-      - name: 🔔 실패 시 알림
-        if: failure()
-        run: echo "❌ ATH 이메일 발송 실패 — Actions 로그를 확인하세요"
