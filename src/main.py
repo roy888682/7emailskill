@@ -4,39 +4,55 @@ Daily ATH Stock Email
 미국(S&P 500) + 한국(KOSPI/KOSDAQ) 52주 신고가 종목을 매일 이메일로 발송
 """
 
-import os
-import smtplib
-import logging
+import os, smtplib, logging
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from datetime import datetime, timedelta
+from io import StringIO
 
 import pandas as pd
 import yfinance as yf
-from pykrx import stock as krx
+import requests
+from bs4 import BeautifulSoup
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
 
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+    "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8",
+}
 
 # ─────────────────────────────────────────────
 # 1. 미국 — S&P 500 신고가 종목
 # ─────────────────────────────────────────────
 
-def get_sp500_tickers():
-    df = pd.read_html("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")[0]
-    return df["Symbol"].str.replace(".", "-", regex=False).tolist()
-
+# Wikipedia 차단 우회: 티커 직접 내장 (S&P 500 주요 100종목)
+SP500_TICKERS = [
+    "AAPL","MSFT","NVDA","AMZN","META","GOOGL","GOOG","TSLA","BRK-B","AVGO",
+    "JPM","LLY","V","UNH","XOM","MA","JNJ","PG","HD","COST","MRK","ABBV",
+    "CVX","CRM","BAC","NFLX","AMD","PEP","KO","TMO","WMT","ORCL","CSCO",
+    "ACN","MCD","ABT","ADBE","LIN","DHR","NEE","TXN","PM","QCOM","WFC","IBM",
+    "INTU","GE","SPGI","RTX","CAT","AMGN","ISRG","AXP","CMCSA","BX","LOW",
+    "VRTX","GS","SYK","BKNG","T","TJX","SCHW","UBER","MDT","ELV","PLD","BSX",
+    "REGN","CB","ADI","DE","MU","LRCX","AMAT","KLAC","PANW","SO","ADP","DUK",
+    "CI","MO","SHW","ZTS","PGR","USB","MMC","MDLZ","TGT","EOG","HUM","ITW",
+    "NOC","HCA","CDNS","SNPS","MCO","CME","FDX","CL","APD","ICE","ETN","AON",
+]
 
 def get_us_ath_stocks():
-    tickers = get_sp500_tickers()
     start = (datetime.now() - timedelta(days=380)).strftime("%Y-%m-%d")
-    log.info(f"미국 {len(tickers)}종목 다운로드 중...")
+    log.info(f"미국 {len(SP500_TICKERS)}종목 다운로드 중...")
 
-    raw = yf.download(tickers, start=start, progress=False, auto_adjust=True, group_by="ticker")
+    try:
+        raw = yf.download(SP500_TICKERS, start=start, progress=False,
+                          auto_adjust=True, group_by="ticker")
+    except Exception as e:
+        log.error(f"yfinance 오류: {e}")
+        return []
 
     results = []
-    for ticker in tickers:
+    for ticker in SP500_TICKERS:
         try:
             try:
                 series = raw[ticker]["Close"].dropna()
@@ -66,44 +82,71 @@ def get_us_ath_stocks():
 
 
 # ─────────────────────────────────────────────
-# 2. 한국 — KOSPI / KOSDAQ 신고가 종목
+# 2. 한국 — 네이버 금융 신고가 스크래핑
 # ─────────────────────────────────────────────
 
-def get_korea_ath_stocks(top_n=150):
-    today = datetime.now().strftime("%Y%m%d")
-    start = (datetime.now() - timedelta(days=380)).strftime("%Y%m%d")
-
+def _scrape_naver_high(sosok: str, market_name: str) -> list[dict]:
+    """네이버 금융 신고가 페이지 스크래핑 (sosok=0:KOSPI, 1:KOSDAQ)"""
     results = []
-    for market in ["KOSPI", "KOSDAQ"]:
-        try:
-            tickers = krx.get_market_ticker_list(today, market=market)[:top_n]
-        except Exception as e:
-            log.error(f"{market} 티커 조회 실패: {e}")
-            continue
+    naver_headers = {**HEADERS, "Referer": "https://finance.naver.com/sise/"}
 
-        log.info(f"{market} {len(tickers)}종목 조회 중...")
-        for ticker in tickers:
-            try:
-                df = krx.get_market_ohlcv_by_date(start, today, ticker)
-                if df.empty or len(df) < 10:
+    for page in range(1, 6):
+        url = f"https://finance.naver.com/sise/sise_high.nhn?sosok={sosok}&page={page}"
+        try:
+            r = requests.get(url, headers=naver_headers, timeout=15)
+            r.encoding = "euc-kr"
+            soup = BeautifulSoup(r.text, "html.parser")
+
+            table = soup.find("table", class_="type_2")
+            if not table:
+                break
+
+            rows = table.find_all("tr")
+            has_data = False
+
+            for row in rows:
+                cols = row.find_all("td")
+                if len(cols) < 6:
                     continue
 
-                last = float(df["종가"].iloc[-1])
-                prev = float(df["종가"].iloc[-2])
-                high = float(df["고가"].max())
+                name_tag = cols[0].find("a")
+                if not name_tag:
+                    continue
 
-                if last >= high * 0.995:
-                    name = krx.get_market_ticker_name(ticker)
+                name = name_tag.text.strip()
+                price_raw = cols[1].text.strip().replace(",", "").replace(" ", "")
+                pct_raw   = cols[3].text.strip().replace("%", "").replace("+", "").replace(" ", "").replace("\xa0", "")
+
+                if not name or not price_raw.isdigit():
+                    continue
+
+                try:
                     results.append({
-                        "ticker": ticker,
+                        "ticker": "-",
                         "name":   name,
-                        "price":  int(last),
-                        "change": round((last - prev) / prev * 100, 2),
-                        "market": market,
+                        "price":  int(price_raw),
+                        "change": float(pct_raw) if pct_raw else 0.0,
+                        "market": market_name,
                     })
-            except Exception:
-                continue
+                    has_data = True
+                except Exception:
+                    continue
 
+            if not has_data:
+                break
+
+        except Exception as e:
+            log.error(f"네이버 스크래핑 오류 ({market_name} p{page}): {e}")
+            break
+
+    return results
+
+
+def get_korea_ath_stocks() -> list[dict]:
+    log.info("한국 신고가 스크래핑 중 (네이버 금융)...")
+    kospi  = _scrape_naver_high("0", "KOSPI")
+    kosdaq = _scrape_naver_high("1", "KOSDAQ")
+    results = kospi + kosdaq
     log.info(f"한국 신고가 {len(results)}종목 발견")
     return sorted(results, key=lambda x: -x["change"])
 
@@ -112,7 +155,7 @@ def get_korea_ath_stocks(top_n=150):
 # 3. 이메일 HTML 포맷
 # ─────────────────────────────────────────────
 
-def _table_html(stocks, title, currency):
+def _table_html(stocks: list, title: str, currency: str) -> str:
     if not stocks:
         return f"<h2 style='color:#333'>{title}</h2><p style='color:#888'>오늘 해당 종목 없음</p>"
 
@@ -148,14 +191,14 @@ def _table_html(stocks, title, currency):
     </table>"""
 
 
-def build_html_email(us, kr):
+def build_html_email(us: list, kr: list) -> str:
     today_str = datetime.now().strftime("%Y년 %m월 %d일")
     return f"""<!DOCTYPE html>
 <html lang="ko"><head><meta charset="UTF-8"></head>
 <body style="font-family:'Apple SD Gothic Neo',sans-serif;max-width:720px;margin:auto;padding:20px;background:#fafafa">
   <div style="background:#1a1a2e;color:#fff;padding:24px;border-radius:8px">
     <h1 style="margin:0;font-size:22px">📈 일일 신고가(ATH) 리포트</h1>
-    <p style="margin:6px 0 0;opacity:0.7;font-size:14px">{today_str} | 52주 신고가(±0.5%) 달성 종목</p>
+    <p style="margin:6px 0 0;opacity:0.7;font-size:14px">{today_str} | 52주 신고가 달성 종목</p>
   </div>
   <div style="background:#fff;padding:20px;border-radius:8px;margin-top:16px;box-shadow:0 1px 4px rgba(0,0,0,0.08)">
     <span style="background:#eaf4ff;border-radius:6px;padding:10px 20px;margin-right:12px;display:inline-block">
@@ -168,7 +211,7 @@ def build_html_email(us, kr):
     </span>
   </div>
   <div style="background:#fff;padding:20px;border-radius:8px;margin-top:16px;box-shadow:0 1px 4px rgba(0,0,0,0.08)">
-    {_table_html(us, "🇺🇸 미국 S&P 500", "USD")}
+    {_table_html(us, "🇺🇸 미국 S&P 500 (주요 100종목)", "USD")}
     <div style="margin-top:32px"></div>
     {_table_html(kr, "🇰🇷 한국 KOSPI / KOSDAQ", "KRW")}
   </div>
@@ -182,7 +225,7 @@ def build_html_email(us, kr):
 # 4. 이메일 발송
 # ─────────────────────────────────────────────
 
-def send_email(html):
+def send_email(html: str) -> None:
     user      = os.environ["GMAIL_USER"]
     pwd       = os.environ["GMAIL_APP_PASSWORD"]
     recipient = os.environ.get("RECIPIENT_EMAIL", "ykhan@dacpole.com")
@@ -207,8 +250,8 @@ def send_email(html):
 
 def main():
     log.info("=== 일일 ATH 리포트 시작 ===")
-    us = get_us_ath_stocks()
-    kr = get_korea_ath_stocks(top_n=150)
+    us   = get_us_ath_stocks()
+    kr   = get_korea_ath_stocks()
     html = build_html_email(us, kr)
     send_email(html)
     log.info(f"=== 완료: 미국 {len(us)}종목 / 한국 {len(kr)}종목 ===")
