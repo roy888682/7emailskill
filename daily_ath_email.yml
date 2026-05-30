@@ -1,0 +1,37 @@
+name: 📈 Daily ATH Stock Email
+
+# 22:00 UTC = 07:00 KST 다음날
+# 0-4 = 일~목(UTC) → 월~금(KST) 실행
+on:
+  schedule:
+    - cron: '0 22 * * 0-4'
+  workflow_dispatch:          # 수동 실행 (테스트용)
+
+jobs:
+  send-ath-email:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: ⬇️ 코드 체크아웃
+        uses: actions/checkout@v4
+
+      - name: 🐍 Python 3.11 세팅
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 📦 의존성 설치
+        run: pip install -r requirements.txt
+
+      - name: 📧 ATH 이메일 발송
+        env:
+          GMAIL_USER:         ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          RECIPIENT_EMAIL:    ${{ secrets.RECIPIENT_EMAIL }}
+        run: python src/main.py
+
+      - name: 🔔 실패 시 알림
+        if: failure()
+        run: echo "❌ ATH 이메일 발송 실패 — Actions 로그를 확인하세요"
