@@ -46,24 +46,6 @@ def get_usd_krw() -> float:
 
 def get_trading_info() -> dict:
     """직전 거래일 및 미국/한국 휴장 여부 확인"""
-    yesterday_kst = (datetime.now(KST) - timedelta(days=1)).date()
-
-    def last_trading_date(ticker_str: str) -> date | None:
-        try:
-            h = yf.Ticker(ticker_str).history(period="7d", auto_adjust=True)
-            if h.empty:
-                return None
-            last = h.index[-1]
-            # index가 timezone-aware인 경우 date() 처리
-            return last.date() if hasattr(last, "date") else last
-        except Exception:
-            return None
-
-    us_last = last_trading_date("SPY")
-    kr_last = last_trading_date("005930.KS")
-
-    us_holiday = (us_last != yesterday_kst) if us_last else True
-    kr_holiday = (kr_last != yesterday_kst) if kr_last else True
 
     def date_str(d: date | None) -> str:
         if d is None:
@@ -71,17 +53,53 @@ def get_trading_info() -> dict:
         weekday = ["월", "화", "수", "목", "금", "토", "일"][d.weekday()]
         return d.strftime(f"%Y년 %m월 %d일({weekday})")
 
-    log.info(f"미국 직전 거래일: {us_last} (어제={yesterday_kst}, 휴장={us_holiday})")
-    log.info(f"한국 직전 거래일: {kr_last} (어제={yesterday_kst}, 휴장={kr_holiday})")
+    def prev_weekday(d: date) -> date:
+        """주어진 날짜 직전 평일 반환 (주말 건너뜀)"""
+        prev = d - timedelta(days=1)
+        while prev.weekday() >= 5:
+            prev -= timedelta(days=1)
+        return prev
+
+    def last_trading_date(ticker_str: str) -> date | None:
+        try:
+            h = yf.Ticker(ticker_str).history(period="10d", auto_adjust=True)
+            if h.empty:
+                return None
+            last = h.index[-1]
+            return last.date() if hasattr(last, "date") else last
+        except Exception:
+            return None
+
+    today_kst        = datetime.now(KST).date()
+    expected_trading = prev_weekday(today_kst)   # 오늘 기준 직전 평일
+
+    us_last = last_trading_date("SPY")
+    kr_last = last_trading_date("005930.KS")
+
+    # 휴장 = 직전 평일에 장이 열리지 않은 경우
+    us_holiday = (us_last != expected_trading) if us_last else False
+    kr_holiday = (kr_last != expected_trading) if kr_last else False
+
+    def holiday_msg(expected: date, actual: date | None, market: str) -> str:
+        if actual is None:
+            return ""
+        return (f"직전 영업일({date_str(expected)})이 {market} 휴장이므로 "
+                f"직직전 영업일 기준: {date_str(actual)}")
+
+    log.info(f"오늘(KST): {today_kst}, 직전 평일: {expected_trading}")
+    log.info(f"미국 실제 거래일: {us_last}, 휴장: {us_holiday}")
+    log.info(f"한국 실제 거래일: {kr_last}, 휴장: {kr_holiday}")
 
     return {
-        "yesterday_kst":  yesterday_kst,
-        "us_last":        us_last,
-        "kr_last":        kr_last,
-        "us_last_str":    date_str(us_last),
-        "kr_last_str":    date_str(kr_last),
-        "us_holiday":     us_holiday,
-        "kr_holiday":     kr_holiday,
+        "expected_trading": expected_trading,
+        "us_last":          us_last,
+        "kr_last":          kr_last,
+        "us_last_str":      date_str(us_last),
+        "kr_last_str":      date_str(kr_last),
+        "us_holiday":       us_holiday,
+        "kr_holiday":       kr_holiday,
+        "us_holiday_msg":   holiday_msg(expected_trading, us_last, "미국") if us_holiday else "",
+        "kr_holiday_msg":   holiday_msg(expected_trading, kr_last, "한국") if kr_holiday else "",
     }
 
 
@@ -346,13 +364,13 @@ def get_korea_ath_stocks(usd_krw: float) -> list[dict]:
 # ─────────────────────────────────────────────
 
 def _table_html(stocks: list, title: str, currency: str,
-                holiday: bool, last_date_str: str) -> str:
+                holiday: bool, last_date_str: str, holiday_msg: str = "") -> str:
     holiday_banner = ""
-    if holiday:
+    if holiday and holiday_msg:
         holiday_banner = f"""
         <div style="background:#fff3cd;border:1px solid #ffc107;border-radius:6px;
                     padding:10px 16px;margin-bottom:12px;font-size:13px;color:#856404">
-          ⚠️ 직전 영업일 기준 데이터입니다. 어제는 <b>휴장</b>이었습니다.
+          ⚠️ {holiday_msg}
         </div>"""
 
     if not stocks:
@@ -443,13 +461,13 @@ def build_html_email(us: list, kr: list, info: dict, usd_krw: float) -> str:
 
   <div style="background:#fff;padding:20px;border-radius:8px;margin-top:12px;
               box-shadow:0 1px 4px rgba(0,0,0,0.08)">
-    {_table_html(us,"🇺🇸 미국 전체 상장 보통주","USD",info["us_holiday"],info["us_last_str"])}
+    {_table_html(us,"🇺🇸 미국 전체 상장 보통주","USD",info["us_holiday"],info["us_last_str"],info.get("us_holiday_msg",""))}
     <div style="margin-top:36px"></div>
-    {_table_html(kr,"🇰🇷 한국 KOSPI / KOSDAQ 전체","KRW",info["kr_holiday"],info["kr_last_str"])}
+    {_table_html(kr,"🇰🇷 한국 KOSPI / KOSDAQ 전체","KRW",info["kr_holiday"],info["kr_last_str"],info.get("kr_holiday_msg",""))}
   </div>
 
   <p style="font-size:11px;color:#bbb;margin-top:16px;text-align:center">
-    자동 발송 | 10년 고가 기준 ATH | 투자 권유 아님
+    자동 발송 | All Time High 기준 | 투자 권유 아님
   </p>
 </body></html>"""
 
@@ -462,9 +480,9 @@ def build_subject(info: dict) -> str:
     """거래일 포함 + 휴장 여부 표시 제목"""
     us_str = info["us_last_str"]
     kr_str = info["kr_last_str"]
-    us_tag = " [미국 휴장]" if info["us_holiday"] else ""
-    kr_tag = " [한국 휴장]" if info["kr_holiday"] else ""
-    return f"📈 ATH 리포트 | 미국 {us_str}{us_tag} / 한국 {kr_str}{kr_tag}"
+    us_tag = " [휴장]" if info["us_holiday"] else ""
+    kr_tag = " [휴장]" if info["kr_holiday"] else ""
+    return f"📈 ATH 리포트 | 🇺🇸 {us_str}{us_tag} / 🇰🇷 {kr_str}{kr_tag}"
 
 
 def send_email(html: str, subject: str) -> None:
