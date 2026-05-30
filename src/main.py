@@ -64,13 +64,15 @@ def get_us_ath_stocks() -> list[dict]:
             prev = float(series.iloc[-2])
             ath  = float(series.max())
 
-            if last >= ath * 0.995:   # 역대 최고가의 99.5% 이상
+            gap = round((last - ath) / ath * 100, 2)   # 음수: ATH 대비 하락률
+            if last >= ath * 0.90:   # ATH 대비 -10% 이내
                 results.append({
                     "ticker": ticker,
                     "name":   ticker,
                     "price":  round(last, 2),
                     "change": round((last - prev) / prev * 100, 2),
                     "ath":    round(ath, 2),
+                    "gap":    gap,
                     "market": "US",
                     "url":    f"https://m.stock.naver.com/worldstock/stock/{ticker}/total",
                 })
@@ -78,7 +80,7 @@ def get_us_ath_stocks() -> list[dict]:
             continue
 
     log.info(f"미국 ATH {len(results)}종목 발견")
-    return sorted(results, key=lambda x: -x["change"])
+    return sorted(results, key=lambda x: -x["gap"])  # 괴리율 낮은 순 (ATH에 가까운 순)
 
 
 # ─────────────────────────────────────────────
@@ -157,13 +159,15 @@ def _verify_ath(candidates: list[dict]) -> list[dict]:
             last = float(hist["Close"].iloc[-1])
             ath  = float(hist["Close"].max())
 
-            if last >= ath * 0.995:
+            gap = round((last - ath) / ath * 100, 2)   # 음수: ATH 대비 하락률
+            if last >= ath * 0.90:   # ATH 대비 -10% 이내
                 ath_stocks.append({
                     "ticker": s["code"],
                     "name":   s["name"],
                     "price":  s["price"],
                     "change": s["change"],
                     "ath":    int(ath),
+                    "gap":    gap,
                     "market": s["market"],
                     "url":    s["url"],
                 })
@@ -180,7 +184,7 @@ def get_korea_ath_stocks() -> list[dict]:
 
     results = _verify_ath(candidates)
     log.info(f"한국 ATH {len(results)}종목 발견")
-    return sorted(results, key=lambda x: -x["change"])
+    return sorted(results, key=lambda x: -x["change"])  # 괴리율 낮은 순 (ATH에 가까운 순)
 
 
 # ─────────────────────────────────────────────
@@ -200,6 +204,8 @@ def _table_html(stocks: list, title: str, currency: str) -> str:
         color = "#c0392b" if s["change"] > 0 else "#2980b9"
         sign  = "+" if s["change"] > 0 else ""
         link  = s.get("url", "#")
+        gap   = s.get("gap", 0.0)
+        gap_color = "#27ae60" if gap >= -1 else "#e67e22" if gap >= -5 else "#e74c3c"
 
         rows += f"""
         <tr style='background:{bg}'>
@@ -208,6 +214,9 @@ def _table_html(stocks: list, title: str, currency: str) -> str:
                style='color:#1565c0;font-weight:bold;text-decoration:none'>
               {s['ticker']}
             </a>
+          </td>
+          <td style='padding:9px;color:{gap_color};font-weight:bold;text-align:center'>
+            {gap:+.1f}%
           </td>
           <td style='padding:9px'>
             <a href='{link}' target='_blank'
@@ -221,11 +230,12 @@ def _table_html(stocks: list, title: str, currency: str) -> str:
 
     return f"""
     <h2 style='color:#1a1a2e;margin-top:30px'>{title} — {len(stocks)}종목</h2>
-    <p style='color:#888;font-size:12px;margin:4px 0 12px'>티커/종목명 클릭 시 네이버 증권 차트로 이동</p>
+    <p style='color:#888;font-size:12px;margin:4px 0 12px'>티커/종목명 클릭 시 네이버 증권 차트로 이동 | 괴리율: 현재 종가가 역대 ATH 종가 대비 몇 % 아래인지</p>
     <table style='border-collapse:collapse;width:100%;font-size:14px'>
       <thead>
         <tr style='background:#1a1a2e;color:#fff'>
           <th style='padding:10px;text-align:left'>티커</th>
+          <th style='padding:10px;text-align:center'>ATH 괴리율</th>
           <th style='padding:10px;text-align:left'>종목명</th>
           <th style='padding:10px;text-align:right'>현재가</th>
           <th style='padding:10px;text-align:right'>등락률</th>
@@ -242,7 +252,7 @@ def build_html_email(us: list, kr: list) -> str:
 <body style="font-family:'Apple SD Gothic Neo',sans-serif;max-width:720px;margin:auto;padding:20px;background:#fafafa">
   <div style="background:#1a1a2e;color:#fff;padding:24px;border-radius:8px">
     <h1 style="margin:0;font-size:22px">📈 일일 역대 신고가(ATH) 리포트</h1>
-    <p style="margin:6px 0 0;opacity:0.7;font-size:14px">{today_str} | 역대 최고가(±0.5%) 달성 종목</p>
+    <p style="margin:6px 0 0;opacity:0.7;font-size:14px">{today_str} | 역대 ATH 종가 ~ ATH 종가 -10% 이내 종목</p>
   </div>
   <div style="background:#fff;padding:20px;border-radius:8px;margin-top:16px;box-shadow:0 1px 4px rgba(0,0,0,0.08)">
     <span style="background:#eaf4ff;border-radius:6px;padding:10px 20px;margin-right:12px;display:inline-block">
@@ -302,3 +312,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
