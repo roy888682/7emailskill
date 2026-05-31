@@ -122,14 +122,23 @@ def get_us_ath(usd_krw):
     log.info(f"미국 최종:{len(out)}"); return out
 
 # ── 한국: pykrx 월별 벌크 방식 (yfinance 비사용) ────────
-def get_kr_ath(usd_krw):
+def get_kr_ath(usd_krw, kr_last=None):
     try:
         from pykrx import stock as pk
     except:
         log.error("pykrx 없음"); return []
 
-    today=datetime.now(KST); today_str=today.strftime("%Y%m%d")
-    yest_str=prev_weekday(today.date()).strftime("%Y%m%d")
+    today=datetime.now(KST)
+    # 실제 마지막 거래일 사용 (주말 실행시 오늘=일요일이면 빈 데이터 반환됨)
+    if kr_last:
+        trade_str = kr_last.strftime("%Y%m%d")
+        yest_str  = prev_weekday(kr_last).strftime("%Y%m%d")
+        base_dt   = datetime.combine(kr_last, datetime.min.time())
+    else:
+        base_dt   = today
+        trade_str = prev_weekday(today.date()).strftime("%Y%m%d")
+        yest_str  = prev_weekday(prev_weekday(today.date())).strftime("%Y%m%d")
+    today_str = trade_str
     results=[]
 
     for market in ["KOSPI","KOSDAQ"]:
@@ -149,7 +158,7 @@ def get_kr_ath(usd_krw):
         log.info(f"  {market} 5년 월별 ATH 수집...")
         ath_map={}  # {code: max_price}
         for months_back in range(0,61):
-            d=(today-timedelta(days=30*months_back)).strftime("%Y%m%d")
+            d=(base_dt-timedelta(days=30*months_back)).strftime("%Y%m%d")
             try:
                 df_m=pk.get_market_ohlcv_by_ticker(d,market=market)
                 if df_m is None or df_m.empty: continue
@@ -263,9 +272,8 @@ def send_email(html,subject):
 def main():
     log.info("=== ATH 리포트 시작 ===")
     info=get_trading_info(); usd_krw=get_usd_krw()
-    us=get_us_ath(usd_krw); kr=get_kr_ath(usd_krw)
+    us=get_us_ath(usd_krw); kr=get_kr_ath(usd_krw, info.get("kr_last"))
     send_email(build_email(us,kr,info,usd_krw),build_subject(info))
     log.info(f"=== 완료: US{len(us)} KR{len(kr)} ===")
 
 if __name__=="__main__": main()
-
