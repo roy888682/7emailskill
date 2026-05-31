@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
-import os, smtplib, logging, time, io
+import os, smtplib, logging, time, io, re
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from datetime import datetime, timedelta, date
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import pytz, yfinance as yf, requests
 from bs4 import BeautifulSoup
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
 KST = pytz.timezone("Asia/Seoul")
-UA  = {"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0","Accept-Language":"ko-KR,ko;q=0.9"}
+UA  = {"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0",
+       "Accept-Language":"ko-KR,ko;q=0.9"}
 
+# ── 공통 ──────────────────────────────────────────────
 def get_usd_krw():
     try:
         h=yf.Ticker("USDKRW=X").history(period="5d",auto_adjust=True)
@@ -47,19 +50,13 @@ def get_trading_info():
             "us_holiday_msg":hm(expected,us_last,"미국") if us_hol else "",
             "kr_holiday_msg":hm(expected,kr_last,"한국") if kr_hol else ""}
 
-# ── US: 2단계 (1년 스크리닝 → max ATH 검증) ──────────
-def get_us_mcap(tk, usd_krw):
-    try:
-        m=getattr(yf.Ticker(tk).fast_info,"market_cap",None) or 0
-        return round(m*usd_krw/1e12,1) if m>0 else None
-    except: return None
-
+# ── 미국: 2단계 yfinance ──────────────────────────────
 def dl(tickers, period, chunk=80, sleep=1.2):
     out={}; n=len(tickers)
     if not n: return out
     for i in range(0,n,chunk):
         grp=tickers[i:i+chunk]; bn=i//chunk+1
-        log.info(f"  [{bn}/{(n+chunk-1)//chunk}] {i+1}~{min(i+chunk,n)}/{n} ({period})")
+        log.info(f"  US[{bn}/{(n+chunk-1)//chunk}] {i+1}~{min(i+chunk,n)}/{n} ({period})")
         try:
             raw=yf.download(grp,period=period,progress=False,auto_adjust=True,group_by="ticker")
             if raw.empty: time.sleep(sleep); continue
@@ -68,15 +65,15 @@ def dl(tickers, period, chunk=80, sleep=1.2):
                     s=(raw[tk]["Close"] if len(grp)>1 else raw["Close"]).dropna()
                     if len(s)>=10: out[tk]=s
                 except: pass
-        except Exception as e: log.error(f"  [{bn}] {e}")
+        except Exception as e: log.error(f"  US[{bn}] {e}")
         time.sleep(sleep)
-    log.info(f"  완료:{len(out)}/{n}"); return out
+    log.info(f"  US완료:{len(out)}/{n}"); return out
 
 def get_us_tickers():
     tickers=set()
     for url,ec,tc in [
         ("https://ftp.nasdaqtrader.com/dynamic/SymbolDirectory/nasdaqlisted.txt",6,3),
-        ("https://ftp.nasdaqtrader.com/dynamic/SymbolDirectory/otherlisted.txt", 6,7),
+        ("https://ftp.nasdaqtrader.com/dynamic/SymbolDirectory/otherlisted.txt",6,7),
     ]:
         try:
             r=requests.get(url,headers=UA,timeout=30)
@@ -86,25 +83,22 @@ def get_us_tickers():
                 sym=p[0].strip()
                 if sym and not(len(p)>ec and p[ec].strip()=="Y") and not(len(p)>tc and p[tc].strip()=="Y") and sym.replace("-","").isalpha():
                     tickers.add(sym)
-            log.info(f"  FTP {url.split('/')[-1]}:{len(tickers)}")
-        except Exception as e: log.error(f"  FTP실패:{e}")
+        except Exception as e: log.error(f"FTP:{e}")
     if len(tickers)<100:
         try:
             import pandas as pd
             r=requests.get("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",headers=UA,timeout=20)
             df=pd.read_html(io.StringIO(r.text))[0]
             for s in df["Symbol"].tolist(): tickers.add(str(s).replace(".","-"))
-            log.info(f"  Wikipedia S&P500 fallback:{len(tickers)}")
-        except Exception as e: log.error(f"  Wikipedia:{e}")
+        except: pass
     result=sorted(tickers); log.info(f"미국 {len(result)}종목"); return result
 
 def get_us_ath(usd_krw):
     tickers=get_us_tickers()
     if not tickers: return []
-    log.info(f"미국 1단계: {len(tickers)}종목 1년 스크리닝")
     d1=dl(tickers,"1y",chunk=100,sleep=1.0)
     cands=[tk for tk,s in d1.items() if len(s)>=2 and float(s.iloc[-1])>=float(s.max())*0.90]
-    log.info(f"미국 1단계 후보:{len(cands)} → 2단계 max ATH")
+    log.info(f"미국 1단계후보:{len(cands)}")
     if not cands: return []
     d2=dl(cands,"max",chunk=25,sleep=2.0)
     out=[]
@@ -112,94 +106,87 @@ def get_us_ath(usd_krw):
         try:
             last=float(s.iloc[-1]); prev=float(s.iloc[-2]); ath=float(s.max())
             if last>=ath*0.90:
+                mcap=None
+                try:
+                    m=getattr(yf.Ticker(tk).fast_info,"market_cap",None) or 0
+                    if m>0: mcap=round(m*usd_krw/1e12,1)
+                except: pass
                 out.append({"ticker":tk,"name":tk,"price":round(last,2),
                             "change":round((last-prev)/prev*100,2),
-                            "gap":round((last-ath)/ath*100,2),
-                            "mcap":get_us_mcap(tk,usd_krw),"market":"US",
-                            "url":f"https://m.stock.naver.com/worldstock/stock/{tk}/total"})
+                            "gap":round((last-ath)/ath*100,2),"mcap":mcap,
+                            "market":"US","url":f"https://m.stock.naver.com/worldstock/stock/{tk}/total"})
         except: pass
-    out.sort(key=lambda x:x["gap"])  # -10%부터 위로
+    out.sort(key=lambda x:x["gap"])
     log.info(f"미국 최종:{len(out)}"); return out
 
-# ── 한국: pykrx 월별 벌크 방식 (yfinance 비사용) ────────
+# ── 한국: FinanceDataReader + 병렬처리 ───────────────
 def get_kr_ath(usd_krw, kr_last=None):
     try:
-        from pykrx import stock as pk
-    except:
-        log.error("pykrx 없음"); return []
+        import FinanceDataReader as fdr
+    except Exception as e:
+        log.error(f"fdr 로드실패:{e}"); return []
 
-    today=datetime.now(KST)
-    # 실제 마지막 거래일 사용 (주말 실행시 오늘=일요일이면 빈 데이터 반환됨)
-    if kr_last:
-        trade_str = kr_last.strftime("%Y%m%d")
-        yest_str  = prev_weekday(kr_last).strftime("%Y%m%d")
-        base_dt   = datetime.combine(kr_last, datetime.min.time())
-    else:
-        base_dt   = today
-        trade_str = prev_weekday(today.date()).strftime("%Y%m%d")
-        yest_str  = prev_weekday(prev_weekday(today.date())).strftime("%Y%m%d")
-    today_str = trade_str
+    start_date="2015-01-01"
     results=[]
 
-    for market in ["KOSPI","KOSDAQ"]:
-        log.info(f"한국 {market} 처리 중...")
-
-        # 오늘 + 어제 시세
+    for market_name in ["KOSPI","KOSDAQ"]:
         try:
-            df_today=pk.get_market_ohlcv_by_ticker(today_str,market=market)
-            df_yest =pk.get_market_ohlcv_by_ticker(yest_str, market=market)
+            df_list=fdr.StockListing(market_name)
+            if df_list is None or df_list.empty:
+                log.error(f"{market_name} 종목목록 없음"); continue
         except Exception as e:
-            log.error(f"  {market} 오늘/어제 데이터 실패:{e}"); continue
+            log.error(f"{market_name} StockListing 실패:{e}"); continue
 
-        if df_today is None or df_today.empty:
-            log.warning(f"  {market} 오늘 데이터 없음"); continue
+        # 심볼 컬럼 찾기
+        sym_col=next((c for c in ["Symbol","Code","종목코드"] if c in df_list.columns), None)
+        nam_col=next((c for c in ["Name","종목명"] if c in df_list.columns), None)
+        if not sym_col:
+            log.error(f"{market_name} Symbol컬럼 없음:{df_list.columns.tolist()}"); continue
 
-        # 5년 월별 ATH 데이터 (60개월)
-        log.info(f"  {market} 5년 월별 ATH 수집...")
-        ath_map={}  # {code: max_price}
-        for months_back in range(0,61):
-            d=(base_dt-timedelta(days=30*months_back)).strftime("%Y%m%d")
-            try:
-                df_m=pk.get_market_ohlcv_by_ticker(d,market=market)
-                if df_m is None or df_m.empty: continue
-                col="종가" if "종가" in df_m.columns else df_m.columns[3]
-                for code in df_m.index:
-                    p=float(df_m.loc[code,col])
-                    if p>0: ath_map[code]=max(ath_map.get(code,0),p)
-            except: pass
+        codes=df_list[sym_col].astype(str).str.zfill(6).tolist()
+        names={str(row[sym_col]).zfill(6): str(row[nam_col]) if nam_col else str(row[sym_col])
+               for _,row in df_list.iterrows()}
 
         # 시가총액
-        mcap_map={}
-        try:
-            df_cap=pk.get_market_cap_by_ticker(today_str,market=market)
-            if df_cap is not None and not df_cap.empty:
-                col="시가총액" if "시가총액" in df_cap.columns else df_cap.columns[0]
-                for code in df_cap.index:
-                    v=float(df_cap.loc[code,col])
-                    if v>0: mcap_map[code]=round(v/1e12,1)
-        except Exception as e: log.warning(f"  시가총액:{e}")
+        mcaps={}
+        mc_col=next((c for c in ["Marcap","MarketCap","시가총액"] if c in df_list.columns),None)
+        if mc_col:
+            for _,row in df_list.iterrows():
+                code=str(row[sym_col]).zfill(6)
+                try:
+                    v=float(row[mc_col])
+                    if v>0: mcaps[code]=round(v/1e12,1)
+                except: pass
 
-        close_col="종가" if "종가" in df_today.columns else df_today.columns[3]
+        log.info(f"{market_name} {len(codes)}종목 ATH 분석 (10workers)...")
 
-        # ATH 필터링
-        for code in df_today.index:
+        def fetch_one(code):
             try:
-                last=float(df_today.loc[code,close_col])
-                if last<=0: continue
-                prev=float(df_yest.loc[code,close_col]) if (df_yest is not None and code in df_yest.index) else last
-                ath=max(ath_map.get(code,last),last)
-                if ath<=0: continue
-                gap=(last-ath)/ath*100
+                df=fdr.DataReader(code, start_date)
+                if df is None or df.empty or len(df)<30: return None
+                col=next((c for c in ["Close","종가"] if c in df.columns),None)
+                if not col: return None
+                prices=df[col].dropna().tolist()
+                if len(prices)<2: return None
+                last=float(prices[-1]); prev=float(prices[-2]); ath=max(prices)
+                if last<=0 or ath<=0: return None
                 if last>=ath*0.90:
-                    try: name=pk.get_market_ticker_name(code)
-                    except: name=code
-                    results.append({"ticker":code,"name":name,"price":int(last),
-                        "change":round((last-prev)/prev*100,2) if prev>0 else 0,
-                        "gap":round(gap,2),"mcap":mcap_map.get(code),
-                        "market":market,"url":f"https://finance.naver.com/item/main.naver?code={code}"})
-            except: continue
+                    return {"ticker":code,"name":names.get(code,code),
+                            "price":int(last),"change":round((last-prev)/prev*100,2),
+                            "gap":round((last-ath)/ath*100,2),"mcap":mcaps.get(code),
+                            "market":market_name,
+                            "url":f"https://finance.naver.com/item/main.naver?code={code}"}
+            except: return None
 
-    results.sort(key=lambda x:x["gap"])  # -10%부터 위로
+        with ThreadPoolExecutor(max_workers=10) as ex:
+            futs={ex.submit(fetch_one,code):code for code in codes}
+            for fut in as_completed(futs):
+                r=fut.result()
+                if r: results.append(r)
+
+        log.info(f"{market_name} 완료:{sum(1 for r in results if r['market']==market_name)}종목")
+
+    results.sort(key=lambda x:x["gap"])
     log.info(f"한국 최종:{len(results)}"); return results
 
 # ── 이메일 ────────────────────────────────────────────
@@ -213,7 +200,8 @@ def tbl_html(stocks,title,currency,holiday,date_s,hmsg=""):
     for i,s in enumerate(stocks):
         bg="#f9f9f9" if i%2==0 else "#fff"
         cc="#c0392b" if s["change"]>0 else "#2980b9"; cs="+" if s["change"]>0 else ""
-        gap=s.get("gap",0); gc="#e74c3c" if gap<=-5 else "#e67e22" if gap<=-1 else "#27ae60"
+        gap=s.get("gap",0)
+        gc="#e74c3c" if gap<=-5 else "#e67e22" if gap<=-1 else "#27ae60"
         lk=s.get("url","#")
         rows+=f"""<tr style='background:{bg}'>
           <td style='padding:8px 10px'><a href='{lk}' target='_blank' style='color:#1565c0;font-weight:bold;text-decoration:none'>{s['ticker']}</a></td>
@@ -223,8 +211,8 @@ def tbl_html(stocks,title,currency,holiday,date_s,hmsg=""):
           <td style='padding:8px;text-align:right'>{fp(s['price'])} {currency}</td>
           <td style='padding:8px;text-align:right;color:{cc};font-weight:bold'>{cs}{s['change']}%</td></tr>"""
     return f"""<h2 style='color:#1a1a2e;margin-top:30px'>{title} — {len(stocks)}종목</h2>
-    <p style='color:#666;font-size:13px;margin:2px 0 8px'>기준일:{date_s} | 괴리율 -10%에 가까운 순</p>{banner}
-    <p style='color:#aaa;font-size:11px;margin:0 0 10px'>🔗 티커 클릭→네이버 증권 | <span style='color:#e74c3c'>●</span>-5~-10% <span style='color:#e67e22'>●</span>-1~-5% <span style='color:#27ae60'>●</span>0~-1%</p>
+    <p style='color:#666;font-size:13px;margin:2px 0 8px'>기준일:{date_s} | ATH 괴리율 -10%에 가까운 순</p>{banner}
+    <p style='color:#aaa;font-size:11px;margin:0 0 10px'>🔗 클릭→네이버 증권 | <span style='color:#e74c3c'>●</span>-5~-10% <span style='color:#e67e22'>●</span>-1~-5% <span style='color:#27ae60'>●</span>0~-1%</p>
     <table style='border-collapse:collapse;width:100%;font-size:14px'>
       <thead><tr style='background:#1a1a2e;color:#fff'>
         <th style='padding:10px;text-align:left'>티커</th><th style='padding:10px;text-align:center'>ATH 괴리율</th>
@@ -272,7 +260,8 @@ def send_email(html,subject):
 def main():
     log.info("=== ATH 리포트 시작 ===")
     info=get_trading_info(); usd_krw=get_usd_krw()
-    us=get_us_ath(usd_krw); kr=get_kr_ath(usd_krw, info.get("kr_last"))
+    us=get_us_ath(usd_krw)
+    kr=get_kr_ath(usd_krw, info.get("kr_last"))
     send_email(build_email(us,kr,info,usd_krw),build_subject(info))
     log.info(f"=== 완료: US{len(us)} KR{len(kr)} ===")
 
