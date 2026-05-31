@@ -175,7 +175,7 @@ def get_kr_ath(usd_krw, kr_last=None):
                             "price":int(last),"change":round((last-prev)/prev*100,2),
                             "gap":round((last-ath)/ath*100,2),"mcap":mcaps.get(code),
                             "market":market_name,
-                            "url":f"https://finance.naver.com/item/main.naver?code={code}"}
+                            "url":f"https://m.stock.naver.com/domestic/stock/{code}/total"}
             except: return None
 
         with ThreadPoolExecutor(max_workers=10) as ex:
