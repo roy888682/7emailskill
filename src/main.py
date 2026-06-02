@@ -37,9 +37,13 @@ def get_trading_info():
     today=datetime.now(KST).date(); expected=prev_weekday(today)
     def lt(sym):
         try:
+            today_kst=datetime.now(KST).date()
             h=yf.Ticker(sym).history(period="10d",auto_adjust=True)
             if h.empty: return None
-            last=h.index[-1]; return last.date() if hasattr(last,"date") else last
+            # 오늘 날짜 제외 — yfinance가 오늘 날짜를 포함해서 반환하는 경우 방지
+            dates=[d.date() if hasattr(d,"date") else d for d in h.index]
+            past=[d for d in dates if d<today_kst]
+            return max(past) if past else None
         except: return None
     us_last=lt("SPY"); kr_last=lt("005930.KS")
     us_hol=(us_last!=expected) if us_last else False
