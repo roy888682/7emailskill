@@ -13,6 +13,10 @@ KST = pytz.timezone("Asia/Seoul")
 UA  = {"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0",
        "Accept-Language":"ko-KR,ko;q=0.9"}
 
+DOW30={"AAPL","MSFT","UNH","GS","HD","AMGN","CAT","CRM","CVX","BA",
+       "MCD","HON","V","JPM","AXP","MRK","IBM","MMM","NKE","JNJ",
+       "TRV","WMT","PG","VZ","DIS","KO","DOW","CSCO","WBA","NVDA"}
+
 # ── 공통 ──────────────────────────────────────────────
 def get_usd_krw():
     try:
@@ -70,10 +74,10 @@ def dl(tickers, period, chunk=80, sleep=1.2):
     log.info(f"  US완료:{len(out)}/{n}"); return out
 
 def get_us_tickers():
-    tickers=set()
-    for url,ec,tc in [
-        ("https://ftp.nasdaqtrader.com/dynamic/SymbolDirectory/nasdaqlisted.txt",6,3),
-        ("https://ftp.nasdaqtrader.com/dynamic/SymbolDirectory/otherlisted.txt",6,7),
+    tickers=set(); exchange_map={}; sp500_set=set()
+    for url,ec,tc,exch_name in [
+        ("https://ftp.nasdaqtrader.com/dynamic/SymbolDirectory/nasdaqlisted.txt",6,3,"NASDAQ"),
+        ("https://ftp.nasdaqtrader.com/dynamic/SymbolDirectory/otherlisted.txt",6,7,"NYSE"),
     ]:
         try:
             r=requests.get(url,headers=UA,timeout=30)
@@ -82,19 +86,19 @@ def get_us_tickers():
                 if len(p)<=max(ec,tc): continue
                 sym=p[0].strip()
                 if sym and not(len(p)>ec and p[ec].strip()=="Y") and not(len(p)>tc and p[tc].strip()=="Y") and sym.replace("-","").isalpha():
-                    tickers.add(sym)
+                    tickers.add(sym); exchange_map[sym]=exch_name
         except Exception as e: log.error(f"FTP:{e}")
-    if len(tickers)<100:
-        try:
-            import pandas as pd
-            r=requests.get("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",headers=UA,timeout=20)
-            df=pd.read_html(io.StringIO(r.text))[0]
-            for s in df["Symbol"].tolist(): tickers.add(str(s).replace(".","-"))
-        except: pass
-    result=sorted(tickers); log.info(f"미국 {len(result)}종목"); return result
+    try:
+        import pandas as pd
+        r=requests.get("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",headers=UA,timeout=20)
+        df=pd.read_html(io.StringIO(r.text))[0]
+        for s in df["Symbol"].tolist():
+            sym=str(s).replace(".","-"); tickers.add(sym); sp500_set.add(sym)
+    except: pass
+    result=sorted(tickers); log.info(f"미국 {len(result)}종목"); return result,exchange_map,sp500_set
 
 def get_us_ath(usd_krw):
-    tickers=get_us_tickers()
+    tickers,exchange_map,sp500_set=get_us_tickers()
     if not tickers: return []
     d1=dl(tickers,"1y",chunk=100,sleep=1.0)
     cands=[tk for tk,s in d1.items() if len(s)>=2 and float(s.iloc[-1])>=float(s.max())*0.90]
@@ -111,9 +115,15 @@ def get_us_ath(usd_krw):
                     m=getattr(yf.Ticker(tk).fast_info,"market_cap",None) or 0
                     if m>0: mcap=round(m*usd_krw/1e12,1)
                 except: pass
+                # 지수 레이블
+                idx=[]
+                if tk in DOW30: idx.append("Dow")
+                if tk in sp500_set: idx.append("S&P500")
+                idx.append(exchange_map.get(tk,"NYSE"))
                 out.append({"ticker":tk,"name":tk,"price":round(last,2),
                             "change":round((last-prev)/prev*100,2),
                             "gap":round((last-ath)/ath*100,2),"mcap":mcap,
+                            "index":idx,
                             "market":"US","url":f"https://m.stock.naver.com/worldstock/stock/{tk}/total"})
         except: pass
     out.sort(key=lambda x:x["gap"])
@@ -171,9 +181,12 @@ def get_kr_ath(usd_krw, kr_last=None):
                 last=float(prices[-1]); prev=float(prices[-2]); ath=max(prices)
                 if last<=0 or ath<=0: return None
                 if last>=ath*0.90:
-                    return {"ticker":code,"name":names.get(code,code),
+                    name_val=names.get(code,code)
+                    if "스팩" in name_val: return None  # 스팩 제외
+                    return {"ticker":code,"name":name_val,
                             "price":int(last),"change":round((last-prev)/prev*100,2),
                             "gap":round((last-ath)/ath*100,2),"mcap":mcaps.get(code),
+                            "index":[market_name],
                             "market":market_name,
                             "url":f"https://m.stock.naver.com/domestic/stock/{code}/total"}
             except: return None
@@ -190,6 +203,12 @@ def get_kr_ath(usd_krw, kr_last=None):
     log.info(f"한국 최종:{len(results)}"); return results
 
 # ── 이메일 ────────────────────────────────────────────
+BADGE_COLOR={"Dow":"#e74c3c","S&P500":"#2980b9","NASDAQ":"#27ae60",
+              "NYSE":"#7f8c8d","KOSPI":"#1a1a2e","KOSDAQ":"#8e44ad"}
+def _badges(labels):
+    if not labels: return ""
+    return f"<div style='margin-top:2px;font-size:11px;color:#888'>{' · '.join(labels)}</div>"
+
 def tbl_html(stocks,title,currency,holiday,date_s,hmsg=""):
     banner=f'<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:10px 16px;margin-bottom:12px;font-size:13px;color:#856404">⚠️ {hmsg}</div>' if holiday and hmsg else ""
     if not stocks:
@@ -206,7 +225,10 @@ def tbl_html(stocks,title,currency,holiday,date_s,hmsg=""):
         rows+=f"""<tr style='background:{bg}'>
           <td style='padding:8px 10px'><a href='{lk}' target='_blank' style='color:#1565c0;font-weight:bold;text-decoration:none'>{s['ticker']}</a></td>
           <td style='padding:8px;text-align:center;color:{gc};font-weight:bold'>{gap:+.1f}%</td>
-          <td style='padding:8px;text-align:right;color:#555;font-size:13px'>{fm(s.get("mcap"))}</td>
+          <td style='padding:8px;text-align:right'>
+            <span style='color:#555;font-size:13px'>{fm(s.get("mcap"))}</span>
+            {_badges(s.get("index",[]))}
+          </td>
           <td style='padding:8px'><a href='{lk}' target='_blank' style='color:#333;text-decoration:none'>{s['name']}</a></td>
           <td style='padding:8px;text-align:right'>{fp(s['price'])} {currency}</td>
           <td style='padding:8px;text-align:right;color:{cc};font-weight:bold'>{cs}{s['change']}%</td></tr>"""
@@ -266,3 +288,4 @@ def main():
     log.info(f"=== 완료: US{len(us)} KR{len(kr)} ===")
 
 if __name__=="__main__": main()
+
