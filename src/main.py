@@ -4,6 +4,26 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from datetime import datetime, timedelta, date
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+def fetch_naver_industry(url: str):
+    """네이버 증권 페이지에서 업종 텍스트 추출. 실패시 None (전체 흐름에 영향 없음)"""
+    try:
+        r = requests.get(url, headers=UA, timeout=8, allow_redirects=True)
+        html = r.text
+        patterns = [
+            r'업종[^>]{0,30}>\s*([^<]{2,30})\s*<',
+            r'"industryName"\s*:\s*"([^"]{2,30})"',
+            r'"industryCodeTypeName"\s*:\s*"([^"]{2,30})"',
+        ]
+        for pat in patterns:
+            m = re.search(pat, html)
+            if m:
+                val = m.group(1).strip()
+                if val and val not in ("업종","null","None"):
+                    return val
+        return None
+    except Exception:
+        return None
 import pytz, yfinance as yf, requests
 from bs4 import BeautifulSoup
 
@@ -124,12 +144,21 @@ def get_us_ath(usd_krw):
                 if tk in DOW30: idx.append("Dow")
                 if tk in sp500_set: idx.append("S&P500")
                 idx.append(exchange_map.get(tk,"NYSE"))
+                url=f"https://m.stock.naver.com/worldstock/stock/{tk}/total"
                 out.append({"ticker":tk,"name":tk,"price":round(last,2),
                             "change":round((last-prev)/prev*100,2),
                             "gap":round((last-ath)/ath*100,2),"mcap":mcap,
-                            "index":idx,
-                            "market":"US","url":f"https://m.stock.naver.com/worldstock/stock/{tk}/total"})
+                            "index":idx,"industry":None,
+                            "market":"US","url":url})
         except: pass
+    if out:
+        log.info(f"미국 업종 조회 중 ({len(out)}종목)...")
+        with ThreadPoolExecutor(max_workers=10) as ex:
+            futs={ex.submit(fetch_naver_industry,s["url"]):s for s in out}
+            for fut in as_completed(futs):
+                s=futs[fut]
+                try: s["industry"]=fut.result()
+                except: s["industry"]=None
     out.sort(key=lambda x:x["gap"])
     log.info(f"미국 최종:{len(out)}"); return out
 
@@ -187,12 +216,13 @@ def get_kr_ath(usd_krw, kr_last=None):
                 if last>=ath*0.90:
                     name_val=names.get(code,code)
                     if "스팩" in name_val: return None  # 스팩 제외
+                    url=f"https://m.stock.naver.com/domestic/stock/{code}/total"
                     return {"ticker":code,"name":name_val,
                             "price":int(last),"change":round((last-prev)/prev*100,2),
                             "gap":round((last-ath)/ath*100,2),"mcap":mcaps.get(code),
-                            "index":[market_name],
+                            "index":[market_name],"industry":None,
                             "market":market_name,
-                            "url":f"https://m.stock.naver.com/domestic/stock/{code}/total"}
+                            "url":url}
             except: return None
 
         with ThreadPoolExecutor(max_workers=10) as ex:
@@ -203,6 +233,14 @@ def get_kr_ath(usd_krw, kr_last=None):
 
         log.info(f"{market_name} 완료:{sum(1 for r in results if r['market']==market_name)}종목")
 
+    if results:
+        log.info(f"한국 업종 조회 중 ({len(results)}종목)...")
+        with ThreadPoolExecutor(max_workers=10) as ex:
+            futs={ex.submit(fetch_naver_industry,s["url"]):s for s in results}
+            for fut in as_completed(futs):
+                s=futs[fut]
+                try: s["industry"]=fut.result()
+                except: s["industry"]=None
     results.sort(key=lambda x:x["gap"])
     log.info(f"한국 최종:{len(results)}"); return results
 
@@ -233,6 +271,7 @@ def tbl_html(stocks,title,currency,holiday,date_s,hmsg=""):
             <span style='color:#555;font-size:13px'>{fm(s.get("mcap"))}</span>
             {_badges(s.get("index",[]))}
           </td>
+          <td style='padding:8px;text-align:left;color:#666;font-size:12px'>{s.get("industry") or "-"}</td>
           <td style='padding:8px'><a href='{lk}' target='_blank' style='color:#333;text-decoration:none'>{s['name']}</a></td>
           <td style='padding:8px;text-align:right'>{fp(s['price'])} {currency}</td>
           <td style='padding:8px;text-align:right;color:{cc};font-weight:bold'>{cs}{s['change']}%</td></tr>"""
@@ -242,7 +281,7 @@ def tbl_html(stocks,title,currency,holiday,date_s,hmsg=""):
     <table style='border-collapse:collapse;width:100%;font-size:14px'>
       <thead><tr style='background:#1a1a2e;color:#fff'>
         <th style='padding:10px;text-align:left'>티커</th><th style='padding:10px;text-align:center'>ATH 괴리율</th>
-        <th style='padding:10px;text-align:right'>시가총액</th><th style='padding:10px;text-align:left'>종목명</th>
+        <th style='padding:10px;text-align:right'>시가총액</th><th style='padding:10px;text-align:left'>업종</th><th style='padding:10px;text-align:left'>종목명</th>
         <th style='padding:10px;text-align:right'>현재가</th><th style='padding:10px;text-align:right'>등락률</th>
       </tr></thead><tbody>{rows}</tbody></table>"""
 
@@ -292,4 +331,3 @@ def main():
     log.info(f"=== 완료: US{len(us)} KR{len(kr)} ===")
 
 if __name__=="__main__": main()
-
