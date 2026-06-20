@@ -5,23 +5,27 @@ from email.mime.text import MIMEText
 from datetime import datetime, timedelta, date
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-def fetch_naver_industry(url: str):
-    """네이버 증권 페이지에서 업종 텍스트 추출. 실패시 None (전체 흐름에 영향 없음)"""
+def get_kr_industry(code: str):
+    """finance.naver.com PC페이지 '동일업종비교' 링크에서 업종명 추출 (검증된 패턴)"""
     try:
-        r = requests.get(url, headers=UA, timeout=8, allow_redirects=True)
+        url = f"https://finance.naver.com/item/main.naver?code={code}"
+        r = requests.get(url, headers=UA, timeout=8)
+        r.encoding = "euc-kr"
         html = r.text
-        patterns = [
-            r'업종[^>]{0,30}>\s*([^<]{2,30})\s*<',
-            r'"industryName"\s*:\s*"([^"]{2,30})"',
-            r'"industryCodeTypeName"\s*:\s*"([^"]{2,30})"',
-        ]
-        for pat in patterns:
-            m = re.search(pat, html)
-            if m:
-                val = m.group(1).strip()
-                if val and val not in ("업종","null","None"):
-                    return val
+        m = re.search(r'sise_group_detail\.naver\?type=upjong[^"]*"[^>]*>\s*([^<]+?)\s*<', html)
+        if m:
+            val = m.group(1).strip()
+            if val: return val
         return None
+    except Exception:
+        return None
+
+def get_us_industry(ticker: str):
+    """yfinance sector/industry 정보 (영문, 구조화된 데이터라 신뢰도 높음)"""
+    try:
+        info = yf.Ticker(ticker).info
+        ind = info.get("industry") or info.get("sector")
+        return ind
     except Exception:
         return None
 import pytz, yfinance as yf, requests
@@ -154,7 +158,7 @@ def get_us_ath(usd_krw):
     if out:
         log.info(f"미국 업종 조회 중 ({len(out)}종목)...")
         with ThreadPoolExecutor(max_workers=10) as ex:
-            futs={ex.submit(fetch_naver_industry,s["url"]):s for s in out}
+            futs={ex.submit(get_us_industry,s["ticker"]):s for s in out}
             for fut in as_completed(futs):
                 s=futs[fut]
                 try: s["industry"]=fut.result()
@@ -236,7 +240,7 @@ def get_kr_ath(usd_krw, kr_last=None):
     if results:
         log.info(f"한국 업종 조회 중 ({len(results)}종목)...")
         with ThreadPoolExecutor(max_workers=10) as ex:
-            futs={ex.submit(fetch_naver_industry,s["url"]):s for s in results}
+            futs={ex.submit(get_kr_industry,s["ticker"]):s for s in results}
             for fut in as_completed(futs):
                 s=futs[fut]
                 try: s["industry"]=fut.result()
