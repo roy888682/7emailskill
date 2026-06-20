@@ -10,7 +10,7 @@ def get_kr_industry(code: str):
     try:
         url = f"https://finance.naver.com/item/main.naver?code={code}"
         r = requests.get(url, headers=UA, timeout=8)
-        r.encoding = "euc-kr"
+        r.encoding = r.apparent_encoding or "utf-8"   # 자동 인코딩 감지 (깨짐 방지)
         html = r.text
         m = re.search(r'sise_group_detail\.naver\?type=upjong[^"]*"[^>]*>\s*([^<]+?)\s*<', html)
         if m:
@@ -20,12 +20,64 @@ def get_kr_industry(code: str):
     except Exception:
         return None
 
+INDUSTRY_KR = {
+    # GICS 11개 섹터
+    "Technology":"기술","Healthcare":"헬스케어","Financial Services":"금융",
+    "Consumer Cyclical":"경기소비재","Consumer Defensive":"필수소비재",
+    "Industrials":"산업재","Energy":"에너지","Utilities":"유틸리티",
+    "Real Estate":"부동산","Basic Materials":"소재","Communication Services":"커뮤니케이션서비스",
+    # 세부 업종 (자주 등장하는 항목)
+    "Semiconductors":"반도체","Semiconductor Equipment & Materials":"반도체 장비·소재",
+    "Software—Infrastructure":"소프트웨어(인프라)","Software—Application":"소프트웨어(응용)",
+    "Internet Content & Information":"인터넷 콘텐츠·정보","Internet Retail":"인터넷 소매",
+    "Banks—Regional":"지역은행","Banks—Diversified":"종합은행",
+    "Insurance—Diversified":"복합보험","Insurance—Property & Casualty":"손해보험",
+    "Insurance—Life":"생명보험","Insurance—Specialty":"전문보험","Insurance Brokers":"보험중개",
+    "Asset Management":"자산운용","Capital Markets":"자본시장",
+    "Drug Manufacturers—General":"제약","Drug Manufacturers—Specialty & Generic":"특수·제네릭 제약",
+    "Biotechnology":"바이오기술","Medical Devices":"의료기기","Medical Instruments & Supplies":"의료기기·용품",
+    "Healthcare Plans":"건강보험","Diagnostics & Research":"진단·연구","Medical Care Facilities":"의료시설",
+    "Specialty Retail":"전문소매","Discount Stores":"할인점","Restaurants":"외식업",
+    "Auto Manufacturers":"자동차 제조","Auto Parts":"자동차 부품",
+    "Aerospace & Defense":"항공우주·방위","Airlines":"항공",
+    "Oil & Gas Integrated":"석유·가스(종합)","Oil & Gas E&P":"석유·가스 탐사생산",
+    "Oil & Gas Midstream":"석유·가스 미드스트림","Oil & Gas Refining & Marketing":"정유·마케팅",
+    "Oil & Gas Equipment & Services":"석유·가스 장비·서비스",
+    "Utilities—Regulated Electric":"전력유틸리티","Utilities—Diversified":"종합유틸리티",
+    "REIT—Diversified":"복합리츠","REIT—Retail":"리테일리츠","REIT—Residential":"주거리츠",
+    "REIT—Office":"오피스리츠","REIT—Industrial":"산업용리츠","REIT—Healthcare Facilities":"헬스케어리츠",
+    "Telecom Services":"통신서비스","Entertainment":"엔터테인먼트",
+    "Electronic Gaming & Multimedia":"게임·멀티미디어","Consumer Electronics":"가전",
+    "Specialty Chemicals":"특수화학","Chemicals":"화학","Building Materials":"건축자재",
+    "Packaging & Containers":"포장재","Beverages—Non-Alcoholic":"음료(무알코올)",
+    "Beverages—Wineries & Distilleries":"주류","Beverages—Brewers":"맥주",
+    "Packaged Foods":"가공식품","Farm Products":"농산물",
+    "Household & Personal Products":"생활용품","Apparel Manufacturing":"의류제조",
+    "Apparel Retail":"의류소매","Footwear & Accessories":"신발·액세서리",
+    "Credit Services":"신용서비스","Information Technology Services":"IT서비스",
+    "Communication Equipment":"통신장비","Electronic Components":"전자부품",
+    "Computer Hardware":"컴퓨터하드웨어","Scientific & Technical Instruments":"과학기술기기",
+    "Industrial Distribution":"산업유통","Specialty Industrial Machinery":"특수산업기계",
+    "Farm & Heavy Construction Machinery":"농기계·중장비","Metal Fabrication":"금속가공",
+    "Railroads":"철도","Trucking":"화물운송","Integrated Freight & Logistics":"물류",
+    "Marine Shipping":"해운","Waste Management":"폐기물관리",
+    "Engineering & Construction":"엔지니어링·건설","Conglomerates":"복합기업",
+    "Staffing & Employment Services":"인력파견","Security & Protection Services":"보안서비스",
+    "Specialty Business Services":"전문비즈니스서비스","Consulting Services":"컨설팅서비스",
+    "Gold":"금","Silver":"은","Copper":"구리","Steel":"철강","Aluminum":"알루미늄",
+    "Lodging":"숙박","Resorts & Casinos":"리조트·카지노","Travel Services":"여행서비스",
+    "Personal Services":"개인서비스","Education & Training Services":"교육·훈련서비스",
+    "Tobacco":"담배","Confectioners":"제과","Grocery Stores":"식료품점",
+    "Home Improvement Retail":"홈인테리어 소매","Department Stores":"백화점",
+}
+
 def get_us_industry(ticker: str):
-    """yfinance sector/industry 정보 (영문, 구조화된 데이터라 신뢰도 높음)"""
+    """yfinance sector/industry 정보를 한글로 매핑해서 반환 (사전에 없으면 영문 그대로)"""
     try:
         info = yf.Ticker(ticker).info
         ind = info.get("industry") or info.get("sector")
-        return ind
+        if not ind: return None
+        return INDUSTRY_KR.get(ind, ind)
     except Exception:
         return None
 import pytz, yfinance as yf, requests
