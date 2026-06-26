@@ -1,4 +1,4 @@
-name: 📈 Daily ATH Stock Email & DB
+name: 📈 Daily ATH Stock Email
 
 on:
   schedule:
@@ -18,16 +18,14 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'
 
-      - name: 📦 패키지 직접 설치 (에러 원천 차단)
-        run: pip install yfinance FinanceDataReader pandas beautifulsoup4 requests pytz gspread oauth2client
+      - name: 📦 의존성 설치
+        run: pip install -r requirements.txt
 
-      - name: 📧 이메일 발송 및 구글시트 저장
+      - name: 📧 ATH 이메일 발송
         env:
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
-          GOOGLE_SHEETS_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
-          GOOGLE_SHEETS_ID: ${{ secrets.GOOGLE_SHEETS_ID }}
-        # || true를 추가하여 무조건 성공으로 강제 처리
-        run: python src/main.py || true
+        run: python src/main.py
