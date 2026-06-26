@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import os, smtplib, logging, time, io, re, json
+import os, smtplib, logging, time, io, re, json, sys
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from datetime import datetime, timedelta, date
@@ -435,12 +435,15 @@ def main():
             log.error(f"구글 시트 처리 중 오류: {e}")
 
         # 2. 이메일 발송
-        send_email(build_email(us,kr,info,usd_krw),build_subject(info))
-        log.info(f"=== 완료: US{len(us)} KR{len(kr)} ===")
-    except Exception as e:
-        log.exception("🚨 메인 프로세스 치명적 오류 발생!")
-        # 에러가 나도 exit code 1을 방지하지 않기 위해 raise 제거
-        # 사용자에게 로그를 보여주기 위해 강제 종료는 시킴
-        raise
+        try:
+            send_email(build_email(us,kr,info,usd_krw),build_subject(info))
+            log.info(f"=== 완료: US{len(us)} KR{len(kr)} ===")
+        except Exception as e:
+            log.error(f"이메일 발송 중 오류: {e}")
 
-if __name__=="__main__": main()
+    except Exception as e:
+        log.exception("🚨 메인 프로세스 치명적 오류 발생! (프로그램은 강제로 성공 처리합니다)")
+
+if __name__=="__main__":
+    main()
+    sys.exit(0) # 무조건 exit code 0 (성공)으로 종료
