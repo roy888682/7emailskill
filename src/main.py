@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import os, smtplib, logging, time, io, re, json, sys
+import pytz, yfinance as yf, requests
+from bs4 import BeautifulSoup
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from datetime import datetime, timedelta, date
@@ -13,19 +15,13 @@ try:
 except ImportError:
     GSPREAD_OK = False
 
-def get_kr_industry(code: str):
-    try:
-        url = f"https://finance.naver.com/item/main.naver?code={code}"
-        r = requests.get(url, headers=UA, timeout=8)
-        r.encoding = r.apparent_encoding or "utf-8"
-        html = r.text
-        m = re.search(r'sise_group_detail\.naver\?type=upjong[^"]*"[^>]*>\s*([^<]+?)\s*<', html)
-        if m:
-            val = m.group(1).strip()
-            if val: return val
-        return None
-    except Exception:
-        return None
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+log = logging.getLogger(__name__)
+KST = pytz.timezone("Asia/Seoul")
+UA  = {"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0",
+       "Accept-Language":"ko-KR,ko;q=0.9"}
+
+DOW30={"AAPL","MSFT","UNH","GS","HD","AMGN","CAT","CRM","CVX","BA","MCD","HON","V","JPM","AXP","MRK","IBM","MMM","NKE","JNJ","TRV","WMT","PG","VZ","DIS","KO","DOW","CSCO","WBA","NVDA"}
 
 INDUSTRY_KR = {
     "Technology":"기술","Healthcare":"헬스케어","Financial Services":"금융",
@@ -76,6 +72,20 @@ INDUSTRY_KR = {
     "Home Improvement Retail":"홈인테리어 소매","Department Stores":"백화점",
 }
 
+def get_kr_industry(code: str):
+    try:
+        url = f"https://finance.naver.com/item/main.naver?code={code}"
+        r = requests.get(url, headers=UA, timeout=8)
+        r.encoding = r.apparent_encoding or "utf-8"
+        html = r.text
+        m = re.search(r'sise_group_detail\.naver\?type=upjong[^"]*"[^>]*>\s*([^<]+?)\s*<', html)
+        if m:
+            val = m.group(1).strip()
+            if val: return val
+        return None
+    except Exception:
+        return None
+
 def get_us_industry(ticker: str):
     try:
         info = yf.Ticker(ticker).info
@@ -84,17 +94,6 @@ def get_us_industry(ticker: str):
         return INDUSTRY_KR.get(ind, ind)
     except Exception:
         return None
-
-import pytz, yfinance as yf, requests
-from bs4 import BeautifulSoup
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-log = logging.getLogger(__name__)
-KST = pytz.timezone("Asia/Seoul")
-UA  = {"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0",
-       "Accept-Language":"ko-KR,ko;q=0.9"}
-
-DOW30={"AAPL","MSFT","UNH","GS","HD","AMGN","CAT","CRM","CVX","BA","MCD","HON","V","JPM","AXP","MRK","IBM","MMM","NKE","JNJ","TRV","WMT","PG","VZ","DIS","KO","DOW","CSCO","WBA","NVDA"}
 
 # ── 구글 시트 저장 함수 (완벽한 방탄 처리) ───────────────────────
 def save_to_gsheet(us, kr):
@@ -420,18 +419,15 @@ def main():
     us=get_us_ath(usd_krw)
     kr=get_kr_ath(usd_krw, info.get("kr_last"))
     
-    # 1. 구글 시트 저장 시도 (여기서 에러나도 밑으로 안 내려감)
     try:
         save_to_gsheet(us, kr)
     except Exception as e:
         log.error(f"시트 저장 중 치명적 오류: {e}")
     
-    # 2. 이메일 발송 (클로드 원본 유지)
     send_email(build_email(us,kr,info,usd_krw),build_subject(info))
     log.info(f"=== 완료: US{len(us)} KR{len(kr)} ===")
 
 if __name__ == "__main__":
-    # 메인 함수 실행 중 어떤 에러가 나더라도 무조건 exit code 0 (성공)으로 강제 종료
     try:
         main()
     except Exception as e:
