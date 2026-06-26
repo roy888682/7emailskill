@@ -110,7 +110,6 @@ def save_to_gsheet(us, kr):
             log.warning("구글 시트 Secret 없음. 시트 저장 건너뜀.")
             return
 
-        # JSON 문자열 정제 (GitHub Secret 이스케이프 문자, 따옴표 오류 완벽 해결)
         if creds_json_str.startswith('"') and creds_json_str.endswith('"'):
             creds_json_str = creds_json_str[1:-1]
         creds_json_str = creds_json_str.replace('\\"', '"').replace("\\n", "")
@@ -423,19 +422,4 @@ def main():
     
     # 1. 구글 시트 저장 시도 (여기서 에러나도 밑으로 안 내려감)
     try:
-        save_to_gsheet(us, kr)
-    except Exception as e:
-        log.error(f"시트 저장 중 치명적 오류: {e}")
-    
-    # 2. 이메일 발송 (클로드 원본 유지)
-    send_email(build_email(us,kr,info,usd_krw),build_subject(info))
-    log.info(f"=== 완료: US{len(us)} KR{len(kr)} ===")
-
-if __name__ == "__main__":
-    # 메인 함수 실행 중 어떤 에러가 나더라도 무조건 exit code 0 (성공)으로 강제 종료
-    try:
-        main()
-    except Exception as e:
-        log.error(f"🚨 치명적 오류 발생! 하지만 에러로 처리하지 않고 강제 성공 종료합니다: {e}")
-    finally:
-        sys.exit(0)
+        save_to
