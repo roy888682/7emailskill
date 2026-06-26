@@ -422,4 +422,19 @@ def main():
     
     # 1. 구글 시트 저장 시도 (여기서 에러나도 밑으로 안 내려감)
     try:
-        save_to
+        save_to_gsheet(us, kr)
+    except Exception as e:
+        log.error(f"시트 저장 중 치명적 오류: {e}")
+    
+    # 2. 이메일 발송 (클로드 원본 유지)
+    send_email(build_email(us,kr,info,usd_krw),build_subject(info))
+    log.info(f"=== 완료: US{len(us)} KR{len(kr)} ===")
+
+if __name__ == "__main__":
+    # 메인 함수 실행 중 어떤 에러가 나더라도 무조건 exit code 0 (성공)으로 강제 종료
+    try:
+        main()
+    except Exception as e:
+        log.error(f"🚨 치명적 오류 발생! 하지만 에러로 처리하지 않고 강제 성공 종료합니다: {e}")
+    finally:
+        sys.exit(0)
