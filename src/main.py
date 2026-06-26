@@ -6,21 +6,36 @@ from datetime import datetime, timedelta, date
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import pytz, yfinance as yf, requests
 from bs4 import BeautifulSoup
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+
+# 구글 시트 모듈 미리 로드 (에러 방지)
+try:
+    import gspread
+    from oauth2client.service_account import ServiceAccountCredentials
+    GHEET_OK = True
+except ImportError:
+    GHEET_OK = False
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+log = logging.getLogger(__name__)
+KST = pytz.timezone("Asia/Seoul")
+UA  = {"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0",
+       "Accept-Language":"ko-KR,ko;q=0.9"}
 
 # ── 구글 시트 연결 및 방탄 처리 ──────────────────────────────────
 def connect_gsheet():
+    if not GHEET_OK:
+        log.warning("gspread 미설치. 시트 저장 건너뜀.")
+        return None
+        
     scopes = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     creds_json_str = os.environ.get("GOOGLE_SHEETS_CREDENTIALS")
     sheet_id = os.environ.get("GOOGLE_SHEETS_ID")
     
     if not creds_json_str or not sheet_id:
-        log.warning("구글 시트 Secret이 없습니다. 시트 저장을 건너뜁니다.")
+        log.warning("구글 시트 Secret 없음. 시트 저장 건너뜀.")
         return None
     
     try:
-        # Secret에 따옴표나 이스케이프 문자가 섞여 들어갔을 경우를 대비한 정제 작업
         if creds_json_str.startswith('"') and creds_json_str.endswith('"'):
             creds_json_str = creds_json_str[1:-1].replace('\\"', '"')
             
@@ -43,11 +58,14 @@ def save_to_gsheet(stocks, country, sheet):
     records = []
     now_str = datetime.now(KST).strftime("%Y-%m-%d %H:%M")
     for s in stocks:
-        records.append([
-            now_str, country, s.get('ticker', ''), s.get('name', ''), 
-            s.get('price', 0), s.get('change', 0), 
-            s.get('gap', 0), s.get('mcap', '-') or '-', s.get('industry', '-') or '-'
-        ])
+        try:
+            records.append([
+                now_str, country, s.get('ticker', ''), s.get('name', ''), 
+                s.get('price', 0), s.get('change', 0), 
+                s.get('gap', 0), s.get('mcap', '-') or '-', s.get('industry', '-') or '-'
+            ])
+        except:
+            pass
     try:
         sheet.append_rows(records)
         log.info(f"{country} 종목 {len(records)}건 구글 시트에 저장 완료")
@@ -55,12 +73,6 @@ def save_to_gsheet(stocks, country, sheet):
         log.error(f"구글 시트 저장 실패: {e}")
 
 # ── 기존 유틸리티 및 업종 매핑 ──────────────────────────────────
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-log = logging.getLogger(__name__)
-KST = pytz.timezone("Asia/Seoul")
-UA  = {"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0",
-       "Accept-Language":"ko-KR,ko;q=0.9"}
-
 def get_kr_industry(code: str):
     try:
         url = f"https://finance.naver.com/item/main.naver?code={code}"
@@ -374,4 +386,61 @@ def build_email(us,kr,info,usd_krw):
     <h1 style="margin:0;font-size:22px">📈 일일 ATH 리포트</h1>
     <p style="margin:6px 0 0;opacity:0.7;font-size:13px">발송일:{td} | ATH ~ -10% | USD/KRW {usd_krw:,.0f}원</p>
   </div>
-  <div style="background:#fff;padding:16px 20px;border-radius:8px;margin-top:12px;box-shadow:0 1px 4px rgba(0,0,0,.08);display:flex;gap:
+  <div style="background:#fff;padding:16px 20px;border-radius:8px;margin-top:12px;box-shadow:0 1px 4px rgba(0,0,0,.08);display:flex;gap:16px;flex-wrap:wrap">
+    <div style="background:#eaf4ff;border-radius:6px;padding:10px 20px">
+      <div style="font-size:11px;color:#555">🇺🇸 미국 ({info['us_last_str']})</div>
+      <div style="font-size:26px;font-weight:bold;color:#1a1a2e">{len(us)}종목</div></div>
+    <div style="background:#eaffea;border-radius:6px;padding:10px 20px">
+      <div style="font-size:11px;color:#555">🇰🇷 한국 ({info['kr_last_str']})</div>
+      <div style="font-size:26px;font-weight:bold;color:#1a1a2e">{len(kr)}종목</div></div>
+  </div>
+  <div style="background:#fff;padding:20px;border-radius:8px;margin-top:12px;box-shadow:0 1px 4px rgba(0,0,0,.08)">
+    {tbl_html(us,"🇺🇸 미국 전체 상장 보통주","USD",info["us_holiday"],info["us_last_str"],info.get("us_holiday_msg",""))}
+    <div style="margin-top:36px"></div>
+    {tbl_html(kr,"🇰🇷 한국 KOSPI/KOSDAQ 전체","KRW",info["kr_holiday"],info["kr_last_str"],info.get("kr_holiday_msg",""))}
+  </div>
+  <p style="font-size:11px;color:#bbb;margin-top:16px;text-align:center">자동 발송 | All Time High 기준 | 투자 권유 아님</p>
+</body></html>"""
+
+def build_subject(info):
+    ut=" [휴장]" if info["us_holiday"] else ""; kt=" [휴장]" if info["kr_holiday"] else ""
+    return f"📈 ATH | 🇺🇸{info['us_last_str']}{ut} / 🇰🇷{info['kr_last_str']}{kt}"
+
+def send_email(html,subject):
+    user=os.environ["GMAIL_USER"]; pwd=os.environ["GMAIL_APP_PASSWORD"]
+    to=os.environ.get("RECIPIENT_EMAIL","ykhan@dacpole.com")
+    msg=MIMEMultipart("alternative"); msg["Subject"]=subject; msg["From"]=user; msg["To"]=to
+    msg.attach(MIMEText(html,"html"))
+    with smtplib.SMTP_SSL("smtp.gmail.com",465) as s:
+        s.login(user,pwd); s.sendmail(user,to,msg.as_string())
+    log.info(f"✅ 발송→{to}")
+
+def main():
+    try:
+        log.info("=== ATH 리포트 및 DB 저장 시작 ===")
+        info=get_trading_info(); usd_krw=get_usd_krw()
+        
+        us=get_us_ath(usd_krw)
+        kr=get_kr_ath(usd_krw, info.get("kr_last"))
+        
+        # 1. 구글 시트에 데이터 적재
+        try:
+            sheet = connect_gsheet()
+            if sheet:
+                save_to_gsheet(us, "US", sheet)
+                save_to_gsheet(kr, "KR", sheet)
+            else:
+                log.warning("구글 시트 연결 실패로 저장을 건너뜁니다.")
+        except Exception as e:
+            log.error(f"구글 시트 처리 중 오류: {e}")
+
+        # 2. 이메일 발송
+        send_email(build_email(us,kr,info,usd_krw),build_subject(info))
+        log.info(f"=== 완료: US{len(us)} KR{len(kr)} ===")
+    except Exception as e:
+        log.exception("🚨 메인 프로세스 치명적 오류 발생!")
+        # 에러가 나도 exit code 1을 방지하지 않기 위해 raise 제거
+        # 사용자에게 로그를 보여주기 위해 강제 종료는 시킴
+        raise
+
+if __name__=="__main__": main()
