@@ -2,7 +2,6 @@ name: 📈 Daily ATH Stock Email & DB
 
 on:
   schedule:
-    # 22:00 UTC = 07:00 KST 다음날
     - cron: '0 22 * * 1-5'
   workflow_dispatch:
 
@@ -19,16 +18,15 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip'
 
-      - name: 📦 의존성 설치
-        run: pip install -r requirements.txt
+      - name: 📦 패키지 직접 설치 (에러 원천 차단)
+        run: pip install yfinance FinanceDataReader pandas beautifulsoup4 requests pytz gspread oauth2client
 
-      - name: 📧 ATH 이메일 발송 및 구글시트 저장
+      - name: 📧 이메일 발송 및 구글시트 저장
         env:
-          GMAIL_USER:                ${{ secrets.GMAIL_USER }}
-          GMAIL_APP_PASSWORD:        ${{ secrets.GMAIL_APP_PASSWORD }}
-          RECIPIENT_EMAIL:           ${{ secrets.RECIPIENT_EMAIL }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
           GOOGLE_SHEETS_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
-          GOOGLE_SHEETS_ID:          ${{ secrets.GOOGLE_SHEETS_ID }}
-        run: python src/main.py || true
+          GOOGLE_SHEETS_ID: ${{ secrets.GOOGLE_SHEETS_ID }}
+        run: python src/main.py
