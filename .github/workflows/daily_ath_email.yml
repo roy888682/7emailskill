@@ -2,6 +2,7 @@ name: 📈 Daily ATH Stock Email
 
 on:
   schedule:
+    # 22:00 UTC = 07:00 KST 다음날
     - cron: '0 22 * * 1-5'
   workflow_dispatch:
 
@@ -20,8 +21,11 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: 📦 의존성 설치
-        run: pip install -r requirements.txt
+      - name: 📦 의존성 설치 (FinanceDataReader 버그 수정)
+        run: |
+          pip install --upgrade pip
+          pip install yfinance pandas beautifulsoup4 requests pytz
+          pip install git+https://github.com/FinanceData/FinanceDataReader.git
 
       - name: 📧 ATH 이메일 발송
         env:
