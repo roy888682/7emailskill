@@ -1,79 +1,16 @@
 #!/usr/bin/env python3
-import os, smtplib, logging, time, io, re, json, sys
+import os, smtplib, logging, time, io, re, json
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from datetime import datetime, timedelta, date
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import pytz, yfinance as yf, requests
-from bs4 import BeautifulSoup
 
-# 구글 시트 모듈 미리 로드 (에러 방지)
-try:
-    import gspread
-    from oauth2client.service_account import ServiceAccountCredentials
-    GHEET_OK = True
-except ImportError:
-    GHEET_OK = False
+# 구글 시트 패키지 추가
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-log = logging.getLogger(__name__)
-KST = pytz.timezone("Asia/Seoul")
-UA  = {"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0",
-       "Accept-Language":"ko-KR,ko;q=0.9"}
-
-# ── 구글 시트 연결 및 방탄 처리 ──────────────────────────────────
-def connect_gsheet():
-    if not GHEET_OK:
-        log.warning("gspread 미설치. 시트 저장 건너뜀.")
-        return None
-        
-    scopes = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-    creds_json_str = os.environ.get("GOOGLE_SHEETS_CREDENTIALS")
-    sheet_id = os.environ.get("GOOGLE_SHEETS_ID")
-    
-    if not creds_json_str or not sheet_id:
-        log.warning("구글 시트 Secret 없음. 시트 저장 건너뜀.")
-        return None
-    
-    try:
-        if creds_json_str.startswith('"') and creds_json_str.endswith('"'):
-            creds_json_str = creds_json_str[1:-1].replace('\\"', '"')
-            
-        creds_dict = json.loads(creds_json_str)
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scopes)
-        client = gspread.authorize(creds)
-        
-        sheet = client.open_by_key(sheet_id).sheet1
-        if not sheet.cell(1, 1).value:
-            sheet.append_row(["기록일시", "국가", "티커", "종목명", "현재가", "등락률(%)", "ATH괴리율(%)", "시가총액(조)", "업종"])
-        log.info("✅ 구글 시트 연결 성공")
-        return sheet
-    except Exception as e:
-        log.error(f"구글 시트 인증/연결 실패 (이메일은 정상 발송됨): {e}")
-        return None
-
-def save_to_gsheet(stocks, country, sheet):
-    if not sheet or not stocks:
-        return
-    records = []
-    now_str = datetime.now(KST).strftime("%Y-%m-%d %H:%M")
-    for s in stocks:
-        try:
-            records.append([
-                now_str, country, s.get('ticker', ''), s.get('name', ''), 
-                s.get('price', 0), s.get('change', 0), 
-                s.get('gap', 0), s.get('mcap', '-') or '-', s.get('industry', '-') or '-'
-            ])
-        except:
-            pass
-    try:
-        sheet.append_rows(records)
-        log.info(f"{country} 종목 {len(records)}건 구글 시트에 저장 완료")
-    except Exception as e:
-        log.error(f"구글 시트 저장 실패: {e}")
-
-# ── 기존 유틸리티 및 업종 매핑 ──────────────────────────────────
 def get_kr_industry(code: str):
+    """finance.naver.com PC페이지 '동일업종비교' 링크에서 업종명 추출 (검증된 패턴)"""
     try:
         url = f"https://finance.naver.com/item/main.naver?code={code}"
         r = requests.get(url, headers=UA, timeout=8)
@@ -84,7 +21,8 @@ def get_kr_industry(code: str):
             val = m.group(1).strip()
             if val: return val
         return None
-    except: return None
+    except Exception:
+        return None
 
 INDUSTRY_KR = {
     "Technology":"기술","Healthcare":"헬스케어","Financial Services":"금융",
@@ -136,15 +74,60 @@ INDUSTRY_KR = {
 }
 
 def get_us_industry(ticker: str):
+    """yfinance sector/industry 정보를 한글로 매핑해서 반환 (사전에 없으면 영문 그대로)"""
     try:
         info = yf.Ticker(ticker).info
         ind = info.get("industry") or info.get("sector")
         if not ind: return None
         return INDUSTRY_KR.get(ind, ind)
-    except: return None
+    except Exception:
+        return None
 
-DOW30={"AAPL","MSFT","UNH","GS","HD","AMGN","CAT","CRM","CVX","BA","MCD","HON","V","JPM","AXP","MRK","IBM","MMM","NKE","JNJ","TRV","WMT","PG","VZ","DIS","KO","DOW","CSCO","WBA","NVDA"}
+import pytz, yfinance as yf, requests
+from bs4 import BeautifulSoup
 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+log = logging.getLogger(__name__)
+KST = pytz.timezone("Asia/Seoul")
+UA  = {"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0",
+       "Accept-Language":"ko-KR,ko;q=0.9"}
+
+DOW30={"AAPL","MSFT","UNH","GS","HD","AMGN","CAT","CRM","CVX","BA",
+       "MCD","HON","V","JPM","AXP","MRK","IBM","MMM","NKE","JNJ",
+       "TRV","WMT","PG","VZ","DIS","KO","DOW","CSCO","WBA","NVDA"}
+
+# ── 구글 시트 저장 함수 추가 ────────────────────────────────────
+def save_to_gsheet(us, kr):
+    try:
+        scopes = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+        creds_json = os.environ.get("GOOGLE_SHEETS_CREDENTIALS")
+        sheet_id = os.environ.get("GOOGLE_SHEETS_ID")
+        
+        if not creds_json or not sheet_id:
+            log.warning("구글 시트 Secret 없음. 시트 저장 건너뜀.")
+            return
+
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(json.loads(creds_json), scopes)
+        client = gspread.authorize(creds)
+        sheet = client.open_by_key(sheet_id).sheet1
+        
+        if not sheet.cell(1, 1).value:
+            sheet.append_row(["기록일시", "국가", "티커", "종목명", "현재가", "등락률(%)", "ATH괴리율(%)", "시가총액(조)", "업종"])
+        
+        now_str = datetime.now(KST).strftime("%Y-%m-%d %H:%M")
+        rows = []
+        for s in us:
+            rows.append([now_str, "US", s['ticker'], s['name'], s['price'], s['change'], s.get('gap',0), s.get('mcap','-'), s.get('industry','-')])
+        for s in kr:
+            rows.append([now_str, "KR", s['ticker'], s['name'], s['price'], s['change'], s.get('gap',0), s.get('mcap','-'), s.get('industry','-')])
+            
+        if rows:
+            sheet.append_rows(rows)
+            log.info("✅ 구글 시트 저장 완료")
+    except Exception as e:
+        log.error(f"구글 시트 저장 실패 (이메일은 정상 발송됨): {e}")
+
+# ── 공통 ──────────────────────────────────────────────
 def get_usd_krw():
     try:
         h=yf.Ticker("USDKRW=X").history(period="5d",auto_adjust=True)
@@ -184,6 +167,7 @@ def get_trading_info():
             "us_holiday_msg":hm(expected,us_last,"미국") if us_hol else "",
             "kr_holiday_msg":hm(expected,kr_last,"한국") if kr_hol else ""}
 
+# ── 미국: 2단계 yfinance ──────────────────────────────
 def dl(tickers, period, chunk=80, sleep=1.2):
     out={}; n=len(tickers)
     if not n: return out
@@ -266,6 +250,7 @@ def get_us_ath(usd_krw):
     out.sort(key=lambda x:x["gap"])
     log.info(f"미국 최종:{len(out)}"); return out
 
+# ── 한국: FinanceDataReader + 병렬처리 ───────────────
 def get_kr_ath(usd_krw, kr_last=None):
     try:
         import FinanceDataReader as fdr
@@ -278,13 +263,15 @@ def get_kr_ath(usd_krw, kr_last=None):
     for market_name in ["KOSPI","KOSDAQ"]:
         try:
             df_list=fdr.StockListing(market_name)
-            if df_list is None or df_list.empty: continue
+            if df_list is None or df_list.empty:
+                log.error(f"{market_name} 종목목록 없음"); continue
         except Exception as e:
             log.error(f"{market_name} StockListing 실패:{e}"); continue
 
         sym_col=next((c for c in ["Symbol","Code","종목코드"] if c in df_list.columns), None)
         nam_col=next((c for c in ["Name","종목명"] if c in df_list.columns), None)
-        if not sym_col: continue
+        if not sym_col:
+            log.error(f"{market_name} Symbol컬럼 없음:{df_list.columns.tolist()}"); continue
 
         codes=df_list[sym_col].astype(str).str.zfill(6).tolist()
         names={str(row[sym_col]).zfill(6): str(row[nam_col]) if nam_col else str(row[sym_col])
@@ -314,7 +301,7 @@ def get_kr_ath(usd_krw, kr_last=None):
                 if last<=0 or ath<=0: return None
                 if last>=ath*0.90:
                     name_val=names.get(code,code)
-                    if "스팩" in name_val: return None
+                    if "스팩" in name_val: return None  # 스팩 제외
                     url=f"https://m.stock.naver.com/domestic/stock/{code}/total"
                     return {"ticker":code,"name":name_val,
                             "price":int(last),"change":round((last-prev)/prev*100,2),
@@ -343,7 +330,13 @@ def get_kr_ath(usd_krw, kr_last=None):
     results.sort(key=lambda x:x["gap"])
     log.info(f"한국 최종:{len(results)}"); return results
 
-# ── 이메일 발송 ────────────────────────────────────────────────
+# ── 이메일 ────────────────────────────────────────────
+BADGE_COLOR={"Dow":"#e74c3c","S&P500":"#2980b9","NASDAQ":"#27ae60",
+              "NYSE":"#7f8c8d","KOSPI":"#1a1a2e","KOSDAQ":"#8e44ad"}
+def _badges(labels):
+    if not labels: return ""
+    return f"<div style='margin-top:2px;font-size:11px;color:#888'>{' · '.join(labels)}</div>"
+
 def tbl_html(stocks,title,currency,holiday,date_s,hmsg=""):
     banner=f'<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:10px 16px;margin-bottom:12px;font-size:13px;color:#856404">⚠️ {hmsg}</div>' if holiday and hmsg else ""
     if not stocks:
@@ -362,7 +355,7 @@ def tbl_html(stocks,title,currency,holiday,date_s,hmsg=""):
           <td style='padding:8px;text-align:center;color:{gc};font-weight:bold'>{gap:+.1f}%</td>
           <td style='padding:8px;text-align:right'>
             <span style='color:#555;font-size:13px'>{fm(s.get("mcap"))}</span>
-            <div style='margin-top:2px;font-size:11px;color:#888'>{' · '.join(s.get("index",[]))}</div>
+            {_badges(s.get("index",[]))}
           </td>
           <td style='padding:8px;text-align:left;color:#666;font-size:12px'>{s.get("industry") or "-"}</td>
           <td style='padding:8px'><a href='{lk}' target='_blank' style='color:#333;text-decoration:none'>{s['name']}</a></td>
@@ -416,34 +409,16 @@ def send_email(html,subject):
     log.info(f"✅ 발송→{to}")
 
 def main():
-    try:
-        log.info("=== ATH 리포트 및 DB 저장 시작 ===")
-        info=get_trading_info(); usd_krw=get_usd_krw()
-        
-        us=get_us_ath(usd_krw)
-        kr=get_kr_ath(usd_krw, info.get("kr_last"))
-        
-        # 1. 구글 시트에 데이터 적재
-        try:
-            sheet = connect_gsheet()
-            if sheet:
-                save_to_gsheet(us, "US", sheet)
-                save_to_gsheet(kr, "KR", sheet)
-            else:
-                log.warning("구글 시트 연결 실패로 저장을 건너뜁니다.")
-        except Exception as e:
-            log.error(f"구글 시트 처리 중 오류: {e}")
+    log.info("=== ATH 리포트 시작 ===")
+    info=get_trading_info(); usd_krw=get_usd_krw()
+    us=get_us_ath(usd_krw)
+    kr=get_kr_ath(usd_krw, info.get("kr_last"))
+    
+    # 구글 시트 저장 시도 (실패해도 이메일 발송은 진행됨)
+    save_to_gsheet(us, kr)
+    
+    # 이메일 발송 (원본 유지)
+    send_email(build_email(us,kr,info,usd_krw),build_subject(info))
+    log.info(f"=== 완료: US{len(us)} KR{len(kr)} ===")
 
-        # 2. 이메일 발송
-        try:
-            send_email(build_email(us,kr,info,usd_krw),build_subject(info))
-            log.info(f"=== 완료: US{len(us)} KR{len(kr)} ===")
-        except Exception as e:
-            log.error(f"이메일 발송 중 오류: {e}")
-
-    except Exception as e:
-        log.exception("🚨 메인 프로세스 치명적 오류 발생! (프로그램은 강제로 성공 처리합니다)")
-
-if __name__=="__main__":
-    main()
-    sys.exit(0) # 무조건 exit code 0 (성공)으로 종료
+if __name__=="__main__": main()
