@@ -6,11 +6,10 @@ from datetime import datetime, timedelta, date
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 def get_kr_industry(code: str):
-    """finance.naver.com PC페이지 '동일업종비교' 링크에서 업종명 추출 (검증된 패턴)"""
     try:
         url = f"https://finance.naver.com/item/main.naver?code={code}"
-        r = requests.get(url, headers=UA, timeout=8)
-        r.encoding = r.apparent_encoding or "utf-8"   # 자동 인코딩 감지 (깨짐 방지)
+        r = requests.get(url, headers=UA, timeout=5) # 타임아웃 단축
+        r.encoding = r.apparent_encoding or "utf-8"
         html = r.text
         m = re.search(r'sise_group_detail\.naver\?type=upjong[^"]*"[^>]*>\s*([^<]+?)\s*<', html)
         if m:
@@ -70,7 +69,6 @@ INDUSTRY_KR = {
 }
 
 def get_us_industry(ticker: str):
-    """yfinance sector/industry 정보를 한글로 매핑해서 반환 (사전에 없으면 영문 그대로)"""
     try:
         info = yf.Ticker(ticker).info
         ind = info.get("industry") or info.get("sector")
@@ -91,7 +89,6 @@ DOW30={"AAPL","MSFT","UNH","GS","HD","AMGN","CAT","CRM","CVX","BA",
        "MCD","HON","V","JPM","AXP","MRK","IBM","MMM","NKE","JNJ",
        "TRV","WMT","PG","VZ","DIS","KO","DOW","CSCO","WBA","NVDA"}
 
-# ── 공통 ──────────────────────────────────────────────
 def get_usd_krw():
     try:
         h=yf.Ticker("USDKRW=X").history(period="5d",auto_adjust=True)
@@ -114,7 +111,6 @@ def get_trading_info():
             today_kst=datetime.now(KST).date()
             h=yf.Ticker(sym).history(period="10d",auto_adjust=True)
             if h.empty: return None
-            # 오늘 날짜 제외 — yfinance가 오늘 날짜를 포함해서 반환하는 경우 방지
             dates=[d.date() if hasattr(d,"date") else d for d in h.index]
             past=[d for d in dates if d<today_kst]
             return max(past) if past else None
@@ -132,7 +128,6 @@ def get_trading_info():
             "us_holiday_msg":hm(expected,us_last,"미국") if us_hol else "",
             "kr_holiday_msg":hm(expected,kr_last,"한국") if kr_hol else ""}
 
-# ── 미국: 2단계 yfinance ──────────────────────────────
 def dl(tickers, period, chunk=80, sleep=1.2):
     out={}; n=len(tickers)
     if not n: return out
@@ -193,7 +188,6 @@ def get_us_ath(usd_krw):
                     m=getattr(yf.Ticker(tk).fast_info,"market_cap",None) or 0
                     if m>0: mcap=round(m*usd_krw/1e12,1)
                 except: pass
-                # 지수 레이블
                 idx=[]
                 if tk in DOW30: idx.append("Dow")
                 if tk in sp500_set: idx.append("S&P500")
@@ -216,7 +210,6 @@ def get_us_ath(usd_krw):
     out.sort(key=lambda x:x["gap"])
     log.info(f"미국 최종:{len(out)}"); return out
 
-# ── 한국: FinanceDataReader + 병렬처리 ───────────────
 def get_kr_ath(usd_krw, kr_last=None):
     try:
         import FinanceDataReader as fdr
@@ -234,7 +227,6 @@ def get_kr_ath(usd_krw, kr_last=None):
         except Exception as e:
             log.error(f"{market_name} StockListing 실패:{e}"); continue
 
-        # 심볼 컬럼 찾기
         sym_col=next((c for c in ["Symbol","Code","종목코드"] if c in df_list.columns), None)
         nam_col=next((c for c in ["Name","종목명"] if c in df_list.columns), None)
         if not sym_col:
@@ -244,7 +236,6 @@ def get_kr_ath(usd_krw, kr_last=None):
         names={str(row[sym_col]).zfill(6): str(row[nam_col]) if nam_col else str(row[sym_col])
                for _,row in df_list.iterrows()}
 
-        # 시가총액
         mcaps={}
         mc_col=next((c for c in ["Marcap","MarketCap","시가총액"] if c in df_list.columns),None)
         if mc_col:
@@ -255,10 +246,12 @@ def get_kr_ath(usd_krw, kr_last=None):
                     if v>0: mcaps[code]=round(v/1e12,1)
                 except: pass
 
-        log.info(f"{market_name} {len(codes)}종목 ATH 분석 (10workers)...")
+        # 워커 수 10 -> 3으로 축소 (네이버 차단 방지)
+        log.info(f"{market_name} {len(codes)}종목 ATH 분석 (3workers)...")
 
         def fetch_one(code):
             try:
+                time.sleep(0.2) # 네이버 디도스 방지 딜레이 추가
                 df=fdr.DataReader(code, start_date)
                 if df is None or df.empty or len(df)<30: return None
                 col=next((c for c in ["Close","종가"] if c in df.columns),None)
@@ -269,7 +262,7 @@ def get_kr_ath(usd_krw, kr_last=None):
                 if last<=0 or ath<=0: return None
                 if last>=ath*0.90:
                     name_val=names.get(code,code)
-                    if "스팩" in name_val: return None  # 스팩 제외
+                    if "스팩" in name_val: return None
                     url=f"https://m.stock.naver.com/domestic/stock/{code}/total"
                     return {"ticker":code,"name":name_val,
                             "price":int(last),"change":round((last-prev)/prev*100,2),
@@ -279,7 +272,7 @@ def get_kr_ath(usd_krw, kr_last=None):
                             "url":url}
             except: return None
 
-        with ThreadPoolExecutor(max_workers=10) as ex:
+        with ThreadPoolExecutor(max_workers=3) as ex:
             futs={ex.submit(fetch_one,code):code for code in codes}
             for fut in as_completed(futs):
                 r=fut.result()
@@ -289,7 +282,7 @@ def get_kr_ath(usd_krw, kr_last=None):
 
     if results:
         log.info(f"한국 업종 조회 중 ({len(results)}종목)...")
-        with ThreadPoolExecutor(max_workers=10) as ex:
+        with ThreadPoolExecutor(max_workers=3) as ex: # 워커 수 3으로 축소
             futs={ex.submit(get_kr_industry,s["ticker"]):s for s in results}
             for fut in as_completed(futs):
                 s=futs[fut]
@@ -297,13 +290,6 @@ def get_kr_ath(usd_krw, kr_last=None):
                 except: s["industry"]=None
     results.sort(key=lambda x:x["gap"])
     log.info(f"한국 최종:{len(results)}"); return results
-
-# ── 이메일 ────────────────────────────────────────────
-BADGE_COLOR={"Dow":"#e74c3c","S&P500":"#2980b9","NASDAQ":"#27ae60",
-              "NYSE":"#7f8c8d","KOSPI":"#1a1a2e","KOSDAQ":"#8e44ad"}
-def _badges(labels):
-    if not labels: return ""
-    return f"<div style='margin-top:2px;font-size:11px;color:#888'>{' · '.join(labels)}</div>"
 
 def tbl_html(stocks,title,currency,holiday,date_s,hmsg=""):
     banner=f'<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:10px 16px;margin-bottom:12px;font-size:13px;color:#856404">⚠️ {hmsg}</div>' if holiday and hmsg else ""
@@ -323,7 +309,7 @@ def tbl_html(stocks,title,currency,holiday,date_s,hmsg=""):
           <td style='padding:8px;text-align:center;color:{gc};font-weight:bold'>{gap:+.1f}%</td>
           <td style='padding:8px;text-align:right'>
             <span style='color:#555;font-size:13px'>{fm(s.get("mcap"))}</span>
-            {_badges(s.get("index",[]))}
+            <div style='margin-top:2px;font-size:11px;color:#888'>{' · '.join(s.get("index",[]))}</div>
           </td>
           <td style='padding:8px;text-align:left;color:#666;font-size:12px'>{s.get("industry") or "-"}</td>
           <td style='padding:8px'><a href='{lk}' target='_blank' style='color:#333;text-decoration:none'>{s['name']}</a></td>
