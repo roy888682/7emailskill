@@ -1,7 +1,8 @@
-yfinance>=0.2.40
-finance-datareader
-pandas>=2.0.0
-requests>=2.31.0
-beautifulsoup4>=4.12.0
-lxml>=5.0.0
+yfinance
+FinanceDataReader
+pandas
+beautifulsoup4
+requests
 pytz
+gspread
+oauth2client
