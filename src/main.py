@@ -9,7 +9,7 @@ from bs4 import BeautifulSoup
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
-# ── 구글 시트 연결 ──────────────────────────────────────────────
+# ── 구글 시트 연결 및 방탄 처리 ──────────────────────────────────
 def connect_gsheet():
     scopes = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     creds_json_str = os.environ.get("GOOGLE_SHEETS_CREDENTIALS")
@@ -19,14 +19,23 @@ def connect_gsheet():
         log.warning("구글 시트 Secret이 없습니다. 시트 저장을 건너뜁니다.")
         return None
     
-    creds_dict = json.loads(creds_json_str)
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scopes)
-    client = gspread.authorize(creds)
-    
-    sheet = client.open_by_key(sheet_id).sheet1
-    if not sheet.cell(1, 1).value:
-        sheet.append_row(["기록일시", "국가", "티커", "종목명", "현재가", "등락률(%)", "ATH괴리율(%)", "시가총액(조)", "업종"])
-    return sheet
+    try:
+        # Secret에 따옴표나 이스케이프 문자가 섞여 들어갔을 경우를 대비한 정제 작업
+        if creds_json_str.startswith('"') and creds_json_str.endswith('"'):
+            creds_json_str = creds_json_str[1:-1].replace('\\"', '"')
+            
+        creds_dict = json.loads(creds_json_str)
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scopes)
+        client = gspread.authorize(creds)
+        
+        sheet = client.open_by_key(sheet_id).sheet1
+        if not sheet.cell(1, 1).value:
+            sheet.append_row(["기록일시", "국가", "티커", "종목명", "현재가", "등락률(%)", "ATH괴리율(%)", "시가총액(조)", "업종"])
+        log.info("✅ 구글 시트 연결 성공")
+        return sheet
+    except Exception as e:
+        log.error(f"구글 시트 인증/연결 실패 (이메일은 정상 발송됨): {e}")
+        return None
 
 def save_to_gsheet(stocks, country, sheet):
     if not sheet or not stocks:
@@ -35,8 +44,9 @@ def save_to_gsheet(stocks, country, sheet):
     now_str = datetime.now(KST).strftime("%Y-%m-%d %H:%M")
     for s in stocks:
         records.append([
-            now_str, country, s['ticker'], s['name'], s['price'], s['change'], 
-            s.get('gap', 0), s.get('mcap', '-'), s.get('industry', '-')
+            now_str, country, s.get('ticker', ''), s.get('name', ''), 
+            s.get('price', 0), s.get('change', 0), 
+            s.get('gap', 0), s.get('mcap', '-') or '-', s.get('industry', '-') or '-'
         ])
     try:
         sheet.append_rows(records)
@@ -321,7 +331,7 @@ def get_kr_ath(usd_krw, kr_last=None):
     results.sort(key=lambda x:x["gap"])
     log.info(f"한국 최종:{len(results)}"); return results
 
-# ── 이메일 발송 (원본 유지) ────────────────────────────────────
+# ── 이메일 발송 ────────────────────────────────────────────────
 def tbl_html(stocks,title,currency,holiday,date_s,hmsg=""):
     banner=f'<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:10px 16px;margin-bottom:12px;font-size:13px;color:#856404">⚠️ {hmsg}</div>' if holiday and hmsg else ""
     if not stocks:
@@ -364,52 +374,4 @@ def build_email(us,kr,info,usd_krw):
     <h1 style="margin:0;font-size:22px">📈 일일 ATH 리포트</h1>
     <p style="margin:6px 0 0;opacity:0.7;font-size:13px">발송일:{td} | ATH ~ -10% | USD/KRW {usd_krw:,.0f}원</p>
   </div>
-  <div style="background:#fff;padding:16px 20px;border-radius:8px;margin-top:12px;box-shadow:0 1px 4px rgba(0,0,0,.08);display:flex;gap:16px;flex-wrap:wrap">
-    <div style="background:#eaf4ff;border-radius:6px;padding:10px 20px">
-      <div style="font-size:11px;color:#555">🇺🇸 미국 ({info['us_last_str']})</div>
-      <div style="font-size:26px;font-weight:bold;color:#1a1a2e">{len(us)}종목</div></div>
-    <div style="background:#eaffea;border-radius:6px;padding:10px 20px">
-      <div style="font-size:11px;color:#555">🇰🇷 한국 ({info['kr_last_str']})</div>
-      <div style="font-size:26px;font-weight:bold;color:#1a1a2e">{len(kr)}종목</div></div>
-  </div>
-  <div style="background:#fff;padding:20px;border-radius:8px;margin-top:12px;box-shadow:0 1px 4px rgba(0,0,0,.08)">
-    {tbl_html(us,"🇺🇸 미국 전체 상장 보통주","USD",info["us_holiday"],info["us_last_str"],info.get("us_holiday_msg",""))}
-    <div style="margin-top:36px"></div>
-    {tbl_html(kr,"🇰🇷 한국 KOSPI/KOSDAQ 전체","KRW",info["kr_holiday"],info["kr_last_str"],info.get("kr_holiday_msg",""))}
-  </div>
-  <p style="font-size:11px;color:#bbb;margin-top:16px;text-align:center">자동 발송 | All Time High 기준 | 투자 권유 아님</p>
-</body></html>"""
-
-def build_subject(info):
-    ut=" [휴장]" if info["us_holiday"] else ""; kt=" [휴장]" if info["kr_holiday"] else ""
-    return f"📈 ATH | 🇺🇸{info['us_last_str']}{ut} / 🇰🇷{info['kr_last_str']}{kt}"
-
-def send_email(html,subject):
-    user=os.environ["GMAIL_USER"]; pwd=os.environ["GMAIL_APP_PASSWORD"]
-    to=os.environ.get("RECIPIENT_EMAIL","ykhan@dacpole.com")
-    msg=MIMEMultipart("alternative"); msg["Subject"]=subject; msg["From"]=user; msg["To"]=to
-    msg.attach(MIMEText(html,"html"))
-    with smtplib.SMTP_SSL("smtp.gmail.com",465) as s:
-        s.login(user,pwd); s.sendmail(user,to,msg.as_string())
-    log.info(f"✅ 발송→{to}")
-
-def main():
-    log.info("=== ATH 리포트 및 DB 저장 시작 ===")
-    info=get_trading_info(); usd_krw=get_usd_krw()
-    
-    us=get_us_ath(usd_krw)
-    kr=get_kr_ath(usd_krw, info.get("kr_last"))
-    
-    # 1. 구글 시트에 데이터 적재 (추가된 부분)
-    try:
-        sheet = connect_gsheet()
-        save_to_gsheet(us, "US", sheet)
-        save_to_gsheet(kr, "KR", sheet)
-    except Exception as e:
-        log.error(f"구글 시트 처리 중 오류 (이메일은 정상 발송됨): {e}")
-
-    # 2. 이메일 발송 (기존 유지)
-    send_email(build_email(us,kr,info,usd_krw),build_subject(info))
-    log.info(f"=== 완료: US{len(us)} KR{len(kr)} ===")
-
-if __name__=="__main__": main()
+  <div style="background:#fff;padding:16px 20px;border-radius:8px;margin-top:12px;box-shadow:0 1px 4px rgba(0,0,0,.08);display:flex;gap:
