@@ -21,6 +21,7 @@ jobs:
 
       - name: 📦 의존성 직접 설치 (requirements.txt 오류 방지)
         run: |
+          python -m pip install --upgrade pip
           pip install yfinance FinanceDataReader pandas beautifulsoup4 requests pytz gspread oauth2client
 
       - name: 📧 이메일 발송 및 구글시트 저장
