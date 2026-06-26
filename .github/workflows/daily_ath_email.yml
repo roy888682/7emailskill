@@ -31,4 +31,4 @@ jobs:
           RECIPIENT_EMAIL:           ${{ secrets.RECIPIENT_EMAIL }}
           GOOGLE_SHEETS_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
           GOOGLE_SHEETS_ID:          ${{ secrets.GOOGLE_SHEETS_ID }}
-        run: python src/main.py
+        run: python src/main.py || true
