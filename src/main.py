@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import os, smtplib, logging, time, io, re, json
+import os, smtplib, logging, time, io, re, json, tempfile
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from datetime import datetime, timedelta, date
@@ -10,7 +10,6 @@ from bs4 import BeautifulSoup
 # 구글 시트 패키지 로드
 try:
     import gspread
-    from oauth2client.service_account import ServiceAccountCredentials
     GSPREAD_OK = True
 except ImportError:
     GSPREAD_OK = False
@@ -367,7 +366,7 @@ def send_email(html,subject):
         s.login(user,pwd); s.sendmail(user,to,msg.as_string())
     log.info(f"✅ 발송→{to}")
 
-# ── 구글 시트 저장 (과거 이력 누적 방식 - 새 탭 생성) ───────────
+# ── 구글 시트 저장 (과거 이력 누적 방식 - 임시 파일 인증) ───────────
 def save_to_gsheet(us, kr):
     if not GSPREAD_OK:
         log.warning("gspread 패키지 미설치. 시트 저장 건너뜀.")
@@ -380,27 +379,32 @@ def save_to_gsheet(us, kr):
         log.warning("구글 시트 Secret 없음. 시트 저장 건너뜀.")
         return
 
+    temp_filename = None
     try:
-        if creds_json_str.startswith('"') and creds_json_str.endswith('"'):
-            creds_json_str = creds_json_str[1:-1]
-        creds_json_str = creds_json_str.replace('\\"', '"').replace("\\n", "")
+        # 1. 임시 파일로 JSON 인증서 생성 (따옴표/이스케이프 문자 오류 완벽 방지)
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            f.write(creds_json_str)
+            temp_filename = f.name
+            
+        gc = gspread.service_account(filename=temp_filename)
+        spreadsheet = gc.open_by_key(sheet_id)
         
-        creds_dict = json.loads(creds_json_str)
-        scopes = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scopes)
-        client = gspread.authorize(creds)
+        # 2. "ATH_누적기록" 탭 찾기 (없으면 새로 생성)
+        sheet = None
+        for ws in spreadsheet.worksheets():
+            if ws.title == "ATH_누적기록":
+                sheet = ws
+                break
         
-        # 1. "ATH_누적기록"이라는 새 시트 탭 찾기 (없으면 새로 만듦)
-        try:
-            sheet = client.open_by_key(sheet_id).worksheet("ATH_누적기록")
-        except gspread.WorksheetNotFound:
-            sheet = client.open_by_key(sheet_id).add_worksheet(title="ATH_누적기록", rows="1000", cols="10")
+        if not sheet:
+            sheet = spreadsheet.add_worksheet(title="ATH_누적기록", rows="1000", cols="10")
+            log.info("✅ 'ATH_누적기록' 새 탭 생성됨")
         
-        # 2. 헤더가 없으면 생성 (A열에 날짜 추가)
+        # 3. 헤더가 없으면 생성 (A열에 날짜 추가)
         if not sheet.cell(1, 1).value:
             sheet.append_row(["날짜", "티커", "ATH 괴리율", "시가총액", "업종", "종목명", "현재가", "등락률", "국가"])
         
-        # 3. 오늘 데이터 준비 (US + KR 합치기)
+        # 4. 오늘 데이터 준비 (US + KR 합치기)
         all_stocks = us + kr
         now_str = datetime.now(KST).strftime("%Y-%m-%d")
         
@@ -418,13 +422,17 @@ def save_to_gsheet(us, kr):
                 s.get('market', '') # I열: 국가
             ])
             
-        # 4. 시트에 데이터 누적 (Append)
+        # 5. 시트에 데이터 누적 (Append)
         if new_rows:
             sheet.append_rows(new_rows)
             log.info(f"✅ 'ATH_누적기록' 시트에 누적 저장 완료 (오늘 추가: {len(new_rows)}종목)")
         
     except Exception as e:
         log.error(f"구글 시트 저장 실패 (이메일은 정상 발송됨): {e}")
+    finally:
+        # 임시 파일 삭제
+        if temp_filename and os.path.exists(temp_filename):
+            os.remove(temp_filename)
 
 def main():
     log.info("=== ATH 리포트 시작 ===")
