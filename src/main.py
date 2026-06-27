@@ -1,14 +1,22 @@
 #!/usr/bin/env python3
-import os, smtplib, logging, time, io, re
+import os, smtplib, logging, time, io, re, json
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from datetime import datetime, timedelta, date
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+# 구글 시트 패키지 로드 (에러 시에도 계속 진행)
+try:
+    import gspread
+    from oauth2client.service_account import ServiceAccountCredentials
+    GSPREAD_OK = True
+except ImportError:
+    GSPREAD_OK = False
+
 def get_kr_industry(code: str):
     try:
         url = f"https://finance.naver.com/item/main.naver?code={code}"
-        r = requests.get(url, headers=UA, timeout=5) # 타임아웃 단축
+        r = requests.get(url, headers=UA, timeout=5)
         r.encoding = r.apparent_encoding or "utf-8"
         html = r.text
         m = re.search(r'sise_group_detail\.naver\?type=upjong[^"]*"[^>]*>\s*([^<]+?)\s*<', html)
@@ -246,12 +254,11 @@ def get_kr_ath(usd_krw, kr_last=None):
                     if v>0: mcaps[code]=round(v/1e12,1)
                 except: pass
 
-        # 워커 수 10 -> 3으로 축소 (네이버 차단 방지)
         log.info(f"{market_name} {len(codes)}종목 ATH 분석 (3workers)...")
 
         def fetch_one(code):
             try:
-                time.sleep(0.2) # 네이버 디도스 방지 딜레이 추가
+                time.sleep(0.2)
                 df=fdr.DataReader(code, start_date)
                 if df is None or df.empty or len(df)<30: return None
                 col=next((c for c in ["Close","종가"] if c in df.columns),None)
@@ -282,7 +289,7 @@ def get_kr_ath(usd_krw, kr_last=None):
 
     if results:
         log.info(f"한국 업종 조회 중 ({len(results)}종목)...")
-        with ThreadPoolExecutor(max_workers=3) as ex: # 워커 수 3으로 축소
+        with ThreadPoolExecutor(max_workers=3) as ex:
             futs={ex.submit(get_kr_industry,s["ticker"]):s for s in results}
             for fut in as_completed(futs):
                 s=futs[fut]
@@ -362,11 +369,58 @@ def send_email(html,subject):
         s.login(user,pwd); s.sendmail(user,to,msg.as_string())
     log.info(f"✅ 발송→{to}")
 
+# ── 구글 시트 저장 함수 (완벽한 방탄 처리) ───────────────────────
+def save_to_gsheet(us, kr):
+    if not GSPREAD_OK:
+        log.warning("gspread 패키지 미설치. 시트 저장 건너뜀.")
+        return
+    try:
+        scopes = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+        creds_json_str = os.environ.get("GOOGLE_SHEETS_CREDENTIALS", "")
+        sheet_id = os.environ.get("GOOGLE_SHEETS_ID", "")
+        
+        if not creds_json_str or not sheet_id:
+            log.warning("구글 시트 Secret 없음. 시트 저장 건너뜀.")
+            return
+
+        if creds_json_str.startswith('"') and creds_json_str.endswith('"'):
+            creds_json_str = creds_json_str[1:-1]
+        creds_json_str = creds_json_str.replace('\\"', '"').replace("\\n", "")
+        
+        creds_dict = json.loads(creds_json_str)
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scopes)
+        client = gspread.authorize(creds)
+        sheet = client.open_by_key(sheet_id).sheet1
+        
+        if not sheet.cell(1, 1).value:
+            sheet.append_row(["기록일자", "국가", "티커", "종목명", "현재가", "등락률(%)", "ATH괴리율(%)", "시가총액(조)", "업종"])
+        
+        now_str = datetime.now(KST).strftime("%Y-%m-%d")
+        rows = []
+        for s in us:
+            rows.append([now_str, "US", s.get('ticker', ''), s.get('name', ''), s.get('price', 0), s.get('change', 0), s.get('gap', 0), s.get('mcap', '-') or '-', s.get('industry', '-') or '-'])
+        for s in kr:
+            rows.append([now_str, "KR", s.get('ticker', ''), s.get('name', ''), s.get('price', 0), s.get('change', 0), s.get('gap', 0), s.get('mcap', '-') or '-', s.get('industry', '-') or '-'])
+            
+        if rows:
+            sheet.append_rows(rows)
+            log.info("✅ 구글 시트 저장 완료")
+    except Exception as e:
+        log.error(f"구글 시트 저장 실패 (이메일은 정상 발송됨): {e}")
+
 def main():
     log.info("=== ATH 리포트 시작 ===")
     info=get_trading_info(); usd_krw=get_usd_krw()
     us=get_us_ath(usd_krw)
     kr=get_kr_ath(usd_krw, info.get("kr_last"))
+    
+    # 1. 구글 시트 저장 시도 (여기서 에러나도 밑으로 안 내려감)
+    try:
+        save_to_gsheet(us, kr)
+    except Exception as e:
+        log.error(f"시트 저장 중 치명적 오류: {e}")
+    
+    # 2. 이메일 발송 (클로드 원본 유지)
     send_email(build_email(us,kr,info,usd_krw),build_subject(info))
     log.info(f"=== 완료: US{len(us)} KR{len(kr)} ===")
 
