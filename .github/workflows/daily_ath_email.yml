@@ -21,15 +21,17 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: 📦 의존성 설치 (FinanceDataReader 버그 수정)
+      - name: 📦 의존성 설치
         run: |
           pip install --upgrade pip
-          pip install yfinance pandas beautifulsoup4 requests pytz
+          pip install yfinance pandas beautifulsoup4 requests pytz gspread oauth2client
           pip install git+https://github.com/FinanceData/FinanceDataReader.git
 
-      - name: 📧 ATH 이메일 발송
+      - name: 📧 ATH 이메일 발송 및 구글시트 저장
         env:
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
+          GOOGLE_SHEETS_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
+          GOOGLE_SHEETS_ID: ${{ secrets.GOOGLE_SHEETS_ID }}
         run: python src/main.py
