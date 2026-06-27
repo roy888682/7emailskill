@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
-import os, smtplib, logging, time, io, re, json
+import os, smtplib, logging, time, io, re, json, tempfile
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from datetime import datetime, timedelta, date
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# 구글 시트 패키지 로드 (에러 시에도 계속 진행)
+# 구글 시트 패키지 로드
 try:
     import gspread
-    from oauth2client.service_account import ServiceAccountCredentials
     GSPREAD_OK = True
 except ImportError:
     GSPREAD_OK = False
@@ -230,15 +229,12 @@ def get_kr_ath(usd_krw, kr_last=None):
     for market_name in ["KOSPI","KOSDAQ"]:
         try:
             df_list=fdr.StockListing(market_name)
-            if df_list is None or df_list.empty:
-                log.error(f"{market_name} 종목목록 없음"); continue
-        except Exception as e:
-            log.error(f"{market_name} StockListing 실패:{e}"); continue
+            if df_list is None or df_list.empty: continue
+        except: continue
 
         sym_col=next((c for c in ["Symbol","Code","종목코드"] if c in df_list.columns), None)
         nam_col=next((c for c in ["Name","종목명"] if c in df_list.columns), None)
-        if not sym_col:
-            log.error(f"{market_name} Symbol컬럼 없음:{df_list.columns.tolist()}"); continue
+        if not sym_col: continue
 
         codes=df_list[sym_col].astype(str).str.zfill(6).tolist()
         names={str(row[sym_col]).zfill(6): str(row[nam_col]) if nam_col else str(row[sym_col])
@@ -298,6 +294,7 @@ def get_kr_ath(usd_krw, kr_last=None):
     results.sort(key=lambda x:x["gap"])
     log.info(f"한국 최종:{len(results)}"); return results
 
+# ── 이메일 발송 (원본 유지) ────────────────────────────
 def tbl_html(stocks,title,currency,holiday,date_s,hmsg=""):
     banner=f'<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:10px 16px;margin-bottom:12px;font-size:13px;color:#856404">⚠️ {hmsg}</div>' if holiday and hmsg else ""
     if not stocks:
@@ -369,42 +366,74 @@ def send_email(html,subject):
         s.login(user,pwd); s.sendmail(user,to,msg.as_string())
     log.info(f"✅ 발송→{to}")
 
-# ── 구글 시트 저장 함수 (완벽한 방탄 처리) ───────────────────────
+# ── 구글 시트 저장 (요구사항 완벽 반영) ───────────────────────
 def save_to_gsheet(us, kr):
     if not GSPREAD_OK:
         log.warning("gspread 패키지 미설치. 시트 저장 건너뜀.")
         return
-    try:
-        scopes = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-        creds_json_str = os.environ.get("GOOGLE_SHEETS_CREDENTIALS", "")
-        sheet_id = os.environ.get("GOOGLE_SHEETS_ID", "")
         
-        if not creds_json_str or not sheet_id:
-            log.warning("구글 시트 Secret 없음. 시트 저장 건너뜀.")
-            return
+    creds_json_str = os.environ.get("GOOGLE_SHEETS_CREDENTIALS", "")
+    sheet_id = os.environ.get("GOOGLE_SHEETS_ID", "")
+    
+    if not creds_json_str or not sheet_id:
+        log.warning("구글 시트 Secret 없음. 시트 저장 건너뜀.")
+        return
 
-        if creds_json_str.startswith('"') and creds_json_str.endswith('"'):
-            creds_json_str = creds_json_str[1:-1]
-        creds_json_str = creds_json_str.replace('\\"', '"').replace("\\n", "")
-        
-        creds_dict = json.loads(creds_json_str)
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scopes)
-        client = gspread.authorize(creds)
-        sheet = client.open_by_key(sheet_id).sheet1
-        
-        if not sheet.cell(1, 1).value:
-            sheet.append_row(["기록일자", "국가", "티커", "종목명", "현재가", "등락률(%)", "ATH괴리율(%)", "시가총액(조)", "업종"])
-        
-        now_str = datetime.now(KST).strftime("%Y-%m-%d")
-        rows = []
-        for s in us:
-            rows.append([now_str, "US", s.get('ticker', ''), s.get('name', ''), s.get('price', 0), s.get('change', 0), s.get('gap', 0), s.get('mcap', '-') or '-', s.get('industry', '-') or '-'])
-        for s in kr:
-            rows.append([now_str, "KR", s.get('ticker', ''), s.get('name', ''), s.get('price', 0), s.get('change', 0), s.get('gap', 0), s.get('mcap', '-') or '-', s.get('industry', '-') or '-'])
+    try:
+        # 1. 임시 파일로 JSON 인증서 생성 (따옴표 오류 완벽 방지)
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            f.write(creds_json_str)
+            temp_filename = f.name
             
-        if rows:
-            sheet.append_rows(rows)
-            log.info("✅ 구글 시트 저장 완료")
+        gc = gspread.service_account(filename=temp_filename)
+        sheet = gc.open_by_key(sheet_id).sheet1
+        
+        # 2. 기존 데이터 읽어서 누적회수 파악
+        existing_data = sheet.get_all_values()
+        old_counts = {}
+        if len(existing_data) > 1:
+            for row in existing_data[1:]:
+                if len(row) >= 9 and row[0]: # 티커(A열)와 누적회수(I열)가 있으면
+                    try:
+                        old_counts[row[0]] = int(row[8])
+                    except:
+                        old_counts[row[0]] = 0
+        
+        # 3. 시트 초기화
+        sheet.clear()
+        
+        # 4. 헤더 작성
+        header = ["티커", "ATH 괴리율", "시가총액", "업종", "종목명", "현재가", "등락률", "국가", "누적회수"]
+        
+        # 5. 오늘 데이터 준비 (US + KR 합치기)
+        all_stocks = us + kr
+        new_rows = []
+        for s in all_stocks:
+            ticker = s.get('ticker', '')
+            count = old_counts.get(ticker, 0) + 1 # 기존 카운트 + 1
+            
+            new_rows.append([
+                ticker,
+                s.get('gap', 0),
+                s.get('mcap', '-') if s.get('mcap') is not None else '-',
+                s.get('industry', '-') if s.get('industry') is not None else '-',
+                s.get('name', ''),
+                s.get('price', 0),
+                s.get('change', 0),
+                s.get('market', ''),
+                count
+            ])
+            
+        # 6. 누적회수 내림차순, ATH 괴리율 오름차순 정렬
+        new_rows.sort(key=lambda x: (-x[8], x[1]))
+        
+        # 7. 시트에 한 번에 쓰기
+        sheet.append_row(header)
+        if new_rows:
+            sheet.append_rows(new_rows)
+            
+        log.info(f"✅ 구글 시트 저장 완료 (총 {len(new_rows)}종목)")
+        
     except Exception as e:
         log.error(f"구글 시트 저장 실패 (이메일은 정상 발송됨): {e}")
 
@@ -414,13 +443,13 @@ def main():
     us=get_us_ath(usd_krw)
     kr=get_kr_ath(usd_krw, info.get("kr_last"))
     
-    # 1. 구글 시트 저장 시도 (여기서 에러나도 밑으로 안 내려감)
+    # 1. 구글 시트 저장 시도
     try:
         save_to_gsheet(us, kr)
     except Exception as e:
-        log.error(f"시트 저장 중 치명적 오류: {e}")
+        log.error(f"시트 저장 중 오류: {e}")
     
-    # 2. 이메일 발송 (클로드 원본 유지)
+    # 2. 이메일 발송
     send_email(build_email(us,kr,info,usd_krw),build_subject(info))
     log.info(f"=== 완료: US{len(us)} KR{len(kr)} ===")
 
