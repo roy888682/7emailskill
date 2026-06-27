@@ -366,7 +366,7 @@ def send_email(html,subject):
         s.login(user,pwd); s.sendmail(user,to,msg.as_string())
     log.info(f"✅ 발송→{to}")
 
-# ── 구글 시트 저장 (요구사항 완벽 반영) ───────────────────────
+# ── 구글 시트 저장 (과거 이력 누적 방식) ───────────────────────
 def save_to_gsheet(us, kr):
     if not GSPREAD_OK:
         log.warning("gspread 패키지 미설치. 시트 저장 건너뜀.")
@@ -388,51 +388,32 @@ def save_to_gsheet(us, kr):
         gc = gspread.service_account(filename=temp_filename)
         sheet = gc.open_by_key(sheet_id).sheet1
         
-        # 2. 기존 데이터 읽어서 누적회수 파악
-        existing_data = sheet.get_all_values()
-        old_counts = {}
-        if len(existing_data) > 1:
-            for row in existing_data[1:]:
-                if len(row) >= 9 and row[0]: # 티커(A열)와 누적회수(I열)가 있으면
-                    try:
-                        old_counts[row[0]] = int(row[8])
-                    except:
-                        old_counts[row[0]] = 0
+        # 2. 헤더가 없으면 생성 (A열에 날짜 추가)
+        if not sheet.cell(1, 1).value:
+            sheet.append_row(["날짜", "티커", "ATH 괴리율", "시가총액", "업종", "종목명", "현재가", "등락률", "국가"])
         
-        # 3. 시트 초기화
-        sheet.clear()
-        
-        # 4. 헤더 작성
-        header = ["티커", "ATH 괴리율", "시가총액", "업종", "종목명", "현재가", "등락률", "국가", "누적회수"]
-        
-        # 5. 오늘 데이터 준비 (US + KR 합치기)
+        # 3. 오늘 데이터 준비 (US + KR 합치기)
         all_stocks = us + kr
+        now_str = datetime.now(KST).strftime("%Y-%m-%d")
+        
         new_rows = []
         for s in all_stocks:
-            ticker = s.get('ticker', '')
-            count = old_counts.get(ticker, 0) + 1 # 기존 카운트 + 1
-            
             new_rows.append([
-                ticker,
-                s.get('gap', 0),
-                s.get('mcap', '-') if s.get('mcap') is not None else '-',
-                s.get('industry', '-') if s.get('industry') is not None else '-',
-                s.get('name', ''),
-                s.get('price', 0),
-                s.get('change', 0),
-                s.get('market', ''),
-                count
+                now_str, # A열: 날짜
+                s.get('ticker', ''), # B열: 티커
+                s.get('gap', 0), # C열: ATH 괴리율
+                s.get('mcap', '-') if s.get('mcap') is not None else '-', # D열: 시가총액
+                s.get('industry', '-') if s.get('industry') is not None else '-', # E열: 업종
+                s.get('name', ''), # F열: 종목명
+                s.get('price', 0), # G열: 현재가
+                s.get('change', 0), # H열: 등락률
+                s.get('market', '') # I열: 국가
             ])
             
-        # 6. 누적회수 내림차순, ATH 괴리율 오름차순 정렬
-        new_rows.sort(key=lambda x: (-x[8], x[1]))
-        
-        # 7. 시트에 한 번에 쓰기
-        sheet.append_row(header)
+        # 4. 시트에 데이터 누적 (Append) - 기존 데이터는 유지되고 아래에 추가됨
         if new_rows:
             sheet.append_rows(new_rows)
-            
-        log.info(f"✅ 구글 시트 저장 완료 (총 {len(new_rows)}종목)")
+            log.info(f"✅ 구글 시트 누적 저장 완료 (오늘 추가: {len(new_rows)}종목)")
         
     except Exception as e:
         log.error(f"구글 시트 저장 실패 (이메일은 정상 발송됨): {e}")
