@@ -2,9 +2,11 @@ name: 📈 Daily ATH Stock Email
 
 on:
   schedule:
-    # 22:00 UTC = 07:00 KST 다음날
-    - cron: '0 22 * * 1-5'
+    - cron: '0 22 * * 1-5'   # 22:00 UTC = 07:00 KST (화~토)
   workflow_dispatch:
+
+permissions:
+  contents: write             # data/ticker_history.json 자동 commit 허용
 
 jobs:
   send-ath-email:
@@ -22,16 +24,19 @@ jobs:
           cache: 'pip'
 
       - name: 📦 의존성 설치
-        run: |
-          pip install --upgrade pip
-          pip install yfinance pandas beautifulsoup4 requests pytz gspread oauth2client
-          pip install git+https://github.com/FinanceData/FinanceDataReader.git
+        run: pip install -r requirements.txt
 
-      - name: 📧 ATH 이메일 발송 및 구글시트 저장
+      - name: 📧 ATH 이메일 발송
         env:
-          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_USER:         ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
-          RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
-          GOOGLE_SHEETS_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
-          GOOGLE_SHEETS_ID: ${{ secrets.GOOGLE_SHEETS_ID }}
+          RECIPIENT_EMAIL:    ${{ secrets.RECIPIENT_EMAIL }}
         run: python src/main.py
+
+      - name: 📊 티커 히스토리 저장
+        run: |
+          git config user.name  "ATH Bot"
+          git config user.email "bot@noreply.github.com"
+          git add data/ticker_history.json
+          git diff --staged --quiet || git commit -m "data: $(date +%Y-%m-%d)"
+          git push
