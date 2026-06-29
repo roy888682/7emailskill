@@ -1,0 +1,997 @@
+{
+  "IVZ": {
+    "market": "US",
+    "name": "IVZ",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "Q": {
+    "market": "US",
+    "name": "Q",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "CSCO": {
+    "market": "US",
+    "name": "CSCO",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "SOLV": {
+    "market": "US",
+    "name": "SOLV",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "ECL": {
+    "market": "US",
+    "name": "ECL",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "CARR": {
+    "market": "US",
+    "name": "CARR",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "PWR": {
+    "market": "US",
+    "name": "PWR",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "IBKR": {
+    "market": "US",
+    "name": "IBKR",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "KEYS": {
+    "market": "US",
+    "name": "KEYS",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "PRU": {
+    "market": "US",
+    "name": "PRU",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "EG": {
+    "market": "US",
+    "name": "EG",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "NEE": {
+    "market": "US",
+    "name": "NEE",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "WM": {
+    "market": "US",
+    "name": "WM",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "ATO": {
+    "market": "US",
+    "name": "ATO",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "PLD": {
+    "market": "US",
+    "name": "PLD",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "COHR": {
+    "market": "US",
+    "name": "COHR",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "HSIC": {
+    "market": "US",
+    "name": "HSIC",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "TPR": {
+    "market": "US",
+    "name": "TPR",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "BRK-B": {
+    "market": "US",
+    "name": "BRK-B",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "PEG": {
+    "market": "US",
+    "name": "PEG",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "SYY": {
+    "market": "US",
+    "name": "SYY",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "GS": {
+    "market": "US",
+    "name": "GS",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "V": {
+    "market": "US",
+    "name": "V",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "VMC": {
+    "market": "US",
+    "name": "VMC",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "ANET": {
+    "market": "US",
+    "name": "ANET",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "TFC": {
+    "market": "US",
+    "name": "TFC",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "HUBB": {
+    "market": "US",
+    "name": "HUBB",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "PCAR": {
+    "market": "US",
+    "name": "PCAR",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "CHRW": {
+    "market": "US",
+    "name": "CHRW",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "SBUX": {
+    "market": "US",
+    "name": "SBUX",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "EIX": {
+    "market": "US",
+    "name": "EIX",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "WRB": {
+    "market": "US",
+    "name": "WRB",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "PPL": {
+    "market": "US",
+    "name": "PPL",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "ES": {
+    "market": "US",
+    "name": "ES",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "PSX": {
+    "market": "US",
+    "name": "PSX",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "TDY": {
+    "market": "US",
+    "name": "TDY",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "MAR": {
+    "market": "US",
+    "name": "MAR",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "MS": {
+    "market": "US",
+    "name": "MS",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "KDP": {
+    "market": "US",
+    "name": "KDP",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "EBAY": {
+    "market": "US",
+    "name": "EBAY",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "INTC": {
+    "market": "US",
+    "name": "INTC",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "FE": {
+    "market": "US",
+    "name": "FE",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "AMGN": {
+    "market": "US",
+    "name": "AMGN",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "ETN": {
+    "market": "US",
+    "name": "ETN",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "HIG": {
+    "market": "US",
+    "name": "HIG",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "PHM": {
+    "market": "US",
+    "name": "PHM",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "DRI": {
+    "market": "US",
+    "name": "DRI",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "MMM": {
+    "market": "US",
+    "name": "MMM",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "KMI": {
+    "market": "US",
+    "name": "KMI",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "DLR": {
+    "market": "US",
+    "name": "DLR",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "FTV": {
+    "market": "US",
+    "name": "FTV",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "TTWO": {
+    "market": "US",
+    "name": "TTWO",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "HBAN": {
+    "market": "US",
+    "name": "HBAN",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "FIX": {
+    "market": "US",
+    "name": "FIX",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "MU": {
+    "market": "US",
+    "name": "MU",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "PH": {
+    "market": "US",
+    "name": "PH",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "PSA": {
+    "market": "US",
+    "name": "PSA",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "O": {
+    "market": "US",
+    "name": "O",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "YUM": {
+    "market": "US",
+    "name": "YUM",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "EXC": {
+    "market": "US",
+    "name": "EXC",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "JCI": {
+    "market": "US",
+    "name": "JCI",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "HWM": {
+    "market": "US",
+    "name": "HWM",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "SRE": {
+    "market": "US",
+    "name": "SRE",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "TKO": {
+    "market": "US",
+    "name": "TKO",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "DE": {
+    "market": "US",
+    "name": "DE",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "IEX": {
+    "market": "US",
+    "name": "IEX",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "HLT": {
+    "market": "US",
+    "name": "HLT",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "CMI": {
+    "market": "US",
+    "name": "CMI",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "CRWD": {
+    "market": "US",
+    "name": "CRWD",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "WAB": {
+    "market": "US",
+    "name": "WAB",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "BEN": {
+    "market": "US",
+    "name": "BEN",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "GD": {
+    "market": "US",
+    "name": "GD",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "WMB": {
+    "market": "US",
+    "name": "WMB",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "D": {
+    "market": "US",
+    "name": "D",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "TT": {
+    "market": "US",
+    "name": "TT",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "FAST": {
+    "market": "US",
+    "name": "FAST",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "GEV": {
+    "market": "US",
+    "name": "GEV",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "ESS": {
+    "market": "US",
+    "name": "ESS",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "PM": {
+    "market": "US",
+    "name": "PM",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "RL": {
+    "market": "US",
+    "name": "RL",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "FDX": {
+    "market": "US",
+    "name": "FDX",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "DOV": {
+    "market": "US",
+    "name": "DOV",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "PFG": {
+    "market": "US",
+    "name": "PFG",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "VRTX": {
+    "market": "US",
+    "name": "VRTX",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "MET": {
+    "market": "US",
+    "name": "MET",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "AEE": {
+    "market": "US",
+    "name": "AEE",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "LH": {
+    "market": "US",
+    "name": "LH",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "JBL": {
+    "market": "US",
+    "name": "JBL",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "MAS": {
+    "market": "US",
+    "name": "MAS",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "DUK": {
+    "market": "US",
+    "name": "DUK",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "MPC": {
+    "market": "US",
+    "name": "MPC",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "EXPD": {
+    "market": "US",
+    "name": "EXPD",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "NSC": {
+    "market": "US",
+    "name": "NSC",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "EQIX": {
+    "market": "US",
+    "name": "EQIX",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "LIN": {
+    "market": "US",
+    "name": "LIN",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "BNY": {
+    "market": "US",
+    "name": "BNY",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "IRM": {
+    "market": "US",
+    "name": "IRM",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "PKG": {
+    "market": "US",
+    "name": "PKG",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "CAT": {
+    "market": "US",
+    "name": "CAT",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "CTVA": {
+    "market": "US",
+    "name": "CTVA",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "AMD": {
+    "market": "US",
+    "name": "AMD",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "STT": {
+    "market": "US",
+    "name": "STT",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "TRGP": {
+    "market": "US",
+    "name": "TRGP",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "ED": {
+    "market": "US",
+    "name": "ED",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "NI": {
+    "market": "US",
+    "name": "NI",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "UNP": {
+    "market": "US",
+    "name": "UNP",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "TER": {
+    "market": "US",
+    "name": "TER",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "CMS": {
+    "market": "US",
+    "name": "CMS",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "JPM": {
+    "market": "US",
+    "name": "JPM",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "AME": {
+    "market": "US",
+    "name": "AME",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "SO": {
+    "market": "US",
+    "name": "SO",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "GWW": {
+    "market": "US",
+    "name": "GWW",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "URI": {
+    "market": "US",
+    "name": "URI",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "FLEX": {
+    "market": "US",
+    "name": "FLEX",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "VTR": {
+    "market": "US",
+    "name": "VTR",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "KEY": {
+    "market": "US",
+    "name": "KEY",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "CVS": {
+    "market": "US",
+    "name": "CVS",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "ETR": {
+    "market": "US",
+    "name": "ETR",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "HST": {
+    "market": "US",
+    "name": "HST",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "XEL": {
+    "market": "US",
+    "name": "XEL",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "NDSN": {
+    "market": "US",
+    "name": "NDSN",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "NTRS": {
+    "market": "US",
+    "name": "NTRS",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "CAH": {
+    "market": "US",
+    "name": "CAH",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "UAL": {
+    "market": "US",
+    "name": "UAL",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "SNA": {
+    "market": "US",
+    "name": "SNA",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "REG": {
+    "market": "US",
+    "name": "REG",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "CNP": {
+    "market": "US",
+    "name": "CNP",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "BAC": {
+    "market": "US",
+    "name": "BAC",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "AEP": {
+    "market": "US",
+    "name": "AEP",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "JBHT": {
+    "market": "US",
+    "name": "JBHT",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "KO": {
+    "market": "US",
+    "name": "KO",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "WEC": {
+    "market": "US",
+    "name": "WEC",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "CFG": {
+    "market": "US",
+    "name": "CFG",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "FRT": {
+    "market": "US",
+    "name": "FRT",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "KIM": {
+    "market": "US",
+    "name": "KIM",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "RF": {
+    "market": "US",
+    "name": "RF",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "DTE": {
+    "market": "US",
+    "name": "DTE",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "EVRG": {
+    "market": "US",
+    "name": "EVRG",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "PNW": {
+    "market": "US",
+    "name": "PNW",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "EA": {
+    "market": "US",
+    "name": "EA",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "LNT": {
+    "market": "US",
+    "name": "LNT",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "AFL": {
+    "market": "US",
+    "name": "AFL",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "GL": {
+    "market": "US",
+    "name": "GL",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "ABBV": {
+    "market": "US",
+    "name": "ABBV",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "AIZ": {
+    "market": "US",
+    "name": "AIZ",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "ALL": {
+    "market": "US",
+    "name": "ALL",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "AMAT": {
+    "market": "US",
+    "name": "AMAT",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "APH": {
+    "market": "US",
+    "name": "APH",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "CB": {
+    "market": "US",
+    "name": "CB",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "CINF": {
+    "market": "US",
+    "name": "CINF",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "CSX": {
+    "market": "US",
+    "name": "CSX",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "DAL": {
+    "market": "US",
+    "name": "DAL",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "DGX": {
+    "market": "US",
+    "name": "DGX",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "DVA": {
+    "market": "US",
+    "name": "DVA",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "FFIV": {
+    "market": "US",
+    "name": "FFIV",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "FITB": {
+    "market": "US",
+    "name": "FITB",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "FTNT": {
+    "market": "US",
+    "name": "FTNT",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "GE": {
+    "market": "US",
+    "name": "GE",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "GLW": {
+    "market": "US",
+    "name": "GLW",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "JNJ": {
+    "market": "US",
+    "name": "JNJ",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "KLAC": {
+    "market": "US",
+    "name": "KLAC",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "L": {
+    "market": "US",
+    "name": "L",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "LLY": {
+    "market": "US",
+    "name": "LLY",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "LRCX": {
+    "market": "US",
+    "name": "LRCX",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "LYV": {
+    "market": "US",
+    "name": "LYV",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "MNST": {
+    "market": "US",
+    "name": "MNST",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "MO": {
+    "market": "US",
+    "name": "MO",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "MRK": {
+    "market": "US",
+    "name": "MRK",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "MTB": {
+    "market": "US",
+    "name": "MTB",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "PANW": {
+    "market": "US",
+    "name": "PANW",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "PNC": {
+    "market": "US",
+    "name": "PNC",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "ROK": {
+    "market": "US",
+    "name": "ROK",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "SPG": {
+    "market": "US",
+    "name": "SPG",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "TRV": {
+    "market": "US",
+    "name": "TRV",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "USB": {
+    "market": "US",
+    "name": "USB",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "VLO": {
+    "market": "US",
+    "name": "VLO",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "WELL": {
+    "market": "US",
+    "name": "WELL",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "WSM": {
+    "market": "US",
+    "name": "WSM",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "000660": {
+    "market": "KOSPI",
+    "name": "SK하이닉스",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "041830": {
+    "market": "KOSDAQ",
+    "name": "인바디",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "02826K": {
+    "market": "KOSPI",
+    "name": "삼성물산우B",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "093190": {
+    "market": "KOSDAQ",
+    "name": "빅솔론",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "033780": {
+    "market": "KOSPI",
+    "name": "KT&G",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "034730": {
+    "market": "KOSPI",
+    "name": "SK",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "03473K": {
+    "market": "KOSPI",
+    "name": "SK우",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "222800": {
+    "market": "KOSDAQ",
+    "name": "심텍",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "019210": {
+    "market": "KOSDAQ",
+    "name": "와이지-원",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "069960": {
+    "market": "KOSPI",
+    "name": "현대백화점",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "319660": {
+    "market": "KOSDAQ",
+    "name": "피에스케이",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "012510": {
+    "market": "KOSPI",
+    "name": "더존비즈온",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "417310": {
+    "market": "KOSPI",
+    "name": "코람코더원리츠",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "004170": {
+    "market": "KOSPI",
+    "name": "신세계",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "415640": {
+    "market": "KOSPI",
+    "name": "KB발해인프라",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "281820": {
+    "market": "KOSPI",
+    "name": "케이씨텍",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "009420": {
+    "market": "KOSPI",
+    "name": "한올바이오파마",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "095610": {
+    "market": "KOSDAQ",
+    "name": "테스",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "089970": {
+    "market": "KOSDAQ",
+    "name": "브이엠",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "011560": {
+    "market": "KOSDAQ",
+    "name": "세보엠이씨",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "420770": {
+    "market": "KOSDAQ",
+    "name": "기가비스",
+    "first_seen": "2026년 06월 29일(월)"
+  }
+}
