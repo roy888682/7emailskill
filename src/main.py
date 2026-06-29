@@ -1,24 +1,16 @@
 #!/usr/bin/env python3
-import os, smtplib, logging, time, io, re, json, tempfile
+import os, smtplib, logging, time, io, re, json
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from datetime import datetime, timedelta, date
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import pytz, yfinance as yf, requests
-from bs4 import BeautifulSoup
-
-# 구글 시트 패키지 로드
-try:
-    import gspread
-    GSPREAD_OK = True
-except ImportError:
-    GSPREAD_OK = False
 
 def get_kr_industry(code: str):
+    """finance.naver.com PC페이지 '동일업종비교' 링크에서 업종명 추출 (검증된 패턴)"""
     try:
         url = f"https://finance.naver.com/item/main.naver?code={code}"
-        r = requests.get(url, headers=UA, timeout=5)
-        r.encoding = r.apparent_encoding or "utf-8"
+        r = requests.get(url, headers=UA, timeout=8)
+        r.encoding = r.apparent_encoding or "utf-8"   # 자동 인코딩 감지 (깨짐 방지)
         html = r.text
         m = re.search(r'sise_group_detail\.naver\?type=upjong[^"]*"[^>]*>\s*([^<]+?)\s*<', html)
         if m:
@@ -29,10 +21,12 @@ def get_kr_industry(code: str):
         return None
 
 INDUSTRY_KR = {
+    # GICS 11개 섹터
     "Technology":"기술","Healthcare":"헬스케어","Financial Services":"금융",
     "Consumer Cyclical":"경기소비재","Consumer Defensive":"필수소비재",
     "Industrials":"산업재","Energy":"에너지","Utilities":"유틸리티",
     "Real Estate":"부동산","Basic Materials":"소재","Communication Services":"커뮤니케이션서비스",
+    # 세부 업종 (자주 등장하는 항목)
     "Semiconductors":"반도체","Semiconductor Equipment & Materials":"반도체 장비·소재",
     "Software—Infrastructure":"소프트웨어(인프라)","Software—Application":"소프트웨어(응용)",
     "Internet Content & Information":"인터넷 콘텐츠·정보","Internet Retail":"인터넷 소매",
@@ -78,6 +72,7 @@ INDUSTRY_KR = {
 }
 
 def get_us_industry(ticker: str):
+    """yfinance sector/industry 정보를 한글로 매핑해서 반환 (사전에 없으면 영문 그대로)"""
     try:
         info = yf.Ticker(ticker).info
         ind = info.get("industry") or info.get("sector")
@@ -85,6 +80,8 @@ def get_us_industry(ticker: str):
         return INDUSTRY_KR.get(ind, ind)
     except Exception:
         return None
+import pytz, yfinance as yf, requests
+from bs4 import BeautifulSoup
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
@@ -92,10 +89,93 @@ KST = pytz.timezone("Asia/Seoul")
 UA  = {"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0",
        "Accept-Language":"ko-KR,ko;q=0.9"}
 
+HISTORY_FILE = "data/ticker_history.json"
+
+def load_history() -> dict:
+    """ticker_history.json 로드. 없으면 빈 dict 반환"""
+    try:
+        if os.path.exists(HISTORY_FILE):
+            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception as e:
+        log.warning(f"히스토리 로드 실패: {e}")
+    return {}
+
+def save_history(history: dict) -> None:
+    """ticker_history.json 저장"""
+    try:
+        os.makedirs("data", exist_ok=True)
+        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(history, f, ensure_ascii=False, indent=2)
+        log.info(f"히스토리 저장: {len(history)}종목")
+    except Exception as e:
+        log.error(f"히스토리 저장 실패: {e}")
+
+def find_new_tickers(us: list, kr: list, history: dict, today_str: str):
+    """오늘 처음 등장한 신규 티커 추출 + 히스토리 업데이트"""
+    new_us, new_kr = [], []
+    for s in us:
+        tk = s["ticker"]
+        if tk not in history:
+            history[tk] = {"market":"US","name":s["name"],"first_seen":today_str}
+            new_us.append(s)
+    for s in kr:
+        tk = s["ticker"]
+        if tk not in history:
+            history[tk] = {"market":s["market"],"name":s["name"],"first_seen":today_str}
+            new_kr.append(s)
+    return new_us, new_kr
+
+def new_tickers_html(new_us: list, new_kr: list) -> str:
+    """신규 등장 종목 섹션 HTML"""
+    if not new_us and not new_kr:
+        return ""
+
+    def row(s, flag, currency):
+        lk  = s.get("url","#")
+        gap = s.get("gap",0)
+        gc  = "#e74c3c" if gap<=-5 else "#e67e22" if gap<=-1 else "#27ae60"
+        pr  = f"{s['price']:,.2f}" if currency=="USD" else f"{s['price']:,}"
+        ind = s.get("industry") or ""
+        return (f"<tr style='border-bottom:1px solid #f0f0f0'>"
+                f"<td style='padding:7px 10px'>{flag}</td>"
+                f"<td style='padding:7px'><a href='{lk}' target='_blank' style='color:#1565c0;font-weight:bold;text-decoration:none'>{s['ticker']}</a></td>"
+                f"<td style='padding:7px;color:#333'>{s['name']}</td>"
+                f"<td style='padding:7px;font-size:12px;color:#888'>{ind}</td>"
+                f"<td style='padding:7px;text-align:center;color:{gc};font-weight:bold'>{gap:+.1f}%</td>"
+                f"<td style='padding:7px;text-align:right;color:#555'>{pr} {currency}</td>"
+                f"</tr>")
+
+    rows = ""
+    for s in new_us: rows += row(s,"🇺🇸","USD")
+    for s in new_kr: rows += row(s,"🇰🇷","KRW")
+    total = len(new_us)+len(new_kr)
+
+    return f"""
+    <div style="background:#fff;padding:20px;border-radius:8px;margin-top:12px;
+                border-left:4px solid #f39c12;box-shadow:0 1px 4px rgba(0,0,0,.08)">
+      <h2 style="margin:0 0 4px;color:#1a1a2e;font-size:18px">🆕 신규 등장 종목 — {total}개</h2>
+      <p style="margin:0 0 12px;color:#888;font-size:12px">데이터베이스에 오늘 처음 등장한 종목</p>
+      <table style="border-collapse:collapse;width:100%;font-size:14px">
+        <thead>
+          <tr style="background:#f39c12;color:#fff">
+            <th style="padding:8px">국가</th>
+            <th style="padding:8px;text-align:left">티커</th>
+            <th style="padding:8px;text-align:left">종목명</th>
+            <th style="padding:8px;text-align:left">업종</th>
+            <th style="padding:8px;text-align:center">ATH 괴리율</th>
+            <th style="padding:8px;text-align:right">현재가</th>
+          </tr>
+        </thead>
+        <tbody>{rows}</tbody>
+      </table>
+    </div>"""
+
 DOW30={"AAPL","MSFT","UNH","GS","HD","AMGN","CAT","CRM","CVX","BA",
        "MCD","HON","V","JPM","AXP","MRK","IBM","MMM","NKE","JNJ",
        "TRV","WMT","PG","VZ","DIS","KO","DOW","CSCO","WBA","NVDA"}
 
+# ── 공통 ──────────────────────────────────────────────
 def get_usd_krw():
     try:
         h=yf.Ticker("USDKRW=X").history(period="5d",auto_adjust=True)
@@ -118,6 +198,7 @@ def get_trading_info():
             today_kst=datetime.now(KST).date()
             h=yf.Ticker(sym).history(period="10d",auto_adjust=True)
             if h.empty: return None
+            # 오늘 날짜 제외 — yfinance가 오늘 날짜를 포함해서 반환하는 경우 방지
             dates=[d.date() if hasattr(d,"date") else d for d in h.index]
             past=[d for d in dates if d<today_kst]
             return max(past) if past else None
@@ -135,6 +216,7 @@ def get_trading_info():
             "us_holiday_msg":hm(expected,us_last,"미국") if us_hol else "",
             "kr_holiday_msg":hm(expected,kr_last,"한국") if kr_hol else ""}
 
+# ── 미국: 2단계 yfinance ──────────────────────────────
 def dl(tickers, period, chunk=80, sleep=1.2):
     out={}; n=len(tickers)
     if not n: return out
@@ -195,6 +277,7 @@ def get_us_ath(usd_krw):
                     m=getattr(yf.Ticker(tk).fast_info,"market_cap",None) or 0
                     if m>0: mcap=round(m*usd_krw/1e12,1)
                 except: pass
+                # 지수 레이블
                 idx=[]
                 if tk in DOW30: idx.append("Dow")
                 if tk in sp500_set: idx.append("S&P500")
@@ -217,6 +300,7 @@ def get_us_ath(usd_krw):
     out.sort(key=lambda x:x["gap"])
     log.info(f"미국 최종:{len(out)}"); return out
 
+# ── 한국: FinanceDataReader + 병렬처리 ───────────────
 def get_kr_ath(usd_krw, kr_last=None):
     try:
         import FinanceDataReader as fdr
@@ -229,17 +313,22 @@ def get_kr_ath(usd_krw, kr_last=None):
     for market_name in ["KOSPI","KOSDAQ"]:
         try:
             df_list=fdr.StockListing(market_name)
-            if df_list is None or df_list.empty: continue
-        except: continue
+            if df_list is None or df_list.empty:
+                log.error(f"{market_name} 종목목록 없음"); continue
+        except Exception as e:
+            log.error(f"{market_name} StockListing 실패:{e}"); continue
 
+        # 심볼 컬럼 찾기
         sym_col=next((c for c in ["Symbol","Code","종목코드"] if c in df_list.columns), None)
         nam_col=next((c for c in ["Name","종목명"] if c in df_list.columns), None)
-        if not sym_col: continue
+        if not sym_col:
+            log.error(f"{market_name} Symbol컬럼 없음:{df_list.columns.tolist()}"); continue
 
         codes=df_list[sym_col].astype(str).str.zfill(6).tolist()
         names={str(row[sym_col]).zfill(6): str(row[nam_col]) if nam_col else str(row[sym_col])
                for _,row in df_list.iterrows()}
 
+        # 시가총액
         mcaps={}
         mc_col=next((c for c in ["Marcap","MarketCap","시가총액"] if c in df_list.columns),None)
         if mc_col:
@@ -250,11 +339,10 @@ def get_kr_ath(usd_krw, kr_last=None):
                     if v>0: mcaps[code]=round(v/1e12,1)
                 except: pass
 
-        log.info(f"{market_name} {len(codes)}종목 ATH 분석 (3workers)...")
+        log.info(f"{market_name} {len(codes)}종목 ATH 분석 (10workers)...")
 
         def fetch_one(code):
             try:
-                time.sleep(0.2)
                 df=fdr.DataReader(code, start_date)
                 if df is None or df.empty or len(df)<30: return None
                 col=next((c for c in ["Close","종가"] if c in df.columns),None)
@@ -265,7 +353,7 @@ def get_kr_ath(usd_krw, kr_last=None):
                 if last<=0 or ath<=0: return None
                 if last>=ath*0.90:
                     name_val=names.get(code,code)
-                    if "스팩" in name_val: return None
+                    if "스팩" in name_val: return None  # 스팩 제외
                     url=f"https://m.stock.naver.com/domestic/stock/{code}/total"
                     return {"ticker":code,"name":name_val,
                             "price":int(last),"change":round((last-prev)/prev*100,2),
@@ -275,7 +363,7 @@ def get_kr_ath(usd_krw, kr_last=None):
                             "url":url}
             except: return None
 
-        with ThreadPoolExecutor(max_workers=3) as ex:
+        with ThreadPoolExecutor(max_workers=10) as ex:
             futs={ex.submit(fetch_one,code):code for code in codes}
             for fut in as_completed(futs):
                 r=fut.result()
@@ -285,7 +373,7 @@ def get_kr_ath(usd_krw, kr_last=None):
 
     if results:
         log.info(f"한국 업종 조회 중 ({len(results)}종목)...")
-        with ThreadPoolExecutor(max_workers=3) as ex:
+        with ThreadPoolExecutor(max_workers=10) as ex:
             futs={ex.submit(get_kr_industry,s["ticker"]):s for s in results}
             for fut in as_completed(futs):
                 s=futs[fut]
@@ -294,7 +382,13 @@ def get_kr_ath(usd_krw, kr_last=None):
     results.sort(key=lambda x:x["gap"])
     log.info(f"한국 최종:{len(results)}"); return results
 
-# ── 이메일 발송 (원본 유지) ────────────────────────────
+# ── 이메일 ────────────────────────────────────────────
+BADGE_COLOR={"Dow":"#e74c3c","S&P500":"#2980b9","NASDAQ":"#27ae60",
+              "NYSE":"#7f8c8d","KOSPI":"#1a1a2e","KOSDAQ":"#8e44ad"}
+def _badges(labels):
+    if not labels: return ""
+    return f"<div style='margin-top:2px;font-size:11px;color:#888'>{' · '.join(labels)}</div>"
+
 def tbl_html(stocks,title,currency,holiday,date_s,hmsg=""):
     banner=f'<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:10px 16px;margin-bottom:12px;font-size:13px;color:#856404">⚠️ {hmsg}</div>' if holiday and hmsg else ""
     if not stocks:
@@ -313,7 +407,7 @@ def tbl_html(stocks,title,currency,holiday,date_s,hmsg=""):
           <td style='padding:8px;text-align:center;color:{gc};font-weight:bold'>{gap:+.1f}%</td>
           <td style='padding:8px;text-align:right'>
             <span style='color:#555;font-size:13px'>{fm(s.get("mcap"))}</span>
-            <div style='margin-top:2px;font-size:11px;color:#888'>{' · '.join(s.get("index",[]))}</div>
+            {_badges(s.get("index",[]))}
           </td>
           <td style='padding:8px;text-align:left;color:#666;font-size:12px'>{s.get("industry") or "-"}</td>
           <td style='padding:8px'><a href='{lk}' target='_blank' style='color:#333;text-decoration:none'>{s['name']}</a></td>
@@ -329,7 +423,7 @@ def tbl_html(stocks,title,currency,holiday,date_s,hmsg=""):
         <th style='padding:10px;text-align:right'>현재가</th><th style='padding:10px;text-align:right'>등락률</th>
       </tr></thead><tbody>{rows}</tbody></table>"""
 
-def build_email(us,kr,info,usd_krw):
+def build_email(us,kr,info,usd_krw,new_us=None,new_kr=None):
     td=datetime.now(KST).strftime("%Y년 %m월 %d일")
     return f"""<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"></head>
 <body style="font-family:'Apple SD Gothic Neo',sans-serif;max-width:780px;margin:auto;padding:20px;background:#fafafa">
@@ -337,6 +431,7 @@ def build_email(us,kr,info,usd_krw):
     <h1 style="margin:0;font-size:22px">📈 일일 ATH 리포트</h1>
     <p style="margin:6px 0 0;opacity:0.7;font-size:13px">발송일:{td} | ATH ~ -10% | USD/KRW {usd_krw:,.0f}원</p>
   </div>
+  {new_tickers_html(new_us or [],new_kr or [])}
   <div style="background:#fff;padding:16px 20px;border-radius:8px;margin-top:12px;box-shadow:0 1px 4px rgba(0,0,0,.08);display:flex;gap:16px;flex-wrap:wrap">
     <div style="background:#eaf4ff;border-radius:6px;padding:10px 20px">
       <div style="font-size:11px;color:#555">🇺🇸 미국 ({info['us_last_str']})</div>
@@ -366,88 +461,22 @@ def send_email(html,subject):
         s.login(user,pwd); s.sendmail(user,to,msg.as_string())
     log.info(f"✅ 발송→{to}")
 
-# ── 구글 시트 저장 (과거 이력 누적 방식 - 임시 파일 인증) ───────────
-def save_to_gsheet(us, kr):
-    if not GSPREAD_OK:
-        log.warning("gspread 패키지 미설치. 시트 저장 건너뜀.")
-        return
-        
-    creds_json_str = os.environ.get("GOOGLE_SHEETS_CREDENTIALS", "")
-    sheet_id = os.environ.get("GOOGLE_SHEETS_ID", "")
-    
-    if not creds_json_str or not sheet_id:
-        log.warning("구글 시트 Secret 없음. 시트 저장 건너뜀.")
-        return
-
-    temp_filename = None
-    try:
-        # 1. 임시 파일로 JSON 인증서 생성 (따옴표/이스케이프 문자 오류 완벽 방지)
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-            f.write(creds_json_str)
-            temp_filename = f.name
-            
-        gc = gspread.service_account(filename=temp_filename)
-        spreadsheet = gc.open_by_key(sheet_id)
-        
-        # 2. "ATH_누적기록" 탭 찾기 (없으면 새로 생성)
-        sheet = None
-        for ws in spreadsheet.worksheets():
-            if ws.title == "ATH_누적기록":
-                sheet = ws
-                break
-        
-        if not sheet:
-            sheet = spreadsheet.add_worksheet(title="ATH_누적기록", rows="1000", cols="10")
-            log.info("✅ 'ATH_누적기록' 새 탭 생성됨")
-        
-        # 3. 헤더가 없으면 생성 (A열에 날짜 추가)
-        if not sheet.cell(1, 1).value:
-            sheet.append_row(["날짜", "티커", "ATH 괴리율", "시가총액", "업종", "종목명", "현재가", "등락률", "국가"])
-        
-        # 4. 오늘 데이터 준비 (US + KR 합치기)
-        all_stocks = us + kr
-        now_str = datetime.now(KST).strftime("%Y-%m-%d")
-        
-        new_rows = []
-        for s in all_stocks:
-            new_rows.append([
-                now_str, # A열: 날짜
-                s.get('ticker', ''), # B열: 티커
-                s.get('gap', 0), # C열: ATH 괴리율
-                s.get('mcap', '-') if s.get('mcap') is not None else '-', # D열: 시가총액
-                s.get('industry', '-') if s.get('industry') is not None else '-', # E열: 업종
-                s.get('name', ''), # F열: 종목명
-                s.get('price', 0), # G열: 현재가
-                s.get('change', 0), # H열: 등락률
-                s.get('market', '') # I열: 국가
-            ])
-            
-        # 5. 시트에 데이터 누적 (Append)
-        if new_rows:
-            sheet.append_rows(new_rows)
-            log.info(f"✅ 'ATH_누적기록' 시트에 누적 저장 완료 (오늘 추가: {len(new_rows)}종목)")
-        
-    except Exception as e:
-        log.error(f"구글 시트 저장 실패 (이메일은 정상 발송됨): {e}")
-    finally:
-        # 임시 파일 삭제
-        if temp_filename and os.path.exists(temp_filename):
-            os.remove(temp_filename)
-
 def main():
     log.info("=== ATH 리포트 시작 ===")
     info=get_trading_info(); usd_krw=get_usd_krw()
     us=get_us_ath(usd_krw)
     kr=get_kr_ath(usd_krw, info.get("kr_last"))
-    
-    # 1. 구글 시트 저장 시도
-    try:
-        save_to_gsheet(us, kr)
-    except Exception as e:
-        log.error(f"시트 저장 중 오류: {e}")
-    
-    # 2. 이메일 발송
-    send_email(build_email(us,kr,info,usd_krw),build_subject(info))
-    log.info(f"=== 완료: US{len(us)} KR{len(kr)} ===")
+
+    # 히스토리 로드 & 신규 티커 추출
+    history  = load_history()
+    today_str= info.get("us_last_str") or datetime.now(KST).strftime("%Y-%m-%d")
+    new_us, new_kr = find_new_tickers(us, kr, history, today_str)
+    log.info(f"신규 티커: US {len(new_us)}개, KR {len(new_kr)}개")
+
+    send_email(build_email(us,kr,info,usd_krw,new_us,new_kr), build_subject(info))
+
+    # 히스토리 파일 저장 (Actions에서 push됨)
+    save_history(history)
+    log.info(f"=== 완료: US{len(us)} KR{len(kr)} / 신규 US{len(new_us)} KR{len(new_kr)} ===")
 
 if __name__=="__main__": main()
