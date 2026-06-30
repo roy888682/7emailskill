@@ -89,42 +89,51 @@ KST = pytz.timezone("Asia/Seoul")
 UA  = {"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0",
        "Accept-Language":"ko-KR,ko;q=0.9"}
 
-HISTORY_FILE = "data/ticker_history.json"
+SNAPSHOT_FILE = "data/daily_snapshots.json"
 
-def load_history() -> dict:
-    """ticker_history.json 로드. 없으면 빈 dict 반환"""
+def load_snapshots() -> dict:
+    """거래일별 스냅샷 로드. 구조: {"US":{"2026-06-26":["AAPL",...]}, "KR":{...}}"""
     try:
-        if os.path.exists(HISTORY_FILE):
-            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+        if os.path.exists(SNAPSHOT_FILE):
+            with open(SNAPSHOT_FILE, "r", encoding="utf-8") as f:
                 return json.load(f)
     except Exception as e:
-        log.warning(f"히스토리 로드 실패: {e}")
-    return {}
+        log.warning(f"스냅샷 로드 실패: {e}")
+    return {"US": {}, "KR": {}}
 
-def save_history(history: dict) -> None:
-    """ticker_history.json 저장"""
+def save_snapshots(snapshots: dict) -> None:
     try:
         os.makedirs("data", exist_ok=True)
-        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-            json.dump(history, f, ensure_ascii=False, indent=2)
-        log.info(f"히스토리 저장: {len(history)}종목")
+        with open(SNAPSHOT_FILE, "w", encoding="utf-8") as f:
+            json.dump(snapshots, f, ensure_ascii=False, indent=2)
+        log.info("스냅샷 저장 완료")
     except Exception as e:
-        log.error(f"히스토리 저장 실패: {e}")
+        log.error(f"스냅샷 저장 실패: {e}")
 
-def find_new_tickers(us: list, kr: list, history: dict, today_str: str):
-    """오늘 처음 등장한 신규 티커 추출 + 히스토리 업데이트"""
-    new_us, new_kr = [], []
-    for s in us:
-        tk = s["ticker"]
-        if tk not in history:
-            history[tk] = {"market":"US","name":s["name"],"first_seen":today_str}
-            new_us.append(s)
-    for s in kr:
-        tk = s["ticker"]
-        if tk not in history:
-            history[tk] = {"market":s["market"],"name":s["name"],"first_seen":today_str}
-            new_kr.append(s)
-    return new_us, new_kr
+def compute_new_tickers(stocks: list, snapshots: dict, market_key: str, date_key: str):
+    """
+    같은 거래일(date_key)을 몇 번 재실행해도 항상 동일한 결과가 나오도록,
+    '바로 직전 거래일' 스냅샷과만 비교한다 (누적 이력 전체와 비교하지 않음).
+    """
+    bucket = snapshots.setdefault(market_key, {})
+
+    # date_key보다 엄격히 이전인 날짜들 중 최신 날짜 = 직전 거래일
+    prior_dates = sorted(d for d in bucket if d < date_key)
+    prev_set = set(bucket[prior_dates[-1]]) if prior_dates else None
+
+    today_set = {s["ticker"] for s in stocks}
+
+    if prev_set is None:
+        # 비교 기준이 될 과거 데이터가 전혀 없는 최초 실행 → 전체를 신규로 간주
+        new_set = set(today_set)
+    else:
+        new_set = today_set - prev_set
+
+    # 오늘 거래일 스냅샷은 항상 "전체 후보 목록"으로 덮어쓴다 (재실행해도 동일 결과 보장)
+    bucket[date_key] = sorted(today_set)
+
+    new_stocks = [s for s in stocks if s["ticker"] in new_set]
+    return new_stocks
 
 def new_tickers_html(new_us: list, new_kr: list) -> str:
     """신규 등장 종목 섹션 HTML — 0건이어도 국가별 카운트는 항상 크게 표시"""
@@ -491,16 +500,19 @@ def main():
     us=get_us_ath(usd_krw)
     kr=get_kr_ath(usd_krw, info.get("kr_last"))
 
-    # 히스토리 로드 & 신규 티커 추출
-    history  = load_history()
-    today_str= info.get("us_last_str") or datetime.now(KST).strftime("%Y-%m-%d")
-    new_us, new_kr = find_new_tickers(us, kr, history, today_str)
-    log.info(f"신규 티커: US {len(new_us)}개, KR {len(new_kr)}개")
+    # 거래일 기준 스냅샷 비교 (같은 거래일 재실행해도 항상 동일 결과)
+    us_date_key = info["us_last"].isoformat() if info.get("us_last") else datetime.now(KST).strftime("%Y-%m-%d")
+    kr_date_key = info["kr_last"].isoformat() if info.get("kr_last") else datetime.now(KST).strftime("%Y-%m-%d")
+
+    snapshots = load_snapshots()
+    new_us = compute_new_tickers(us, snapshots, "US", us_date_key)
+    new_kr = compute_new_tickers(kr, snapshots, "KR", kr_date_key)
+    log.info(f"신규 티커: US {len(new_us)}개, KR {len(new_kr)}개 (US기준일:{us_date_key} KR기준일:{kr_date_key})")
 
     send_email(build_email(us,kr,info,usd_krw,new_us,new_kr), build_subject(info))
 
-    # 히스토리 파일 저장 (Actions에서 push됨)
-    save_history(history)
+    # 스냅샷 저장 (Actions에서 push됨)
+    save_snapshots(snapshots)
     log.info(f"=== 완료: US{len(us)} KR{len(kr)} / 신규 US{len(new_us)} KR{len(new_kr)} ===")
 
 if __name__=="__main__": main()
