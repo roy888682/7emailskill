@@ -993,5 +993,45 @@
     "market": "KOSDAQ",
     "name": "기가비스",
     "first_seen": "2026년 06월 29일(월)"
+  },
+  "000815": {
+    "market": "KOSPI",
+    "name": "삼성화재우",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "241770": {
+    "market": "KOSDAQ",
+    "name": "메카로",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "483650": {
+    "market": "KOSPI",
+    "name": "달바글로벌",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "240810": {
+    "market": "KOSDAQ",
+    "name": "원익IPS",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "105560": {
+    "market": "KOSPI",
+    "name": "KB금융",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "084370": {
+    "market": "KOSDAQ",
+    "name": "유진테크",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "009150": {
+    "market": "KOSPI",
+    "name": "삼성전기",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "031980": {
+    "market": "KOSDAQ",
+    "name": "피에스케이홀딩스",
+    "first_seen": "2026년 06월 29일(월)"
   }
 }
