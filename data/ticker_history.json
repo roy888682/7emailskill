@@ -1033,5 +1033,35 @@
     "market": "KOSDAQ",
     "name": "피에스케이홀딩스",
     "first_seen": "2026년 06월 29일(월)"
+  },
+  "HON": {
+    "market": "US",
+    "name": "HON",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "005935": {
+    "market": "KOSPI",
+    "name": "삼성전자우",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "003690": {
+    "market": "KOSPI",
+    "name": "코리안리",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "005930": {
+    "market": "KOSPI",
+    "name": "삼성전자",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "159010": {
+    "market": "KOSDAQ",
+    "name": "아스플로",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "064290": {
+    "market": "KOSDAQ",
+    "name": "인텍플러스",
+    "first_seen": "2026년 06월 29일(월)"
   }
 }
