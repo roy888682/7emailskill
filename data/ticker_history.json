@@ -1063,5 +1063,15 @@
     "market": "KOSDAQ",
     "name": "인텍플러스",
     "first_seen": "2026년 06월 29일(월)"
+  },
+  "131290": {
+    "market": "KOSDAQ",
+    "name": "티에스이",
+    "first_seen": "2026년 06월 29일(월)"
+  },
+  "055550": {
+    "market": "KOSPI",
+    "name": "신한지주",
+    "first_seen": "2026년 06월 29일(월)"
   }
 }
