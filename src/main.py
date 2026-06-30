@@ -127,9 +127,18 @@ def find_new_tickers(us: list, kr: list, history: dict, today_str: str):
     return new_us, new_kr
 
 def new_tickers_html(new_us: list, new_kr: list) -> str:
-    """신규 등장 종목 섹션 HTML"""
-    if not new_us and not new_kr:
-        return ""
+    """신규 등장 종목 섹션 HTML — 0건이어도 국가별 카운트는 항상 표시"""
+    total = len(new_us) + len(new_kr)
+
+    if total == 0:
+        return f"""
+        <div style="background:#fff;padding:16px 20px;border-radius:8px;margin-top:12px;
+                    border-left:4px solid #bbb;box-shadow:0 1px 4px rgba(0,0,0,.08)">
+          <h2 style="margin:0 0 4px;color:#1a1a2e;font-size:18px">🆕 신규 등장 종목 — 0개</h2>
+          <p style="margin:0;color:#888;font-size:12px">
+            오늘 신규 종목 없음 &nbsp;|&nbsp; 🇺🇸 미국 0개 &nbsp;·&nbsp; 🇰🇷 한국 0개
+          </p>
+        </div>"""
 
     def row(s, flag, currency):
         lk  = s.get("url","#")
@@ -152,13 +161,15 @@ def new_tickers_html(new_us: list, new_kr: list) -> str:
     rows = ""
     for s in new_us: rows += row(s,"🇺🇸","USD")
     for s in new_kr: rows += row(s,"🇰🇷","KRW")
-    total = len(new_us)+len(new_kr)
 
     return f"""
     <div style="background:#fff;padding:20px;border-radius:8px;margin-top:12px;
                 border-left:4px solid #f39c12;box-shadow:0 1px 4px rgba(0,0,0,.08)">
       <h2 style="margin:0 0 4px;color:#1a1a2e;font-size:18px">🆕 신규 등장 종목 — {total}개</h2>
-      <p style="margin:0 0 12px;color:#888;font-size:12px">데이터베이스에 오늘 처음 등장한 종목</p>
+      <p style="margin:0 0 12px;color:#888;font-size:12px">
+        데이터베이스에 오늘 처음 등장한 종목 &nbsp;|&nbsp;
+        🇺🇸 미국 {len(new_us)}개 &nbsp;·&nbsp; 🇰🇷 한국 {len(new_kr)}개
+      </p>
       <table style="border-collapse:collapse;width:100%;font-size:14px">
         <thead>
           <tr style="background:#f39c12;color:#fff">
