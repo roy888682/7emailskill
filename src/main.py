@@ -137,10 +137,13 @@ def new_tickers_html(new_us: list, new_kr: list) -> str:
         gc  = "#e74c3c" if gap<=-5 else "#e67e22" if gap<=-1 else "#27ae60"
         pr  = f"{s['price']:,.2f}" if currency=="USD" else f"{s['price']:,}"
         ind = s.get("industry") or ""
+        mc  = s.get("mcap")
+        mcap_str = f"{mc:,.1f}조" if mc else "-"
         return (f"<tr style='border-bottom:1px solid #f0f0f0'>"
                 f"<td style='padding:7px 10px'>{flag}</td>"
                 f"<td style='padding:7px'><a href='{lk}' target='_blank' style='color:#1565c0;font-weight:bold;text-decoration:none'>{s['ticker']}</a></td>"
                 f"<td style='padding:7px;color:#333'>{s['name']}</td>"
+                f"<td style='padding:7px;text-align:right;color:#555;font-size:13px'>{mcap_str}</td>"
                 f"<td style='padding:7px;font-size:12px;color:#888'>{ind}</td>"
                 f"<td style='padding:7px;text-align:center;color:{gc};font-weight:bold'>{gap:+.1f}%</td>"
                 f"<td style='padding:7px;text-align:right;color:#555'>{pr} {currency}</td>"
@@ -162,6 +165,7 @@ def new_tickers_html(new_us: list, new_kr: list) -> str:
             <th style="padding:8px">국가</th>
             <th style="padding:8px;text-align:left">티커</th>
             <th style="padding:8px;text-align:left">종목명</th>
+            <th style="padding:8px;text-align:right">시가총액</th>
             <th style="padding:8px;text-align:left">업종</th>
             <th style="padding:8px;text-align:center">ATH 괴리율</th>
             <th style="padding:8px;text-align:right">현재가</th>
