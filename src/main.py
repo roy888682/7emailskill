@@ -124,8 +124,8 @@ def compute_new_tickers(stocks: list, snapshots: dict, market_key: str, date_key
     today_set = {s["ticker"] for s in stocks}
 
     if prev_set is None:
-        # 비교 기준이 될 과거 데이터가 전혀 없는 최초 실행 → 전체를 신규로 간주
-        new_set = set(today_set)
+        # 최초 실행 → 오늘을 baseline으로만 저장, 신규 없음 (전부 신규 처리 안 함)
+        new_set = set()
     else:
         new_set = today_set - prev_set
 
