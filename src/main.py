@@ -472,6 +472,10 @@ def get_kr_ath(usd_krw, kr_last=None):
                 try: s["industry"]=fut.result()
                 except: s["industry"]=None
 
+    before_etf_filter = len(out)
+    out = [s for s in out if s.get("industry")]   # 업종 없음 = ETF로 간주하고 제외
+    log.info(f"ETF 제외: {before_etf_filter}종목 → {len(out)}종목")
+
     out.sort(key=lambda x:x["gap"])
     log.info(f"한국 최종:{len(out)}")
     return out
