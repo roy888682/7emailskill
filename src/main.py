@@ -333,142 +333,148 @@ def get_us_ath(usd_krw):
     out.sort(key=lambda x:x["gap"])
     log.info(f"미국 최종:{len(out)}"); return out
 
-# ── 한국: FDR 1차, yfinance 2차 fallback ─────────────
-def get_kr_ath(usd_krw, kr_last=None):
-    try:
-        import FinanceDataReader as fdr
-        HAS_FDR = True
-    except:
-        HAS_FDR = False
-        log.warning("FDR 없음 → yfinance fallback 사용")
+# ── 한국: Naver Finance 전용 (yfinance .KS/.KQ, FDR, KRX API 전부 미사용) ──
+# 근거: finance.naver.com은 이미 업종 조회로 접속 성공이 확인됐고,
+#       yfinance .KS/.KQ 배치·FDR·data.krx.co.kr 은 GitHub Actions에서 반복적으로 0건 반환됨.
+def _kr_market_sum_page(sosok: str, page: int) -> list:
+    """네이버 시가총액 페이지 1장 파싱. 헤더 텍스트로 컬럼 위치를 찾아 구조 변경에 안전하게 대응."""
+    url = f"https://finance.naver.com/sise/sise_market_sum.naver?sosok={sosok}&page={page}"
+    r = requests.get(url, headers=UA, timeout=15)
+    r.encoding = r.apparent_encoding or "euc-kr"
+    soup = BeautifulSoup(r.text, "html.parser")
+    table = soup.find("table", class_="type_2")
+    if not table:
+        return []
 
-    start_date = "2018-01-01"
-    results = []
+    header_row = table.find("tr")
+    header_texts = [h.get_text(strip=True) for h in header_row.find_all(["th","td"])] if header_row else []
+    def col_idx(name):
+        for i,h in enumerate(header_texts):
+            if name in h: return i
+        return None
+    mcap_idx = col_idx("시가총액")
 
-    for market_name, yf_suffix in [("KOSPI",".KS"),("KOSDAQ",".KQ")]:
-        codes_meta = {}  # {code: {name, mcap}}
-
-        # ── 종목 목록 수집 ──
-        if HAS_FDR:
-            try:
-                df_list = fdr.StockListing(market_name)
-                if df_list is not None and not df_list.empty:
-                    sym_col = next((c for c in ["Symbol","Code","종목코드"] if c in df_list.columns), None)
-                    nam_col = next((c for c in ["Name","종목명"] if c in df_list.columns), None)
-                    mc_col  = next((c for c in ["Marcap","MarketCap","시가총액"] if c in df_list.columns), None)
-                    if sym_col:
-                        for _, row in df_list.iterrows():
-                            code = str(row[sym_col]).zfill(6)
-                            name = str(row[nam_col]) if nam_col else code
-                            mcap = None
-                            if mc_col:
-                                try:
-                                    v=float(row[mc_col])
-                                    if v>0: mcap=round(v/1e12,1)
-                                except: pass
-                            codes_meta[code] = {"name":name,"mcap":mcap}
-                        log.info(f"FDR {market_name}: {len(codes_meta)}종목")
-            except Exception as e:
-                log.error(f"FDR StockListing {market_name} 실패: {e}")
-
-        # FDR 목록 수집 실패 시 yfinance로 대체
-        if not codes_meta:
-            log.warning(f"{market_name} FDR 목록 실패 → yfinance 배치 fallback")
-            try:
-                import pandas as pd
-                # krx.co.kr에서 종목코드 수집
-                mkt_id = "STK" if market_name=="KOSPI" else "KSQ"
-                r = requests.post(
-                    "http://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd",
-                    data={"bld":"dbms/MDC/STAT/standard/MDCSTAT01901","mktId":mkt_id,"share":"1","csvxls_isNo":"false"},
-                    headers={**UA,"Referer":"http://data.krx.co.kr/"}, timeout=30)
-                for item in r.json().get("OutBlock_1",[]):
-                    code = item.get("ISU_SRT_CD","").strip()
-                    name = item.get("ISU_ABBRV","").strip()
-                    if code and name:
-                        codes_meta[code] = {"name":name,"mcap":None}
-                log.info(f"KRX API {market_name}: {len(codes_meta)}종목")
-            except Exception as e:
-                log.error(f"KRX API {market_name} 실패: {e}")
-
-        if not codes_meta:
-            log.error(f"{market_name} 종목 목록 수집 완전 실패 → 건너뜀")
+    out = []
+    for tr in table.find_all("tr"):
+        tds = tr.find_all("td")
+        if len(tds) < 3:
             continue
+        a = None
+        for td in tds:
+            cand = td.find("a")
+            if cand and "code=" in cand.get("href",""):
+                a = cand
+                break
+        if not a:
+            continue
+        m = re.search(r"code=(\d+)", a.get("href",""))
+        if not m:
+            continue
+        code = m.group(1)
+        name = a.get_text(strip=True)
 
-        codes = list(codes_meta.keys())
-        log.info(f"{market_name} {len(codes)}종목 가격 조회 시작...")
-
-        found = 0
-        failed = 0
-
-        def fetch_one_kr(code):
-            name_val = codes_meta[code]["name"]
-            if "스팩" in name_val: return None
-
-            # 1차: FDR
-            if HAS_FDR:
-                try:
-                    df = fdr.DataReader(code, start_date)
-                    if df is not None and not df.empty and len(df) >= 30:
-                        col = next((c for c in ["Close","종가"] if c in df.columns), None)
-                        if col:
-                            prices = df[col].dropna().tolist()
-                            if len(prices) >= 2:
-                                last=float(prices[-1]); prev=float(prices[-2]); ath=max(prices)
-                                if last>0 and ath>0 and last>=ath*0.90:
-                                    return {"ticker":code,"name":name_val,"price":int(last),
-                                            "change":round((last-prev)/prev*100,2),
-                                            "gap":round((last-ath)/ath*100,2),
-                                            "mcap":codes_meta[code]["mcap"],
-                                            "index":[market_name],"industry":None,
-                                            "market":market_name,
-                                            "url":f"https://m.stock.naver.com/domestic/stock/{code}/total"}
-                                return None
-                except: pass
-
-            # 2차: yfinance fallback
+        mcap = None
+        if mcap_idx is not None and mcap_idx < len(tds):
             try:
-                s = yf.Ticker(f"{code}{yf_suffix}").history(period="max", auto_adjust=True)["Close"].dropna()
-                if len(s) < 30: return None
-                last=float(s.iloc[-1]); prev=float(s.iloc[-2]); ath=float(s.max())
-                if last>0 and ath>0 and last>=ath*0.90:
-                    mcap = codes_meta[code]["mcap"]
-                    if not mcap:
-                        try:
-                            m = getattr(yf.Ticker(f"{code}{yf_suffix}").fast_info,"market_cap",None) or 0
-                            if m>0: mcap=round(m/1e12,1)
-                        except: pass
-                    return {"ticker":code,"name":name_val,"price":int(last),
-                            "change":round((last-prev)/prev*100,2),
-                            "gap":round((last-ath)/ath*100,2),
-                            "mcap":mcap,"index":[market_name],"industry":None,
-                            "market":market_name,
-                            "url":f"https://m.stock.naver.com/domestic/stock/{code}/total"}
+                v = tds[mcap_idx].get_text(strip=True).replace(",","")
+                if v: mcap = round(float(v)/10000, 1)   # 억원 -> 조원
             except: pass
+
+        out.append({"code":code, "name":name, "mcap":mcap})
+    return out
+
+def get_kr_universe() -> dict:
+    """{code: {"name":..., "mcap":..., "market":"KOSPI"|"KOSDAQ"}} — 네이버 시가총액 페이지 전량 순회"""
+    universe = {}
+    for market_name, sosok in [("KOSPI","0"), ("KOSDAQ","1")]:
+        empty_streak = 0
+        for page in range(1, 60):
+            try:
+                rows = _kr_market_sum_page(sosok, page)
+            except Exception as e:
+                log.error(f"{market_name} p{page} 요청 실패: {e}")
+                rows = []
+            if not rows:
+                empty_streak += 1
+                if empty_streak >= 2:
+                    break
+                continue
+            empty_streak = 0
+            for row in rows:
+                universe[row["code"]] = {"name":row["name"], "mcap":row["mcap"], "market":market_name}
+            time.sleep(0.25)
+        log.info(f"{market_name}: {sum(1 for v in universe.values() if v['market']==market_name)}종목 (네이버 시가총액)")
+
+    log.info(f"한국 전체 유니버스: {len(universe)}종목")
+    return universe
+
+def _kr_price_history(code: str, count: int = 3000) -> list:
+    """네이버 fchart에서 일별 종가 리스트(오래된->최신 순) 반환"""
+    try:
+        url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count={count}&requestType=0"
+        r = requests.get(url, headers=UA, timeout=15)
+        items = re.findall(r"""data=['"]([^'"]+)['"]""", r.text)
+        closes = []
+        for it in items:
+            parts = it.split("|")
+            if len(parts) >= 5:
+                try:
+                    c = float(parts[4])
+                    if c > 0: closes.append(c)
+                except: pass
+        return closes
+    except Exception:
+        return []
+
+def get_kr_ath(usd_krw, kr_last=None):
+    universe = get_kr_universe()
+    if not universe:
+        log.error("한국 종목 유니버스 수집 완전 실패 — 0종목 반환")
+        return []
+
+    log.info(f"한국 {len(universe)}종목 fchart 가격이력 조회 시작 (15 workers)...")
+
+    def fetch_one(code, meta):
+        name = meta["name"]
+        if "스팩" in name:
             return None
+        closes = _kr_price_history(code, count=3000)
+        if len(closes) < 30:
+            return None
+        last, prev, ath = closes[-1], closes[-2], max(closes)
+        if last <= 0 or ath <= 0:
+            return None
+        if last >= ath * 0.90:
+            return {"ticker":code, "name":name, "price":int(last),
+                    "change":round((last-prev)/prev*100,2),
+                    "gap":round((last-ath)/ath*100,2),
+                    "mcap":meta.get("mcap"),
+                    "index":[meta.get("market","KR")], "industry":None,
+                    "market":meta.get("market","KR"),
+                    "url":f"https://m.stock.naver.com/domestic/stock/{code}/total"}
+        return None
 
-        with ThreadPoolExecutor(max_workers=15) as ex:
-            futs = {ex.submit(fetch_one_kr, code): code for code in codes}
-            for fut in as_completed(futs):
-                r = fut.result()
-                if r:
-                    results.append(r); found += 1
-                else:
-                    failed += 1
+    out = []
+    with ThreadPoolExecutor(max_workers=15) as ex:
+        futs = {ex.submit(fetch_one, code, meta): code for code, meta in universe.items()}
+        for fut in as_completed(futs):
+            r = fut.result()
+            if r: out.append(r)
 
-        log.info(f"{market_name} 완료: ATH {found}종목 / 제외 {failed}종목")
+    log.info(f"한국 ATH 후보: {len(out)}종목")
 
-    if results:
-        log.info(f"한국 업종 조회 중 ({len(results)}종목)...")
+    if out:
+        log.info(f"한국 업종 조회 중 ({len(out)}종목)...")
         with ThreadPoolExecutor(max_workers=10) as ex:
-            futs={ex.submit(get_kr_industry,s["ticker"]):s for s in results}
+            futs={ex.submit(get_kr_industry,s["ticker"]):s for s in out}
             for fut in as_completed(futs):
                 s=futs[fut]
                 try: s["industry"]=fut.result()
                 except: s["industry"]=None
 
-    results.sort(key=lambda x:x["gap"])
-    log.info(f"한국 최종:{len(results)}"); return results
+    out.sort(key=lambda x:x["gap"])
+    log.info(f"한국 최종:{len(out)}")
+    return out
 
 # ── 이메일 ────────────────────────────────────────────
 BADGE_COLOR={"Dow":"#e74c3c","S&P500":"#2980b9","NASDAQ":"#27ae60",
