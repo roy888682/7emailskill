@@ -135,6 +135,17 @@ def compute_new_tickers(stocks: list, snapshots: dict, market_key: str, date_key
     new_stocks = [s for s in stocks if s["ticker"] in new_set]
     return new_stocks
 
+def compute_streak_counts(snapshots: dict, market_key: str) -> dict:
+    """
+    별도 DB 없이 daily_snapshots.json만 재활용.
+    각 티커가 저장된 거래일 스냅샷에 총 며칠 등장했는지 세기만 하면 됨 (오늘 포함).
+    """
+    counts = {}
+    for date_key, tickers in snapshots.get(market_key, {}).items():
+        for tk in tickers:
+            counts[tk] = counts.get(tk, 0) + 1
+    return counts
+
 def new_tickers_html(new_us: list, new_kr: list) -> str:
     """신규 등장 종목 섹션 HTML — 0건이어도 국가별 카운트는 항상 크게 표시"""
     total = len(new_us) + len(new_kr)
@@ -500,8 +511,10 @@ def tbl_html(stocks,title,currency,holiday,date_s,hmsg=""):
         gap=s.get("gap",0)
         gc="#e74c3c" if gap<=-5 else "#e67e22" if gap<=-1 else "#27ae60"
         lk=s.get("url","#")
+        streak=s.get("streak",1)
         rows+=f"""<tr style='background:{bg}'>
           <td style='padding:8px 10px'><a href='{lk}' target='_blank' style='color:#1565c0;font-weight:bold;text-decoration:none'>{s['ticker']}</a></td>
+          <td style='padding:8px;text-align:center;color:#888;font-size:12px'>{streak}일째</td>
           <td style='padding:8px;text-align:center;color:{gc};font-weight:bold'>{gap:+.1f}%</td>
           <td style='padding:8px;text-align:right'>
             <span style='color:#555;font-size:13px'>{fm(s.get("mcap"))}</span>
@@ -516,7 +529,7 @@ def tbl_html(stocks,title,currency,holiday,date_s,hmsg=""):
     <p style='color:#aaa;font-size:11px;margin:0 0 10px'>🔗 클릭→네이버 증권 | <span style='color:#e74c3c'>●</span>-5~-10% <span style='color:#e67e22'>●</span>-1~-5% <span style='color:#27ae60'>●</span>0~-1%</p>
     <table style='border-collapse:collapse;width:100%;font-size:14px'>
       <thead><tr style='background:#1a1a2e;color:#fff'>
-        <th style='padding:10px;text-align:left'>티커</th><th style='padding:10px;text-align:center'>ATH 괴리율</th>
+        <th style='padding:10px;text-align:left'>티커</th><th style='padding:10px;text-align:center'>누적일수</th><th style='padding:10px;text-align:center'>ATH 괴리율</th>
         <th style='padding:10px;text-align:right'>시가총액</th><th style='padding:10px;text-align:left'>업종</th><th style='padding:10px;text-align:left'>종목명</th>
         <th style='padding:10px;text-align:right'>현재가</th><th style='padding:10px;text-align:right'>등락률</th>
       </tr></thead><tbody>{rows}</tbody></table>"""
@@ -573,6 +586,12 @@ def main():
     new_us = compute_new_tickers(us, snapshots, "US", us_date_key)
     new_kr = compute_new_tickers(kr, snapshots, "KR", kr_date_key)
     log.info(f"신규 티커: US {len(new_us)}개, KR {len(new_kr)}개 (US기준일:{us_date_key} KR기준일:{kr_date_key})")
+
+    # 누적 등장 횟수 (오늘 스냅샷이 이미 반영된 상태이므로 오늘 포함해서 카운트됨)
+    us_streak = compute_streak_counts(snapshots, "US")
+    kr_streak = compute_streak_counts(snapshots, "KR")
+    for s in us: s["streak"] = us_streak.get(s["ticker"], 1)
+    for s in kr: s["streak"] = kr_streak.get(s["ticker"], 1)
 
     send_email(build_email(us,kr,info,usd_krw,new_us,new_kr), build_subject(info))
 
