@@ -37,10 +37,13 @@ jobs:
         run: |
           git config user.name  "ATH Bot"
           git config user.email "bot@noreply.github.com"
-          git add data/daily_snapshots.json 2>/dev/null || true
+          git add data/daily_snapshots.json
           if git diff --staged --quiet; then
             echo "변경사항 없음 — commit 생략"
           else
             git commit -m "data: $(date +%Y-%m-%d)"
-            git push || echo "⚠️ PUSH 실패 — 저장소 Settings > Actions > General > Workflow permissions 을 'Read and write permissions'로 설정했는지 확인 필요"
+            git pull --rebase origin HEAD
+            git push
           fi
+          echo "── 저장 후 원격 저장소 상태 확인 ──"
+          git log --oneline -3
