@@ -16,6 +16,8 @@ jobs:
     steps:
       - name: ⬇️ 코드 체크아웃
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}          # detached HEAD 방지 — 명시적으로 브랜치에 체크아웃
 
       - name: 🐍 Python 3.11 세팅
         uses: actions/setup-python@v5
@@ -37,13 +39,15 @@ jobs:
         run: |
           git config user.name  "ATH Bot"
           git config user.email "bot@noreply.github.com"
+          echo "── 저장 전 현재 커밋 ──"
+          git rev-parse HEAD
           git add data/daily_snapshots.json
           if git diff --staged --quiet; then
             echo "변경사항 없음 — commit 생략"
           else
             git commit -m "data: $(date +%Y-%m-%d)"
-            git pull --rebase origin HEAD
-            git push
+            git pull --rebase origin ${{ github.ref_name }}
+            git push origin HEAD:${{ github.ref_name }}
           fi
-          echo "── 저장 후 원격 저장소 상태 확인 ──"
+          echo "── 저장 후 커밋 (원격에 실제로 반영된 지점) ──"
           git log --oneline -3
