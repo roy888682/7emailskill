@@ -19,6 +19,34 @@ jobs:
         with:
           ref: ${{ github.ref_name }}          # detached HEAD 방지 — 명시적으로 브랜치에 체크아웃
 
+      - name: 🔍 파일 무결성 검증 (최신 코드인지 실행 전에 확정)
+        run: |
+          echo "── 저장소 최상위 파일 목록 (중복 파일 감지용) ──"
+          ls -la
+
+          echo "── .github/workflows 안 파일 목록 ──"
+          ls -la .github/workflows/
+
+          if [ -f "main.py" ]; then
+            echo "❌ 저장소 최상위에 main.py 중복 파일이 여전히 존재함 — 삭제 필요"
+            exit 1
+          fi
+          if [ -f "daily_ath_email.yml" ]; then
+            echo "❌ 저장소 최상위에 daily_ath_email.yml 중복 파일이 여전히 존재함 — 삭제 필요"
+            exit 1
+          fi
+
+          if ! grep -q "daily_snapshots" src/main.py; then
+            echo "❌ src/main.py 가 구버전임 (daily_snapshots 문자열 없음) — 최신 코드로 교체 필요"
+            exit 1
+          fi
+          if ! grep -q "compute_streak_counts" src/main.py; then
+            echo "❌ src/main.py 가 구버전임 (compute_streak_counts 함수 없음) — 최신 코드로 교체 필요"
+            exit 1
+          fi
+
+          echo "✅ 파일 검증 통과 — 최신 코드가 맞음, 실행 계속 진행"
+
       - name: 🐍 Python 3.11 세팅
         uses: actions/setup-python@v5
         with:
