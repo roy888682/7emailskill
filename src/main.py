@@ -534,14 +534,25 @@ def tbl_html(stocks,title,currency,holiday,date_s,hmsg=""):
         <th style='padding:10px;text-align:right'>현재가</th><th style='padding:10px;text-align:right'>등락률</th>
       </tr></thead><tbody>{rows}</tbody></table>"""
 
-def build_email(us,kr,info,usd_krw,new_us=None,new_kr=None):
+def build_email(us,kr,info,usd_krw,new_us=None,new_kr=None,diag=None):
     td=datetime.now(KST).strftime("%Y년 %m월 %d일")
+    diag = diag or {}
+    us_days = diag.get("us_days_before", "?")
+    kr_days = diag.get("kr_days_before", "?")
+    diag_banner = f"""
+    <div style="background:#e8f0fe;border:1px solid #4285f4;border-radius:8px;
+                padding:10px 16px;margin-top:12px;font-size:12px;color:#1a1a2e">
+      🔧 저장 진단: 이번 실행 시작 시점에 불러온 누적 스냅샷 —
+      🇺🇸 미국 {us_days}일치 / 🇰🇷 한국 {kr_days}일치 저장되어 있었음.
+      (이 숫자가 어제 메일과 비교해 +1 안 늘었으면 git 저장이 아직도 안 되고 있는 것)
+    </div>"""
     return f"""<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"></head>
 <body style="font-family:'Apple SD Gothic Neo',sans-serif;max-width:780px;margin:auto;padding:20px;background:#fafafa">
   <div style="background:#1a1a2e;color:#fff;padding:24px;border-radius:8px">
     <h1 style="margin:0;font-size:22px">📈 일일 ATH 리포트</h1>
     <p style="margin:6px 0 0;opacity:0.7;font-size:13px">발송일:{td} | ATH ~ -10% | USD/KRW {usd_krw:,.0f}원</p>
   </div>
+  {diag_banner}
   {new_tickers_html(new_us or [],new_kr or [])}
   <div style="background:#fff;padding:16px 20px;border-radius:8px;margin-top:12px;box-shadow:0 1px 4px rgba(0,0,0,.08);display:flex;gap:16px;flex-wrap:wrap">
     <div style="background:#eaf4ff;border-radius:6px;padding:10px 20px">
@@ -585,7 +596,9 @@ def main():
     kr_date_key = info["kr_last"].isoformat() if info.get("kr_last") else datetime.now(KST).strftime("%Y-%m-%d")
 
     snapshots = load_snapshots()
-    log.info(f"불러온 스냅샷 누적 일수 — US: {len(snapshots.get('US',{}))}일치, KR: {len(snapshots.get('KR',{}))}일치 "
+    us_days_before = len(snapshots.get('US',{}))
+    kr_days_before = len(snapshots.get('KR',{}))
+    log.info(f"불러온 스냅샷 누적 일수 — US: {us_days_before}일치, KR: {kr_days_before}일치 "
              f"(이 숫자가 매번 실행 후에도 늘지 않고 그대로면 git push가 저장에 실패하고 있다는 뜻)")
     new_us = compute_new_tickers(us, snapshots, "US", us_date_key)
     new_kr = compute_new_tickers(kr, snapshots, "KR", kr_date_key)
@@ -597,7 +610,8 @@ def main():
     for s in us: s["streak"] = us_streak.get(s["ticker"], 1)
     for s in kr: s["streak"] = kr_streak.get(s["ticker"], 1)
 
-    send_email(build_email(us,kr,info,usd_krw,new_us,new_kr), build_subject(info))
+    diag = {"us_days_before": us_days_before, "kr_days_before": kr_days_before}
+    send_email(build_email(us,kr,info,usd_krw,new_us,new_kr,diag), build_subject(info))
 
     # 스냅샷 저장 (Actions에서 push됨)
     save_snapshots(snapshots)
