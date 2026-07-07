@@ -583,6 +583,8 @@ def main():
     kr_date_key = info["kr_last"].isoformat() if info.get("kr_last") else datetime.now(KST).strftime("%Y-%m-%d")
 
     snapshots = load_snapshots()
+    log.info(f"불러온 스냅샷 누적 일수 — US: {len(snapshots.get('US',{}))}일치, KR: {len(snapshots.get('KR',{}))}일치 "
+             f"(이 숫자가 매번 실행 후에도 늘지 않고 그대로면 git push가 저장에 실패하고 있다는 뜻)")
     new_us = compute_new_tickers(us, snapshots, "US", us_date_key)
     new_kr = compute_new_tickers(kr, snapshots, "KR", kr_date_key)
     log.info(f"신규 티커: US {len(new_us)}개, KR {len(new_kr)}개 (US기준일:{us_date_key} KR기준일:{kr_date_key})")
