@@ -572,8 +572,10 @@ def send_email(html,subject):
         s.login(user,pwd); s.sendmail(user,to,msg.as_string())
     log.info(f"✅ 발송→{to}")
 
+CODE_VERSION = "2026-07-08-streak-v2"
+
 def main():
-    log.info("=== ATH 리포트 시작 ===")
+    log.info(f"=== ATH 리포트 시작 (코드버전: {CODE_VERSION}) ===")
     info=get_trading_info(); usd_krw=get_usd_krw()
     us=get_us_ath(usd_krw)
     kr=get_kr_ath(usd_krw, info.get("kr_last"))
