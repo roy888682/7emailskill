@@ -5,9 +5,6 @@ on:
     - cron: '0 22 * * 1-5'   # 22:00 UTC = 07:00 KST (화~토)
   workflow_dispatch:
 
-permissions:
-  contents: write             # data/daily_snapshots.json 자동 commit 허용
-
 jobs:
   send-ath-email:
     runs-on: ubuntu-latest
@@ -16,36 +13,22 @@ jobs:
     steps:
       - name: ⬇️ 코드 체크아웃
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.ref_name }}          # detached HEAD 방지 — 명시적으로 브랜치에 체크아웃
 
       - name: 🔍 파일 무결성 검증 (최신 코드인지 실행 전에 확정)
         run: |
-          echo "── 저장소 최상위 파일 목록 (중복 파일 감지용) ──"
-          ls -la
-
-          echo "── .github/workflows 안 파일 목록 ──"
-          ls -la .github/workflows/
-
           if [ -f "main.py" ]; then
-            echo "❌ 저장소 최상위에 main.py 중복 파일이 여전히 존재함 — 삭제 필요"
+            echo "❌ 저장소 최상위에 main.py 중복 파일이 존재함 — 삭제 필요"
             exit 1
           fi
           if [ -f "daily_ath_email.yml" ]; then
-            echo "❌ 저장소 최상위에 daily_ath_email.yml 중복 파일이 여전히 존재함 — 삭제 필요"
+            echo "❌ 저장소 최상위에 daily_ath_email.yml 중복 파일이 존재함 — 삭제 필요"
             exit 1
           fi
-
           if ! grep -q "daily_snapshots" src/main.py; then
-            echo "❌ src/main.py 가 구버전임 (daily_snapshots 문자열 없음) — 최신 코드로 교체 필요"
+            echo "❌ src/main.py 가 구버전임 — 최신 코드로 교체 필요"
             exit 1
           fi
-          if ! grep -q "compute_streak_counts" src/main.py; then
-            echo "❌ src/main.py 가 구버전임 (compute_streak_counts 함수 없음) — 최신 코드로 교체 필요"
-            exit 1
-          fi
-
-          echo "✅ 파일 검증 통과 — 최신 코드가 맞음, 실행 계속 진행"
+          echo "✅ 파일 검증 통과"
 
       - name: 🐍 Python 3.11 세팅
         uses: actions/setup-python@v5
@@ -56,6 +39,23 @@ jobs:
       - name: 📦 의존성 설치
         run: pip install -r requirements.txt
 
+      - name: 📥 이전 누적 스냅샷 복원 (git push 대신 Actions Cache 사용)
+        uses: actions/cache/restore@v4
+        with:
+          path: data/daily_snapshots.json
+          key: ath-snapshot-${{ github.run_id }}
+          restore-keys: |
+            ath-snapshot-
+
+      - name: 📄 복원 결과 확인
+        run: |
+          if [ -f "data/daily_snapshots.json" ]; then
+            echo "✅ 캐시에서 스냅샷 파일 복원됨"
+            python3 -c "import json; d=json.load(open('data/daily_snapshots.json')); print(f'US {len(d.get(\"US\",{}))}일치, KR {len(d.get(\"KR\",{}))}일치 복원됨')"
+          else
+            echo "ℹ️ 복원된 캐시 없음 (최초 실행이거나 캐시 만료됨) — 오늘자로 새로 시작함"
+          fi
+
       - name: 📧 ATH 이메일 발송
         env:
           GMAIL_USER:         ${{ secrets.GMAIL_USER }}
@@ -63,19 +63,9 @@ jobs:
           RECIPIENT_EMAIL:    ${{ secrets.RECIPIENT_EMAIL }}
         run: python src/main.py
 
-      - name: 📊 티커 히스토리 저장
-        run: |
-          git config user.name  "ATH Bot"
-          git config user.email "bot@noreply.github.com"
-          echo "── 저장 전 현재 커밋 ──"
-          git rev-parse HEAD
-          git add data/daily_snapshots.json
-          if git diff --staged --quiet; then
-            echo "변경사항 없음 — commit 생략"
-          else
-            git commit -m "data: $(date +%Y-%m-%d)"
-            git pull --rebase origin ${{ github.ref_name }}
-            git push origin HEAD:${{ github.ref_name }}
-          fi
-          echo "── 저장 후 커밋 (원격에 실제로 반영된 지점) ──"
-          git log --oneline -3
+      - name: 💾 누적 스냅샷 저장 (다음 실행에서 자동 복원됨)
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data/daily_snapshots.json
+          key: ath-snapshot-${{ github.run_id }}
