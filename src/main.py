@@ -544,7 +544,7 @@ def build_email(us,kr,info,usd_krw,new_us=None,new_kr=None,diag=None):
                 padding:10px 16px;margin-top:12px;font-size:12px;color:#1a1a2e">
       🔧 저장 진단: 이번 실행 시작 시점에 불러온 누적 스냅샷 —
       🇺🇸 미국 {us_days}일치 / 🇰🇷 한국 {kr_days}일치 저장되어 있었음.
-      (이 숫자가 어제 메일과 비교해 +1 안 늘었으면 git 저장이 아직도 안 되고 있는 것)
+      (이 숫자가 어제 메일과 비교해 +1 안 늘었으면 캐시 저장이 아직도 안 되고 있는 것)
     </div>"""
     return f"""<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"></head>
 <body style="font-family:'Apple SD Gothic Neo',sans-serif;max-width:780px;margin:auto;padding:20px;background:#fafafa">
@@ -599,7 +599,7 @@ def main():
     us_days_before = len(snapshots.get('US',{}))
     kr_days_before = len(snapshots.get('KR',{}))
     log.info(f"불러온 스냅샷 누적 일수 — US: {us_days_before}일치, KR: {kr_days_before}일치 "
-             f"(이 숫자가 매번 실행 후에도 늘지 않고 그대로면 git push가 저장에 실패하고 있다는 뜻)")
+             f"(이 숫자가 매번 실행 후에도 늘지 않고 그대로면 캐시 저장이 실패하고 있다는 뜻)")
     new_us = compute_new_tickers(us, snapshots, "US", us_date_key)
     new_kr = compute_new_tickers(kr, snapshots, "KR", kr_date_key)
     log.info(f"신규 티커: US {len(new_us)}개, KR {len(new_kr)}개 (US기준일:{us_date_key} KR기준일:{kr_date_key})")
