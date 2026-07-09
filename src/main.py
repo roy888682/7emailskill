@@ -179,10 +179,13 @@ def new_tickers_html(new_us: list, new_kr: list) -> str:
         ind = s.get("industry") or ""
         mc  = s.get("mcap")
         mcap_str = f"{mc:,.1f}조" if mc else "-"
+        streak = s.get("streak",1)
+        streak_note = f"{streak}일째" if streak==1 else f"{streak}일째 (과거 재등장)"
         return (f"<tr style='border-bottom:1px solid #f0f0f0'>"
                 f"<td style='padding:7px 10px'>{flag}</td>"
                 f"<td style='padding:7px'><a href='{lk}' target='_blank' style='color:#1565c0;font-weight:bold;text-decoration:none'>{s['ticker']}</a></td>"
                 f"<td style='padding:7px;color:#333'>{s['name']}</td>"
+                f"<td style='padding:7px;text-align:center;color:#888;font-size:12px'>{streak_note}</td>"
                 f"<td style='padding:7px;text-align:right;color:#555;font-size:13px'>{mcap_str}</td>"
                 f"<td style='padding:7px;font-size:12px;color:#888'>{ind}</td>"
                 f"<td style='padding:7px;text-align:center;color:{gc};font-weight:bold'>{gap:+.1f}%</td>"
@@ -198,13 +201,16 @@ def new_tickers_html(new_us: list, new_kr: list) -> str:
                 border-left:4px solid #f39c12;box-shadow:0 1px 4px rgba(0,0,0,.08)">
       <h2 style="margin:0 0 12px;color:#1a1a2e;font-size:18px">🆕 신규 등장 종목</h2>
       {count_cards}
-      <p style="margin:0 0 10px;color:#888;font-size:12px">데이터베이스에 오늘 처음 등장한 종목</p>
+      <p style="margin:0 0 10px;color:#888;font-size:12px">
+        전일 대비 오늘 처음 등장한 종목 (※ "N일째 (과거 재등장)"은 예전에 한 번 등장했다가 빠진 뒤 오늘 다시 들어온 경우)
+      </p>
       <table style="border-collapse:collapse;width:100%;font-size:14px">
         <thead>
           <tr style="background:#f39c12;color:#fff">
             <th style="padding:8px">국가</th>
             <th style="padding:8px;text-align:left">티커</th>
             <th style="padding:8px;text-align:left">종목명</th>
+            <th style="padding:8px;text-align:center">누적일수</th>
             <th style="padding:8px;text-align:right">시가총액</th>
             <th style="padding:8px;text-align:left">업종</th>
             <th style="padding:8px;text-align:center">ATH 괴리율</th>
@@ -613,7 +619,7 @@ def main():
     diag = {"us_days_before": us_days_before, "kr_days_before": kr_days_before}
     send_email(build_email(us,kr,info,usd_krw,new_us,new_kr,diag), build_subject(info))
 
-    # 스냅샷 저장 (Actions에서 push됨)
+    # 스냅샷 저장 (Actions Cache로 다음 실행에 전달됨)
     save_snapshots(snapshots)
     log.info(f"=== 완료: US{len(us)} KR{len(kr)} / 신규 US{len(new_us)} KR{len(new_kr)} ===")
 
