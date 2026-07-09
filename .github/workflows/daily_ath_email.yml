@@ -14,6 +14,15 @@ jobs:
       - name: ⬇️ 코드 체크아웃
         uses: actions/checkout@v4
 
+      - name: 🧹 체크아웃으로 딸려온 구버전 스냅샷 파일 제거 (캐시만 신뢰하도록 강제)
+        run: |
+          if [ -f "data/daily_snapshots.json" ]; then
+            echo "⚠️ git에 커밋된 구버전 스냅샷 파일 발견 — 삭제함 (캐시 복원본만 사용)"
+            rm -f data/daily_snapshots.json
+          else
+            echo "✅ git에 커밋된 스냅샷 파일 없음 (정상)"
+          fi
+
       - name: 🔍 파일 무결성 검증 (최신 코드인지 실행 전에 확정)
         run: |
           if [ -f "main.py" ]; then
