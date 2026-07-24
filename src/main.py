@@ -357,7 +357,8 @@ def _kr_market_sum_page(sosok: str, page: int) -> list:
     """네이버 시가총액 페이지 1장 파싱. 헤더 텍스트로 컬럼 위치를 찾아 구조 변경에 안전하게 대응."""
     url = f"https://finance.naver.com/sise/sise_market_sum.naver?sosok={sosok}&page={page}"
     r = requests.get(url, headers=UA, timeout=15)
-    r.encoding = r.apparent_encoding or "euc-kr"
+    r.encoding = "euc-kr"   # 이 페이지는 항상 euc-kr 고정 — apparent_encoding은 페이지마다
+                            # 오탐(키릴 문자 등으로 오判定)이 발생해 일부 종목명만 깨지는 원인이었음
     soup = BeautifulSoup(r.text, "html.parser")
     table = soup.find("table", class_="type_2")
     if not table:
