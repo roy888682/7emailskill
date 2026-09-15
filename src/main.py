@@ -447,7 +447,11 @@ def _kr_price_history(code: str, count: int = 3000) -> list:
 def get_kr_ath(usd_krw, kr_last=None):
     universe = get_kr_universe()
     if not universe:
-        log.error("한국 종목 유니버스 수집 완전 실패 — 0종목 반환")
+        log.warning("한국 종목 유니버스 1차 수집 실패 — 일시적 네트워크 문제일 수 있어 30초 후 재시도")
+        time.sleep(30)
+        universe = get_kr_universe()
+    if not universe:
+        log.error("한국 종목 유니버스 재시도까지 실패 — 0종목 반환 (네트워크 문제 지속 중일 가능성)")
         return []
 
     log.info(f"한국 {len(universe)}종목 fchart 가격이력 조회 시작 (15 workers)...")
