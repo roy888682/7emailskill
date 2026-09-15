@@ -353,82 +353,111 @@ def get_us_ath(usd_krw):
 # ── 한국: Naver Finance 전용 (yfinance .KS/.KQ, FDR, KRX API 전부 미사용) ──
 # 근거: finance.naver.com은 이미 업종 조회로 접속 성공이 확인됐고,
 #       yfinance .KS/.KQ 배치·FDR·data.krx.co.kr 은 GitHub Actions에서 반복적으로 0건 반환됨.
-def _kr_market_sum_page(sosok: str, page: int) -> list:
-    """네이버 시가총액 페이지 1장 파싱. 헤더 텍스트로 컬럼 위치를 찾아 구조 변경에 안전하게 대응."""
-    url = f"https://finance.naver.com/sise/sise_market_sum.naver?sosok={sosok}&page={page}"
-    r = requests.get(url, headers=UA, timeout=15)
-    r.encoding = "euc-kr"   # 이 페이지는 항상 euc-kr 고정 — apparent_encoding은 페이지마다
-                            # 오탐(키릴 문자 등으로 오判定)이 발생해 일부 종목명만 깨지는 원인이었음
-    soup = BeautifulSoup(r.text, "html.parser")
-    table = soup.find("table", class_="type_2")
+def _kr_market_stock_page(market_type: str, start_idx: int, page_size: int = 100):
+    """
+    새 stock.naver.com JSON API 페이지 조회.
+    (구 finance.naver.com/sise/sise_market_sum.naver HTML 페이지는 SPA로 전면 개편되어
+     <table> 태그가 응답에 아예 없어짐 — 2026-09-15 진단 로그로 확인됨.
+     신버전은 stock.naver.com/api/domestic/market/stock/default JSON을 사용.)
+    반환: (rows: list[dict], raw_top_level_keys: list|None — 파싱 실패시 진단용)
+    """
+    url = "https://stock.naver.com/api/domestic/market/stock/default"
+    params = {
+        "tradeType": "KRX",
+        "marketType": market_type,      # "KOSPI" 또는 "KOSDAQ"
+        "orderType": "marketSum",       # 시가총액 순
+        "startIdx": start_idx,
+        "pageSize": page_size,
+    }
+    r = requests.get(url, headers=UA, params=params, timeout=15)
 
-    if page == 1:
-        # 첫 페이지만 상세 진단 — 차단인지 단순 구조변경인지 다음번에 바로 알 수 있게
-        log.info(f"  [진단] sosok={sosok} status={r.status_code} 응답길이={len(r.text)} "
-                 f"table찾음={'Y' if table else 'N'} "
-                 f"body일부={r.text[:150].replace(chr(10),' ') if not table else ''}")
+    if start_idx == 0:
+        log.info(f"  [진단] {market_type} status={r.status_code} 응답길이={len(r.text)}")
 
-    if not table:
-        return []
+    if r.status_code != 200:
+        return [], None
 
-    header_row = table.find("tr")
-    header_texts = [h.get_text(strip=True) for h in header_row.find_all(["th","td"])] if header_row else []
-    def col_idx(name):
-        for i,h in enumerate(header_texts):
-            if name in h: return i
-        return None
-    mcap_idx = col_idx("시가총액")
+    try:
+        data = r.json()
+    except Exception as e:
+        if start_idx == 0:
+            log.warning(f"  [진단] {market_type} JSON파싱실패: {e} body일부={r.text[:200]}")
+        return [], None
 
-    out = []
-    for tr in table.find_all("tr"):
-        tds = tr.find_all("td")
-        if len(tds) < 3:
-            continue
-        a = None
-        for td in tds:
-            cand = td.find("a")
-            if cand and "code=" in cand.get("href",""):
-                a = cand
+    # 응답 최상위 구조 후보 탐색 (list 직접 반환 또는 흔한 wrapper 키들)
+    rows = None
+    if isinstance(data, list):
+        rows = data
+    elif isinstance(data, dict):
+        for key in ("stockList","list","items","data","content","stocks","result"):
+            v = data.get(key)
+            if isinstance(v, list):
+                rows = v
                 break
-        if not a:
-            continue
-        m = re.search(r"code=(\d+)", a.get("href",""))
-        if not m:
-            continue
-        code = m.group(1)
-        name = a.get_text(strip=True)
+        if rows is None and start_idx == 0:
+            log.info(f"  [진단] {market_type} 응답 최상위 키: {list(data.keys())[:15]}")
+
+    return (rows or []), None
+
+
+def _parse_kr_stock_row(row: dict):
+    """itemcode/itemname/marketSum 등 문서화된 필드명 기준 파싱. 실패시 None."""
+    try:
+        code = str(row.get("itemcode") or row.get("code") or row.get("itemCode") or "").strip()
+        name = str(row.get("itemname") or row.get("name") or row.get("itemName") or "").strip()
+        if not code or not name:
+            return None
 
         mcap = None
-        if mcap_idx is not None and mcap_idx < len(tds):
+        raw_mcap = row.get("marketSum")
+        if raw_mcap is not None:
             try:
-                v = tds[mcap_idx].get_text(strip=True).replace(",","")
-                if v: mcap = round(float(v)/10000, 1)   # 억원 -> 조원
-            except: pass
+                v = float(str(raw_mcap).replace(",", ""))
+                if v > 0:
+                    mcap = round(v / 10000, 1)   # 억원 -> 조원 (구버전 페이지와 동일 단위 가정)
+            except Exception:
+                pass
 
-        out.append({"code":code, "name":name, "mcap":mcap})
-    return out
+        return {"code": code, "name": name, "mcap": mcap}
+    except Exception:
+        return None
+
 
 def get_kr_universe() -> dict:
-    """{code: {"name":..., "mcap":..., "market":"KOSPI"|"KOSDAQ"}} — 네이버 시가총액 페이지 전량 순회"""
+    """{code: {"name":..., "mcap":..., "market":"KOSPI"|"KOSDAQ"}} — stock.naver.com JSON API 전량 순회"""
     universe = {}
-    for market_name, sosok in [("KOSPI","0"), ("KOSDAQ","1")]:
-        empty_streak = 0
-        for page in range(1, 60):
+    page_size = 100
+
+    for market_type in ("KOSPI", "KOSDAQ"):
+        start_idx = 0
+        collected = 0
+        for _ in range(60):   # 안전판: 최대 60페이지(=6000종목)까지만
             try:
-                rows = _kr_market_sum_page(sosok, page)
+                rows, _ = _kr_market_stock_page(market_type, start_idx, page_size)
             except Exception as e:
-                log.error(f"{market_name} p{page} 요청 실패: {e}")
+                log.error(f"{market_type} startIdx={start_idx} 요청 실패: {e}")
                 rows = []
+
             if not rows:
-                empty_streak += 1
-                if empty_streak >= 2:
-                    break
-                continue
-            empty_streak = 0
+                break
+
             for row in rows:
-                universe[row["code"]] = {"name":row["name"], "mcap":row["mcap"], "market":market_name}
-            time.sleep(0.25)
-        log.info(f"{market_name}: {sum(1 for v in universe.values() if v['market']==market_name)}종목 (네이버 시가총액)")
+                parsed = _parse_kr_stock_row(row)
+                if parsed:
+                    universe[parsed["code"]] = {
+                        "name": parsed["name"],
+                        "mcap": parsed["mcap"],
+                        "market": market_type,
+                    }
+                    collected += 1
+
+            if len(rows) < page_size:
+                break   # 마지막 페이지
+
+            start_idx += page_size
+            time.sleep(0.2)
+
+        log.info(f"{market_type}: {collected}종목 (stock.naver.com JSON)")
 
     log.info(f"한국 전체 유니버스: {len(universe)}종목")
     return universe
