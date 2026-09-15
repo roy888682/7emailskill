@@ -361,6 +361,13 @@ def _kr_market_sum_page(sosok: str, page: int) -> list:
                             # 오탐(키릴 문자 등으로 오判定)이 발생해 일부 종목명만 깨지는 원인이었음
     soup = BeautifulSoup(r.text, "html.parser")
     table = soup.find("table", class_="type_2")
+
+    if page == 1:
+        # 첫 페이지만 상세 진단 — 차단인지 단순 구조변경인지 다음번에 바로 알 수 있게
+        log.info(f"  [진단] sosok={sosok} status={r.status_code} 응답길이={len(r.text)} "
+                 f"table찾음={'Y' if table else 'N'} "
+                 f"body일부={r.text[:150].replace(chr(10),' ') if not table else ''}")
+
     if not table:
         return []
 
