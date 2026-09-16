@@ -5,17 +5,43 @@ from email.mime.text import MIMEText
 from datetime import datetime, timedelta, date
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+_INDUSTRY_DIAG_LOGGED = False   # 최초 1회만 구조 진단 로그 남기기 위한 플래그
+
 def get_kr_industry(code: str):
-    """finance.naver.com PC페이지 '동일업종비교' 링크에서 업종명 추출 (검증된 패턴)"""
+    """
+    stock.naver.com JSON API에서 업종명 조회.
+    (구 finance.naver.com/item/main.naver '동일업종비교' 링크 파싱 방식은 2026-09-15
+     한국 유니버스 수집과 같은 시점에 전량 실패 확인됨 — 8종목 전부가 '업종 없음'으로
+     ETF 취급되어 걸러진 원인. 신버전 종목 상세 API로 교체.)
+    """
+    global _INDUSTRY_DIAG_LOGGED
     try:
-        url = f"https://finance.naver.com/item/main.naver?code={code}"
-        r = requests.get(url, headers=UA, timeout=8)
-        r.encoding = r.apparent_encoding or "utf-8"   # 자동 인코딩 감지 (깨짐 방지)
-        html = r.text
-        m = re.search(r'sise_group_detail\.naver\?type=upjong[^"]*"[^>]*>\s*([^<]+?)\s*<', html)
-        if m:
-            val = m.group(1).strip()
-            if val: return val
+        url = f"https://stock.naver.com/api/domestic/detail/{code}/detail"
+        r = requests.get(url, headers=UA, params={"codeType": "KRX"}, timeout=8)
+        if r.status_code != 200:
+            return None
+        data = r.json()
+        if not isinstance(data, dict):
+            return None
+
+        for key in ("industryName","upjongName","sectorName","industry",
+                    "upjong","industryType","sectorType"):
+            v = data.get(key)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+
+        # 중첩 구조 후보 (예: {"industry": {"name": "..."}})
+        for outer in ("industry","upjong","sector"):
+            inner = data.get(outer)
+            if isinstance(inner, dict):
+                for key in ("name","industryName","upjongName"):
+                    v = inner.get(key)
+                    if isinstance(v, str) and v.strip():
+                        return v.strip()
+
+        if not _INDUSTRY_DIAG_LOGGED:
+            log.info(f"  [진단] 업종 필드 못찾음, {code} 응답 최상위 키: {list(data.keys())[:20]}")
+            _INDUSTRY_DIAG_LOGGED = True
         return None
     except Exception:
         return None
@@ -371,8 +397,7 @@ def _kr_market_stock_page(market_type: str, start_idx: int, page_size: int = 100
     }
     r = requests.get(url, headers=UA, params=params, timeout=15)
 
-    if start_idx == 0:
-        log.info(f"  [진단] {market_type} status={r.status_code} 응답길이={len(r.text)}")
+    log.info(f"  [진단p] {market_type} startIdx={start_idx} status={r.status_code} 응답길이={len(r.text)}")
 
     if r.status_code != 200:
         return [], None
@@ -380,8 +405,7 @@ def _kr_market_stock_page(market_type: str, start_idx: int, page_size: int = 100
     try:
         data = r.json()
     except Exception as e:
-        if start_idx == 0:
-            log.warning(f"  [진단] {market_type} JSON파싱실패: {e} body일부={r.text[:200]}")
+        log.warning(f"  [진단p] {market_type} startIdx={start_idx} JSON파싱실패: {e} body일부={r.text[:200]}")
         return [], None
 
     # 응답 최상위 구조 후보 탐색 (list 직접 반환 또는 흔한 wrapper 키들)
@@ -394,9 +418,10 @@ def _kr_market_stock_page(market_type: str, start_idx: int, page_size: int = 100
             if isinstance(v, list):
                 rows = v
                 break
-        if rows is None and start_idx == 0:
-            log.info(f"  [진단] {market_type} 응답 최상위 키: {list(data.keys())[:15]}")
+        if rows is None:
+            log.info(f"  [진단p] {market_type} startIdx={start_idx} 응답 최상위 키: {list(data.keys())[:15]}")
 
+    log.info(f"  [진단p] {market_type} startIdx={start_idx} rows개수={len(rows) if rows else 0}")
     return (rows or []), None
 
 
@@ -530,8 +555,26 @@ def get_kr_ath(usd_krw, kr_last=None):
                 try: s["industry"]=fut.result()
                 except: s["industry"]=None
 
+    # ETF 판별: 이름 기반이 1차 (한국 ETF는 운용사 브랜드 접두사가 사실상 표준),
+    # 업종 조회 실패는 보조 신호로만 사용. 업종 조회 자체가 깨졌을 때(=전부 실패) 그걸
+    # 'ETF'로 오인해서 정상 종목까지 전부 걸러버리는 사고를 막기 위함
+    # (2026-09-15 실제로 이 오류로 8종목이 전부 걸러진 적 있음).
+    ETF_BRANDS = ("KODEX","TIGER","ACE","KBSTAR","SOL","HANARO","ARIRANG",
+                  "KOSEF","KINDEX","TIMEFOLIO","WOORI","FOCUS","마이다스",
+                  "히어로즈","RISE","PLUS")
     before_etf_filter = len(out)
-    out = [s for s in out if s.get("industry")]   # 업종 없음 = ETF로 간주하고 제외
+    no_industry_count = sum(1 for s in out if not s.get("industry"))
+    industry_lookup_seems_broken = out and no_industry_count == len(out)
+
+    def looks_like_etf(name: str) -> bool:
+        return any(name.upper().startswith(b) for b in ETF_BRANDS)
+
+    if industry_lookup_seems_broken:
+        log.warning("업종 조회가 전체 실패한 것으로 보임 — 이번엔 이름 기반 ETF 판별만 적용")
+        out = [s for s in out if not looks_like_etf(s["name"])]
+    else:
+        out = [s for s in out if s.get("industry") or not looks_like_etf(s["name"])]
+
     log.info(f"ETF 제외: {before_etf_filter}종목 → {len(out)}종목")
 
     out.sort(key=lambda x:x["gap"])
