@@ -9,38 +9,31 @@ _INDUSTRY_DIAG_LOGGED = False   # 최초 1회만 구조 진단 로그 남기기 
 
 def get_kr_industry(code: str):
     """
-    stock.naver.com JSON API에서 업종명 조회.
-    (구 finance.naver.com/item/main.naver '동일업종비교' 링크 파싱 방식은 2026-09-15
-     한국 유니버스 수집과 같은 시점에 전량 실패 확인됨 — 8종목 전부가 '업종 없음'으로
-     ETF 취급되어 걸러진 원인. 신버전 종목 상세 API로 교체.)
+    m.stock.naver.com 모바일 페이지에 내장된 __NEXT_DATA__ JSON에서 업종명 추출.
+    (2026-09-15~16 확인: stock.naver.com detail API는 upjongCode(코드)만 주고
+     이름은 안 줌 — 다른 프로젝트에서도 동일하게 확인된 사실. 그래서 사람이 보는
+     페이지 안에 내장된 데이터에서 직접 뽑는 방식으로 전환함.)
     """
     global _INDUSTRY_DIAG_LOGGED
     try:
-        url = f"https://stock.naver.com/api/domestic/detail/{code}/detail"
-        r = requests.get(url, headers=UA, params={"codeType": "KRX"}, timeout=8)
+        url = f"https://m.stock.naver.com/domestic/stock/{code}/total"
+        r = requests.get(url, headers=UA, timeout=8)
         if r.status_code != 200:
             return None
-        data = r.json()
-        if not isinstance(data, dict):
-            return None
+        html = r.text
 
-        for key in ("industryName","upjongName","sectorName","industry",
-                    "upjong","industryType","sectorType"):
-            v = data.get(key)
-            if isinstance(v, str) and v.strip():
-                return v.strip()
-
-        # 중첩 구조 후보 (예: {"industry": {"name": "..."}})
-        for outer in ("industry","upjong","sector"):
-            inner = data.get(outer)
-            if isinstance(inner, dict):
-                for key in ("name","industryName","upjongName"):
-                    v = inner.get(key)
-                    if isinstance(v, str) and v.strip():
-                        return v.strip()
+        # __NEXT_DATA__ 스크립트 블록 안에서 업종명 후보 필드를 정규식으로 직접 탐색
+        # (전체를 json.loads 하기엔 구조가 깊고 안 알려져 있어서, 필드명 매칭이 더 안전함)
+        for key in ("industryName","upjongName","sectorName"):
+            m = re.search(rf'"{key}"\s*:\s*"([^"]+)"', html)
+            if m:
+                val = m.group(1).strip()
+                if val:
+                    return val
 
         if not _INDUSTRY_DIAG_LOGGED:
-            log.info(f"  [진단] 업종 필드 못찾음, {code} 응답 최상위 키: {list(data.keys())[:20]}")
+            has_next_data = "__NEXT_DATA__" in html
+            log.info(f"  [진단업종] {code} __NEXT_DATA__존재={has_next_data} 응답길이={len(html)}")
             _INDUSTRY_DIAG_LOGGED = True
         return None
     except Exception:
@@ -439,11 +432,12 @@ def _parse_kr_stock_row(row: dict):
             try:
                 v = float(str(raw_mcap).replace(",", ""))
                 if v > 0:
-                    mcap = round(v / 10000, 1)   # 억원 -> 조원 (구버전 페이지와 동일 단위 가정)
+                    mcap = round(v / 1e12, 1)   # 원(raw) -> 조원. 기존 '억원' 가정이 틀려서
+                                                 # 시가총액이 비정상적으로 크게 나왔던 원인이었음
             except Exception:
                 pass
 
-        return {"code": code, "name": name, "mcap": mcap}
+        return {"code": code, "name": name, "mcap": mcap, "_raw_mcap": raw_mcap}
     except Exception:
         return None
 
@@ -466,9 +460,12 @@ def get_kr_universe() -> dict:
             if not rows:
                 break
 
-            for row in rows:
+            for i, row in enumerate(rows):
                 parsed = _parse_kr_stock_row(row)
                 if parsed:
+                    if start_idx == 0 and i == 0:
+                        log.info(f"  [진단mcap] {market_type} 1위 {parsed['name']}({parsed['code']}) "
+                                 f"raw_marketSum={parsed.get('_raw_mcap')} -> 변환후={parsed['mcap']}조")
                     universe[parsed["code"]] = {
                         "name": parsed["name"],
                         "mcap": parsed["mcap"],
