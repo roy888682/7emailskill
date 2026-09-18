@@ -263,19 +263,23 @@ def get_usd_krw():
     except: return 1380.0
 
 def get_market_indices():
-    """S&P500, KOSPI 지수 조회 (실패시 None)"""
-    result = {"sp500": None, "kospi": None}
+    """S&P500, KOSPI 지수 + 전일대비 등락률 조회 (실패시 None)"""
+    result = {"sp500": None, "kospi": None, "sp500_chg": None, "kospi_chg": None}
     try:
         h = yf.Ticker("^GSPC").history(period="5d", auto_adjust=True)
-        result["sp500"] = float(h["Close"].iloc[-1])
+        last = float(h["Close"].iloc[-1]); prev = float(h["Close"].iloc[-2])
+        result["sp500"] = last
+        result["sp500_chg"] = round((last - prev) / prev * 100, 2)
     except Exception as e:
         log.warning(f"S&P500 조회 실패: {e}")
     try:
         h = yf.Ticker("^KS11").history(period="5d", auto_adjust=True)
-        result["kospi"] = float(h["Close"].iloc[-1])
+        last = float(h["Close"].iloc[-1]); prev = float(h["Close"].iloc[-2])
+        result["kospi"] = last
+        result["kospi_chg"] = round((last - prev) / prev * 100, 2)
     except Exception as e:
         log.warning(f"KOSPI 조회 실패: {e}")
-    log.info(f"S&P500:{result['sp500']} KOSPI:{result['kospi']}")
+    log.info(f"S&P500:{result['sp500']}({result['sp500_chg']}%) KOSPI:{result['kospi']}({result['kospi_chg']}%)")
     return result
 
 def date_str(d):
@@ -656,6 +660,15 @@ def build_email(us,kr,info,usd_krw,new_us=None,new_kr=None,diag=None,indices=Non
     kr_days = diag.get("kr_days_before", "?")
     sp500_str = f"{indices['sp500']:,.1f}" if indices.get("sp500") else "-"
     kospi_str = f"{indices['kospi']:,.1f}" if indices.get("kospi") else "-"
+
+    def chg_html(v):
+        if v is None: return ""
+        color = "#ff6b6b" if v > 0 else "#6b9fff" if v < 0 else "#ccc"
+        sign  = "+" if v > 0 else ""
+        return f" <span style='color:{color}'>({sign}{v}%)</span>"
+
+    sp500_chg_html = chg_html(indices.get("sp500_chg"))
+    kospi_chg_html = chg_html(indices.get("kospi_chg"))
     diag_banner = f"""
     <div style="background:#e8f0fe;border:1px solid #4285f4;border-radius:8px;
                 padding:10px 16px;margin-top:12px;font-size:12px;color:#1a1a2e">
@@ -667,7 +680,7 @@ def build_email(us,kr,info,usd_krw,new_us=None,new_kr=None,diag=None,indices=Non
 <body style="font-family:'Apple SD Gothic Neo',sans-serif;max-width:780px;margin:auto;padding:20px;background:#fafafa">
   <div style="background:#1a1a2e;color:#fff;padding:24px;border-radius:8px">
     <h1 style="margin:0;font-size:22px">📈 일일 ATH 리포트</h1>
-    <p style="margin:6px 0 0;opacity:0.7;font-size:26px">발송일:{td} | ATH ~ -10% | USD/KRW {usd_krw:,.0f}원 | S&P500 {sp500_str} | KOSPI {kospi_str}</p>
+    <p style="margin:6px 0 0;opacity:0.7;font-size:26px">발송일:{td} | ATH ~ -10% | USD/KRW {usd_krw:,.0f}원 | S&P500 {sp500_str}{sp500_chg_html} | KOSPI {kospi_str}{kospi_chg_html}</p>
   </div>
   {diag_banner}
   {new_tickers_html(new_us or [],new_kr or [])}
