@@ -9,31 +9,42 @@ _INDUSTRY_DIAG_LOGGED = False   # 최초 1회만 구조 진단 로그 남기기 
 
 def get_kr_industry(code: str):
     """
-    m.stock.naver.com 모바일 페이지에 내장된 __NEXT_DATA__ JSON에서 업종명 추출.
-    (2026-09-15~16 확인: stock.naver.com detail API는 upjongCode(코드)만 주고
-     이름은 안 줌 — 다른 프로젝트에서도 동일하게 확인된 사실. 그래서 사람이 보는
-     페이지 안에 내장된 데이터에서 직접 뽑는 방식으로 전환함.)
+    m.stock.naver.com/api/stock/{code}/integration 의 totalInfos[] 목록에서
+    '업종'이 들어간 항목을 찾아 값을 추출.
+    (이전 두 가지 시도 — detail API의 고정 필드명, __NEXT_DATA__ 정규식 — 모두
+     실패 확인됨. 이 엔드포인트는 {code,key,value} 형태의 유연한 리스트라
+     정확한 필드명을 몰라도 '업종'이라는 한글 라벨로 찾을 수 있어 더 안전함.)
     """
     global _INDUSTRY_DIAG_LOGGED
     try:
-        url = f"https://m.stock.naver.com/domestic/stock/{code}/total"
+        url = f"https://m.stock.naver.com/api/stock/{code}/integration"
         r = requests.get(url, headers=UA, timeout=8)
         if r.status_code != 200:
             return None
-        html = r.text
+        data = r.json()
+        if not isinstance(data, dict):
+            return None
 
-        # __NEXT_DATA__ 스크립트 블록 안에서 업종명 후보 필드를 정규식으로 직접 탐색
-        # (전체를 json.loads 하기엔 구조가 깊고 안 알려져 있어서, 필드명 매칭이 더 안전함)
-        for key in ("industryName","upjongName","sectorName"):
-            m = re.search(rf'"{key}"\s*:\s*"([^"]+)"', html)
-            if m:
-                val = m.group(1).strip()
-                if val:
-                    return val
+        total_infos = data.get("totalInfos")
+        if not isinstance(total_infos, list):
+            if not _INDUSTRY_DIAG_LOGGED:
+                log.info(f"  [진단업종] {code} totalInfos 없음, 최상위 키: {list(data.keys())[:20]}")
+                _INDUSTRY_DIAG_LOGGED = True
+            return None
+
+        for item in total_infos:
+            if not isinstance(item, dict):
+                continue
+            code_field = str(item.get("code", ""))
+            key_field  = str(item.get("key", ""))
+            if "upjong" in code_field.lower() or "업종" in key_field:
+                val = item.get("value")
+                if isinstance(val, str) and val.strip():
+                    return val.strip()
 
         if not _INDUSTRY_DIAG_LOGGED:
-            has_next_data = "__NEXT_DATA__" in html
-            log.info(f"  [진단업종] {code} __NEXT_DATA__존재={has_next_data} 응답길이={len(html)}")
+            sample = [(it.get("code"), it.get("key")) for it in total_infos if isinstance(it, dict)][:25]
+            log.info(f"  [진단업종] {code} '업종' 항목 못찾음, code/key 샘플: {sample}")
             _INDUSTRY_DIAG_LOGGED = True
         return None
     except Exception:
@@ -250,6 +261,22 @@ def get_usd_krw():
         h=yf.Ticker("USDKRW=X").history(period="5d",auto_adjust=True)
         r=float(h["Close"].iloc[-1]); log.info(f"USD/KRW:{r:,.1f}"); return r
     except: return 1380.0
+
+def get_market_indices():
+    """S&P500, KOSPI 지수 조회 (실패시 None)"""
+    result = {"sp500": None, "kospi": None}
+    try:
+        h = yf.Ticker("^GSPC").history(period="5d", auto_adjust=True)
+        result["sp500"] = float(h["Close"].iloc[-1])
+    except Exception as e:
+        log.warning(f"S&P500 조회 실패: {e}")
+    try:
+        h = yf.Ticker("^KS11").history(period="5d", auto_adjust=True)
+        result["kospi"] = float(h["Close"].iloc[-1])
+    except Exception as e:
+        log.warning(f"KOSPI 조회 실패: {e}")
+    log.info(f"S&P500:{result['sp500']} KOSPI:{result['kospi']}")
+    return result
 
 def date_str(d):
     if d is None: return "확인불가"
@@ -621,11 +648,14 @@ def tbl_html(stocks,title,currency,holiday,date_s,hmsg=""):
         <th style='padding:10px;text-align:right'>현재가</th><th style='padding:10px;text-align:right'>등락률</th>
       </tr></thead><tbody>{rows}</tbody></table>"""
 
-def build_email(us,kr,info,usd_krw,new_us=None,new_kr=None,diag=None):
+def build_email(us,kr,info,usd_krw,new_us=None,new_kr=None,diag=None,indices=None):
     td=datetime.now(KST).strftime("%Y년 %m월 %d일")
     diag = diag or {}
+    indices = indices or {}
     us_days = diag.get("us_days_before", "?")
     kr_days = diag.get("kr_days_before", "?")
+    sp500_str = f"{indices['sp500']:,.1f}" if indices.get("sp500") else "-"
+    kospi_str = f"{indices['kospi']:,.1f}" if indices.get("kospi") else "-"
     diag_banner = f"""
     <div style="background:#e8f0fe;border:1px solid #4285f4;border-radius:8px;
                 padding:10px 16px;margin-top:12px;font-size:12px;color:#1a1a2e">
@@ -637,7 +667,7 @@ def build_email(us,kr,info,usd_krw,new_us=None,new_kr=None,diag=None):
 <body style="font-family:'Apple SD Gothic Neo',sans-serif;max-width:780px;margin:auto;padding:20px;background:#fafafa">
   <div style="background:#1a1a2e;color:#fff;padding:24px;border-radius:8px">
     <h1 style="margin:0;font-size:22px">📈 일일 ATH 리포트</h1>
-    <p style="margin:6px 0 0;opacity:0.7;font-size:13px">발송일:{td} | ATH ~ -10% | USD/KRW {usd_krw:,.0f}원</p>
+    <p style="margin:6px 0 0;opacity:0.7;font-size:26px">발송일:{td} | ATH ~ -10% | USD/KRW {usd_krw:,.0f}원 | S&P500 {sp500_str} | KOSPI {kospi_str}</p>
   </div>
   {diag_banner}
   {new_tickers_html(new_us or [],new_kr or [])}
@@ -674,7 +704,7 @@ CODE_VERSION = "2026-07-08-streak-v2"
 
 def main():
     log.info(f"=== ATH 리포트 시작 (코드버전: {CODE_VERSION}) ===")
-    info=get_trading_info(); usd_krw=get_usd_krw()
+    info=get_trading_info(); usd_krw=get_usd_krw(); indices=get_market_indices()
     us=get_us_ath(usd_krw)
     kr=get_kr_ath(usd_krw, info.get("kr_last"))
 
@@ -698,7 +728,7 @@ def main():
     for s in kr: s["streak"] = kr_streak.get(s["ticker"], 1)
 
     diag = {"us_days_before": us_days_before, "kr_days_before": kr_days_before}
-    send_email(build_email(us,kr,info,usd_krw,new_us,new_kr,diag), build_subject(info))
+    send_email(build_email(us,kr,info,usd_krw,new_us,new_kr,diag,indices), build_subject(info))
 
     # 스냅샷 저장 (Actions Cache로 다음 실행에 전달됨)
     save_snapshots(snapshots)
