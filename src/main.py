@@ -7,48 +7,105 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 _INDUSTRY_DIAG_LOGGED = False   # 최초 1회만 구조 진단 로그 남기기 위한 플래그
 
-def get_kr_industry(code: str):
+def _fetch_industry_groups():
     """
-    m.stock.naver.com/api/stock/{code}/integration 의 totalInfos[] 목록에서
-    '업종'이 들어간 항목을 찾아 값을 추출.
-    (이전 두 가지 시도 — detail API의 고정 필드명, __NEXT_DATA__ 정규식 — 모두
-     실패 확인됨. 이 엔드포인트는 {code,key,value} 형태의 유연한 리스트라
-     정확한 필드명을 몰라도 '업종'이라는 한글 라벨로 찾을 수 있어 더 안전함.)
+    업종 전체 목록 조회 (79개). 이전 세 번의 시도(/api/domestic/detail,
+    __NEXT_DATA__, /api/stock/.../integration)는 전부 종목→업종 단방향
+    조회였고 실제로 업종명 필드 자체가 없었음. 이번엔 반대 방향 —
+    stock.naver.com/api/stocks/industry 로 업종 목록을 먼저 받고,
+    각 업종에 속한 종목 목록을 받아 코드→업종명 매핑표를 직접 만드는 방식.
+    (참고: 타 프로젝트에서 동일 엔드포인트로 79개 업종 확인된 사례 있음)
+    """
+    try:
+        r = requests.get("https://stock.naver.com/api/stocks/industry",
+                         headers=UA, params={"page":1,"pageSize":100}, timeout=15)
+        if r.status_code != 200:
+            return []
+        data = r.json()
+        groups = None
+        if isinstance(data, list):
+            groups = data
+        elif isinstance(data, dict):
+            for key in ("groups","list","items","data"):
+                v = data.get(key)
+                if isinstance(v, list):
+                    groups = v; break
+        if not groups:
+            log.warning(f"  [진단업종] 업종목록 응답 구조 이상: {list(data.keys())[:15] if isinstance(data,dict) else type(data)}")
+            return []
+        return groups
+    except Exception as e:
+        log.warning(f"  업종목록 조회 실패: {e}")
+        return []
+
+def _fetch_industry_members(no):
+    """특정 업종번호(no)에 속한 종목 코드 목록 조회"""
+    try:
+        r = requests.get(f"https://stock.naver.com/api/stocks/industry/{no}",
+                         headers=UA, params={"page":1,"pageSize":200}, timeout=15)
+        if r.status_code != 200:
+            return []
+        data = r.json()
+        stocks = None
+        if isinstance(data, list):
+            stocks = data
+        elif isinstance(data, dict):
+            for key in ("stocks","list","items","data"):
+                v = data.get(key)
+                if isinstance(v, list):
+                    stocks = v; break
+        return stocks or []
+    except Exception:
+        return []
+
+def build_kr_industry_map(codes_needed: set) -> dict:
+    """
+    업종 79개를 전부 훑어서 {종목코드: 업종명} 매핑표를 만듦.
+    codes_needed에 있는 코드가 전부 채워지면 조기 종료해서 불필요한 호출을 줄임.
     """
     global _INDUSTRY_DIAG_LOGGED
-    try:
-        url = f"https://m.stock.naver.com/api/stock/{code}/integration"
-        r = requests.get(url, headers=UA, timeout=8)
-        if r.status_code != 200:
-            return None
-        data = r.json()
-        if not isinstance(data, dict):
-            return None
+    groups = _fetch_industry_groups()
+    if not groups:
+        return {}
 
-        total_infos = data.get("totalInfos")
-        if not isinstance(total_infos, list):
-            if not _INDUSTRY_DIAG_LOGGED:
-                log.info(f"  [진단업종] {code} totalInfos 없음, 최상위 키: {list(data.keys())[:20]}")
-                _INDUSTRY_DIAG_LOGGED = True
-            return None
+    def group_id_name(g):
+        gid  = g.get("no") or g.get("code") or g.get("id") or g.get("groupCode")
+        name = g.get("name") or g.get("groupName") or g.get("upjongName")
+        return gid, name
 
-        for item in total_infos:
-            if not isinstance(item, dict):
+    if not _INDUSTRY_DIAG_LOGGED and groups:
+        gid, name = group_id_name(groups[0])
+        log.info(f"  [진단업종] 업종목록 {len(groups)}건, 첫번째 샘플 원본키: {list(groups[0].keys())[:15]} -> id={gid} name={name}")
+        _INDUSTRY_DIAG_LOGGED = True
+
+    mapping = {}
+
+    def process_one_group(g):
+        gid, gname = group_id_name(g)
+        if not gid or not gname:
+            return {}
+        members = _fetch_industry_members(gid)
+        local = {}
+        for m in members:
+            if not isinstance(m, dict):
                 continue
-            code_field = str(item.get("code", ""))
-            key_field  = str(item.get("key", ""))
-            if "upjong" in code_field.lower() or "업종" in key_field:
-                val = item.get("value")
-                if isinstance(val, str) and val.strip():
-                    return val.strip()
+            mcode = str(m.get("code") or m.get("itemcode") or m.get("itemCode") or "").strip()
+            if mcode:
+                local[mcode] = gname
+        return local
 
-        if not _INDUSTRY_DIAG_LOGGED:
-            sample = [(it.get("code"), it.get("key")) for it in total_infos if isinstance(it, dict)][:25]
-            log.info(f"  [진단업종] {code} '업종' 항목 못찾음, code/key 샘플: {sample}")
-            _INDUSTRY_DIAG_LOGGED = True
-        return None
-    except Exception:
-        return None
+    with ThreadPoolExecutor(max_workers=15) as ex:
+        futs = [ex.submit(process_one_group, g) for g in groups]
+        for fut in as_completed(futs):
+            try:
+                mapping.update(fut.result())
+            except Exception:
+                pass
+            if codes_needed and codes_needed.issubset(mapping.keys()):
+                break   # 필요한 코드가 다 모이면 조기 종료
+
+    log.info(f"업종 매핑표 구축 완료: {len(mapping)}종목 (필요:{len(codes_needed)}, 매칭:{len(codes_needed & mapping.keys())})")
+    return mapping
 
 INDUSTRY_KR = {
     # GICS 11개 섹터
@@ -264,19 +321,22 @@ def get_usd_krw():
 
 def get_market_indices():
     """S&P500, KOSPI 지수 + 전일대비 등락률 조회 (실패시 None)"""
+    import math
     result = {"sp500": None, "kospi": None, "sp500_chg": None, "kospi_chg": None}
     try:
-        h = yf.Ticker("^GSPC").history(period="5d", auto_adjust=True)
-        last = float(h["Close"].iloc[-1]); prev = float(h["Close"].iloc[-2])
-        result["sp500"] = last
-        result["sp500_chg"] = round((last - prev) / prev * 100, 2)
+        h = yf.Ticker("^GSPC").history(period="5d", auto_adjust=True)["Close"].dropna()
+        last = float(h.iloc[-1]); prev = float(h.iloc[-2])
+        if not math.isnan(last) and not math.isnan(prev):
+            result["sp500"] = last
+            result["sp500_chg"] = round((last - prev) / prev * 100, 2)
     except Exception as e:
         log.warning(f"S&P500 조회 실패: {e}")
     try:
-        h = yf.Ticker("^KS11").history(period="5d", auto_adjust=True)
-        last = float(h["Close"].iloc[-1]); prev = float(h["Close"].iloc[-2])
-        result["kospi"] = last
-        result["kospi_chg"] = round((last - prev) / prev * 100, 2)
+        h = yf.Ticker("^KS11").history(period="5d", auto_adjust=True)["Close"].dropna()
+        last = float(h.iloc[-1]); prev = float(h.iloc[-2])
+        if not math.isnan(last) and not math.isnan(prev):
+            result["kospi"] = last
+            result["kospi_chg"] = round((last - prev) / prev * 100, 2)
     except Exception as e:
         log.warning(f"KOSPI 조회 실패: {e}")
     log.info(f"S&P500:{result['sp500']}({result['sp500_chg']}%) KOSPI:{result['kospi']}({result['kospi_chg']}%)")
@@ -575,13 +635,11 @@ def get_kr_ath(usd_krw, kr_last=None):
     log.info(f"한국 ATH 후보: {len(out)}종목")
 
     if out:
-        log.info(f"한국 업종 조회 중 ({len(out)}종목)...")
-        with ThreadPoolExecutor(max_workers=10) as ex:
-            futs={ex.submit(get_kr_industry,s["ticker"]):s for s in out}
-            for fut in as_completed(futs):
-                s=futs[fut]
-                try: s["industry"]=fut.result()
-                except: s["industry"]=None
+        log.info(f"한국 업종 매핑표 구축 중 (필요: {len(out)}종목)...")
+        codes_needed = {s["ticker"] for s in out}
+        industry_map = build_kr_industry_map(codes_needed)
+        for s in out:
+            s["industry"] = industry_map.get(s["ticker"])
 
     # ETF 판별: 이름 기반이 1차 (한국 ETF는 운용사 브랜드 접두사가 사실상 표준),
     # 업종 조회 실패는 보조 신호로만 사용. 업종 조회 자체가 깨졌을 때(=전부 실패) 그걸
