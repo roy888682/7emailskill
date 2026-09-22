@@ -9,17 +9,20 @@ _INDUSTRY_DIAG_LOGGED = False   # 최초 1회만 구조 진단 로그 남기기 
 
 def _fetch_industry_groups():
     """
-    업종 전체 목록 조회 (79개). 이전 세 번의 시도(/api/domestic/detail,
-    __NEXT_DATA__, /api/stock/.../integration)는 전부 종목→업종 단방향
+    업종 전체 목록 조회 (79개). 이전 시도들(/api/domestic/detail,
+    __NEXT_DATA__, /api/stock/.../integration)은 전부 종목→업종 단방향
     조회였고 실제로 업종명 필드 자체가 없었음. 이번엔 반대 방향 —
     stock.naver.com/api/stocks/industry 로 업종 목록을 먼저 받고,
     각 업종에 속한 종목 목록을 받아 코드→업종명 매핑표를 직접 만드는 방식.
-    (참고: 타 프로젝트에서 동일 엔드포인트로 79개 업종 확인된 사례 있음)
+    (직전 실패 원인: status!=200일 때 로그 없이 조용히 빈 리스트만 반환하던
+     버그가 있었음 — 그래서 진짜 원인이 안 보였음. 이번엔 무조건 로그 남김.)
     """
     try:
         r = requests.get("https://stock.naver.com/api/stocks/industry",
                          headers=UA, params={"page":1,"pageSize":100}, timeout=15)
+        log.info(f"  [진단업종] 업종목록 status={r.status_code} 응답길이={len(r.text)}")
         if r.status_code != 200:
+            log.warning(f"  [진단업종] 업종목록 실패 body일부: {r.text[:200]}")
             return []
         data = r.json()
         groups = None
@@ -35,7 +38,7 @@ def _fetch_industry_groups():
             return []
         return groups
     except Exception as e:
-        log.warning(f"  업종목록 조회 실패: {e}")
+        log.warning(f"  [진단업종] 업종목록 조회 예외: {e}")
         return []
 
 def _fetch_industry_members(no):
@@ -263,20 +266,23 @@ def new_tickers_html(new_us: list, new_kr: list) -> str:
         gap = s.get("gap",0)
         gc  = "#e74c3c" if gap<=-5 else "#e67e22" if gap<=-1 else "#27ae60"
         pr  = f"{s['price']:,.2f}" if currency=="USD" else f"{s['price']:,}"
-        ind = s.get("industry") or ""
         mc  = s.get("mcap")
         mcap_str = f"{mc:,.1f}조" if mc else "-"
+        ind = s.get("industry") or "-"
+        chg = s.get("change",0)
+        cc  = "#c0392b" if chg>0 else "#2980b9"; cs = "+" if chg>0 else ""
         streak = s.get("streak",1)
         streak_note = f"{streak}일째" if streak==1 else f"{streak}일째 (과거 재등장)"
         return (f"<tr style='border-bottom:1px solid #f0f0f0'>"
                 f"<td style='padding:7px 10px'>{flag}</td>"
                 f"<td style='padding:7px'><a href='{lk}' target='_blank' style='color:#1565c0;font-weight:bold;text-decoration:none'>{s['ticker']}</a></td>"
                 f"<td style='padding:7px;color:#333'>{s['name']}</td>"
-                f"<td style='padding:7px;text-align:center;color:#888;font-size:12px'>{streak_note}</td>"
                 f"<td style='padding:7px;text-align:right;color:#555;font-size:13px'>{mcap_str}</td>"
-                f"<td style='padding:7px;font-size:12px;color:#888'>{ind}</td>"
                 f"<td style='padding:7px;text-align:center;color:{gc};font-weight:bold'>{gap:+.1f}%</td>"
+                f"<td style='padding:7px;font-size:12px;color:#888'>{ind}</td>"
+                f"<td style='padding:7px;text-align:right;color:{cc};font-weight:bold'>{cs}{chg}%</td>"
                 f"<td style='padding:7px;text-align:right;color:#555'>{pr} {currency}</td>"
+                f"<td style='padding:7px;text-align:center;color:#888;font-size:12px'>{streak_note}</td>"
                 f"</tr>")
 
     rows = ""
@@ -297,11 +303,12 @@ def new_tickers_html(new_us: list, new_kr: list) -> str:
             <th style="padding:8px">국가</th>
             <th style="padding:8px;text-align:left">티커</th>
             <th style="padding:8px;text-align:left">종목명</th>
-            <th style="padding:8px;text-align:center">누적일수</th>
             <th style="padding:8px;text-align:right">시가총액</th>
-            <th style="padding:8px;text-align:left">업종</th>
             <th style="padding:8px;text-align:center">ATH 괴리율</th>
+            <th style="padding:8px;text-align:left">업종</th>
+            <th style="padding:8px;text-align:right">전일대비등락률</th>
             <th style="padding:8px;text-align:right">현재가</th>
+            <th style="padding:8px;text-align:center">누적일수</th>
           </tr>
         </thead>
         <tbody>{rows}</tbody>
@@ -674,7 +681,7 @@ def _badges(labels):
     if not labels: return ""
     return f"<div style='margin-top:2px;font-size:11px;color:#888'>{' · '.join(labels)}</div>"
 
-def tbl_html(stocks,title,currency,holiday,date_s,hmsg=""):
+def tbl_html(stocks,title,currency,holiday,date_s,hmsg="",flag=""):
     banner=f'<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:10px 16px;margin-bottom:12px;font-size:13px;color:#856404">⚠️ {hmsg}</div>' if holiday and hmsg else ""
     if not stocks:
         return f"<h2 style='color:#333;margin-top:30px'>{title}</h2><p style='color:#666;font-size:13px'>기준일:{date_s}</p>{banner}<p style='color:#888'>해당 종목 없음</p>"
@@ -683,31 +690,40 @@ def tbl_html(stocks,title,currency,holiday,date_s,hmsg=""):
     rows=""
     for i,s in enumerate(stocks):
         bg="#f9f9f9" if i%2==0 else "#fff"
-        cc="#c0392b" if s["change"]>0 else "#2980b9"; cs="+" if s["change"]>0 else ""
         gap=s.get("gap",0)
         gc="#e74c3c" if gap<=-5 else "#e67e22" if gap<=-1 else "#27ae60"
         lk=s.get("url","#")
         streak=s.get("streak",1)
+        ind=s.get("industry") or "-"
+        chg=s.get("change",0)
+        cc="#c0392b" if chg>0 else "#2980b9"; cs="+" if chg>0 else ""
         rows+=f"""<tr style='background:{bg}'>
-          <td style='padding:8px 10px'><a href='{lk}' target='_blank' style='color:#1565c0;font-weight:bold;text-decoration:none'>{s['ticker']}</a></td>
-          <td style='padding:8px;text-align:center;color:#888;font-size:12px'>{streak}일째</td>
-          <td style='padding:8px;text-align:center;color:{gc};font-weight:bold'>{gap:+.1f}%</td>
+          <td style='padding:8px 10px'>{flag}</td>
+          <td style='padding:8px'><a href='{lk}' target='_blank' style='color:#1565c0;font-weight:bold;text-decoration:none'>{s['ticker']}</a></td>
+          <td style='padding:8px'><a href='{lk}' target='_blank' style='color:#333;text-decoration:none'>{s['name']}</a></td>
           <td style='padding:8px;text-align:right'>
             <span style='color:#555;font-size:13px'>{fm(s.get("mcap"))}</span>
             {_badges(s.get("index",[]))}
           </td>
-          <td style='padding:8px;text-align:left;color:#666;font-size:12px'>{s.get("industry") or "-"}</td>
-          <td style='padding:8px'><a href='{lk}' target='_blank' style='color:#333;text-decoration:none'>{s['name']}</a></td>
+          <td style='padding:8px;text-align:center;color:{gc};font-weight:bold'>{gap:+.1f}%</td>
+          <td style='padding:8px;text-align:left;color:#666;font-size:12px'>{ind}</td>
+          <td style='padding:8px;text-align:right;color:{cc};font-weight:bold'>{cs}{chg}%</td>
           <td style='padding:8px;text-align:right'>{fp(s['price'])} {currency}</td>
-          <td style='padding:8px;text-align:right;color:{cc};font-weight:bold'>{cs}{s['change']}%</td></tr>"""
+          <td style='padding:8px;text-align:center;color:#888;font-size:12px'>{streak}일째</td></tr>"""
     return f"""<h2 style='color:#1a1a2e;margin-top:30px'>{title} — {len(stocks)}종목</h2>
     <p style='color:#666;font-size:13px;margin:2px 0 8px'>기준일:{date_s} | ATH 괴리율 -10%에 가까운 순</p>{banner}
     <p style='color:#aaa;font-size:11px;margin:0 0 10px'>🔗 클릭→네이버 증권 | <span style='color:#e74c3c'>●</span>-5~-10% <span style='color:#e67e22'>●</span>-1~-5% <span style='color:#27ae60'>●</span>0~-1%</p>
     <table style='border-collapse:collapse;width:100%;font-size:14px'>
       <thead><tr style='background:#1a1a2e;color:#fff'>
-        <th style='padding:10px;text-align:left'>티커</th><th style='padding:10px;text-align:center'>누적일수</th><th style='padding:10px;text-align:center'>ATH 괴리율</th>
-        <th style='padding:10px;text-align:right'>시가총액</th><th style='padding:10px;text-align:left'>업종</th><th style='padding:10px;text-align:left'>종목명</th>
-        <th style='padding:10px;text-align:right'>현재가</th><th style='padding:10px;text-align:right'>등락률</th>
+        <th style='padding:10px'>국가</th>
+        <th style='padding:10px;text-align:left'>티커</th>
+        <th style='padding:10px;text-align:left'>종목명</th>
+        <th style='padding:10px;text-align:right'>시가총액</th>
+        <th style='padding:10px;text-align:center'>ATH 괴리율</th>
+        <th style='padding:10px;text-align:left'>업종</th>
+        <th style='padding:10px;text-align:right'>전일대비등락률</th>
+        <th style='padding:10px;text-align:right'>현재가</th>
+        <th style='padding:10px;text-align:center'>누적일수</th>
       </tr></thead><tbody>{rows}</tbody></table>"""
 
 def build_email(us,kr,info,usd_krw,new_us=None,new_kr=None,diag=None,indices=None):
@@ -751,9 +767,9 @@ def build_email(us,kr,info,usd_krw,new_us=None,new_kr=None,diag=None,indices=Non
       <div style="font-size:26px;font-weight:bold;color:#1a1a2e">{len(kr)}종목</div></div>
   </div>
   <div style="background:#fff;padding:20px;border-radius:8px;margin-top:12px;box-shadow:0 1px 4px rgba(0,0,0,.08)">
-    {tbl_html(us,"🇺🇸 미국 전체 상장 보통주","USD",info["us_holiday"],info["us_last_str"],info.get("us_holiday_msg",""))}
+    {tbl_html(us,"🇺🇸 미국 전체 상장 보통주","USD",info["us_holiday"],info["us_last_str"],info.get("us_holiday_msg",""),"🇺🇸")}
     <div style="margin-top:36px"></div>
-    {tbl_html(kr,"🇰🇷 한국 KOSPI/KOSDAQ 전체","KRW",info["kr_holiday"],info["kr_last_str"],info.get("kr_holiday_msg",""))}
+    {tbl_html(kr,"🇰🇷 한국 KOSPI/KOSDAQ 전체","KRW",info["kr_holiday"],info["kr_last_str"],info.get("kr_holiday_msg",""),"🇰🇷")}
   </div>
   <p style="font-size:11px;color:#bbb;margin-top:16px;text-align:center">자동 발송 | All Time High 기준 | 투자 권유 아님</p>
 </body></html>"""
