@@ -5,110 +5,41 @@ from email.mime.text import MIMEText
 from datetime import datetime, timedelta, date
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-_INDUSTRY_DIAG_LOGGED = False   # 최초 1회만 구조 진단 로그 남기기 위한 플래그
-
-def _fetch_industry_groups():
-    """
-    업종 전체 목록 조회 (79개). 이전 시도들(/api/domestic/detail,
-    __NEXT_DATA__, /api/stock/.../integration)은 전부 종목→업종 단방향
-    조회였고 실제로 업종명 필드 자체가 없었음. 이번엔 반대 방향 —
-    stock.naver.com/api/stocks/industry 로 업종 목록을 먼저 받고,
-    각 업종에 속한 종목 목록을 받아 코드→업종명 매핑표를 직접 만드는 방식.
-    (직전 실패 원인: status!=200일 때 로그 없이 조용히 빈 리스트만 반환하던
-     버그가 있었음 — 그래서 진짜 원인이 안 보였음. 이번엔 무조건 로그 남김.)
-    """
-    try:
-        r = requests.get("https://stock.naver.com/api/stocks/industry",
-                         headers=UA, params={"page":1,"pageSize":100}, timeout=15)
-        log.info(f"  [진단업종] 업종목록 status={r.status_code} 응답길이={len(r.text)}")
-        if r.status_code != 200:
-            log.warning(f"  [진단업종] 업종목록 실패 body일부: {r.text[:200]}")
-            return []
-        data = r.json()
-        groups = None
-        if isinstance(data, list):
-            groups = data
-        elif isinstance(data, dict):
-            for key in ("groups","list","items","data"):
-                v = data.get(key)
-                if isinstance(v, list):
-                    groups = v; break
-        if not groups:
-            log.warning(f"  [진단업종] 업종목록 응답 구조 이상: {list(data.keys())[:15] if isinstance(data,dict) else type(data)}")
-            return []
-        return groups
-    except Exception as e:
-        log.warning(f"  [진단업종] 업종목록 조회 예외: {e}")
-        return []
-
-def _fetch_industry_members(no):
-    """특정 업종번호(no)에 속한 종목 코드 목록 조회"""
-    try:
-        r = requests.get(f"https://stock.naver.com/api/stocks/industry/{no}",
-                         headers=UA, params={"page":1,"pageSize":200}, timeout=15)
-        if r.status_code != 200:
-            return []
-        data = r.json()
-        stocks = None
-        if isinstance(data, list):
-            stocks = data
-        elif isinstance(data, dict):
-            for key in ("stocks","list","items","data"):
-                v = data.get(key)
-                if isinstance(v, list):
-                    stocks = v; break
-        return stocks or []
-    except Exception:
-        return []
-
-def build_kr_industry_map(codes_needed: set) -> dict:
-    """
-    업종 79개를 전부 훑어서 {종목코드: 업종명} 매핑표를 만듦.
-    codes_needed에 있는 코드가 전부 채워지면 조기 종료해서 불필요한 호출을 줄임.
-    """
-    global _INDUSTRY_DIAG_LOGGED
-    groups = _fetch_industry_groups()
-    if not groups:
-        return {}
-
-    def group_id_name(g):
-        gid  = g.get("no") or g.get("code") or g.get("id") or g.get("groupCode")
-        name = g.get("name") or g.get("groupName") or g.get("upjongName")
-        return gid, name
-
-    if not _INDUSTRY_DIAG_LOGGED and groups:
-        gid, name = group_id_name(groups[0])
-        log.info(f"  [진단업종] 업종목록 {len(groups)}건, 첫번째 샘플 원본키: {list(groups[0].keys())[:15]} -> id={gid} name={name}")
-        _INDUSTRY_DIAG_LOGGED = True
-
-    mapping = {}
-
-    def process_one_group(g):
-        gid, gname = group_id_name(g)
-        if not gid or not gname:
-            return {}
-        members = _fetch_industry_members(gid)
-        local = {}
-        for m in members:
-            if not isinstance(m, dict):
-                continue
-            mcode = str(m.get("code") or m.get("itemcode") or m.get("itemCode") or "").strip()
-            if mcode:
-                local[mcode] = gname
-        return local
-
-    with ThreadPoolExecutor(max_workers=15) as ex:
-        futs = [ex.submit(process_one_group, g) for g in groups]
-        for fut in as_completed(futs):
-            try:
-                mapping.update(fut.result())
-            except Exception:
-                pass
-            if codes_needed and codes_needed.issubset(mapping.keys()):
-                break   # 필요한 코드가 다 모이면 조기 종료
-
-    log.info(f"업종 매핑표 구축 완료: {len(mapping)}종목 (필요:{len(codes_needed)}, 매칭:{len(codes_needed & mapping.keys())})")
-    return mapping
+# ── 한국 업종 정적 매핑표 ────────────────────────────────────────────
+# 네이버의 실제 공개 API에는 종목→업종명을 직접 주는 창구가 없음이 확인됨
+# (2026-09-22 확정: 5가지 API 방식 전부 실패 - 마지막 시도는 다른 개발자의
+#  자체 백엔드 주소를 잘못 참조한 것으로 404 확정). 그래서 ATH 후보에 자주
+# 등장하는 시가총액 상위권 종목 위주로 직접 정리한 정적 표를 사용함.
+# 표에 없는 종목은 -로 표시됨. 특정 종목이 계속 -로 나오면 아래에
+# 종목코드: 업종명 한 줄만 추가하면 됨.
+KR_INDUSTRY_STATIC = {
+    "005930":"반도체", "000660":"반도체", "042700":"반도체장비",
+    "403870":"반도체장비", "112040":"반도체장비", "039030":"반도체장비",
+    "373220":"이차전지", "006400":"전자부품", "247540":"이차전지소재",
+    "086520":"이차전지소재", "066970":"반도체장비",
+    "207940":"바이오", "068270":"바이오", "196170":"바이오",
+    "128940":"제약", "185750":"제약", "145020":"제약", "096530":"제약",
+    "091990":"바이오", "298380":"바이오", "141080":"바이오",
+    "214150":"의료기기",
+    "005380":"자동차", "000270":"자동차", "012330":"자동차부품",
+    "204320":"자동차부품", "018880":"자동차부품",
+    "035420":"인터넷", "035720":"인터넷", "036570":"게임",
+    "251270":"게임", "293490":"게임", "263750":"게임",
+    "105560":"금융", "055550":"금융", "086790":"금융", "316140":"금융",
+    "032830":"보험", "000810":"보험",
+    "003550":"지주회사", "034730":"지주회사", "028050":"건설",
+    "005490":"철강", "051910":"화학", "011170":"화학", "004020":"철강",
+    "010130":"비철금속", "003670":"이차전지소재",
+    "009540":"조선", "042660":"조선", "010140":"조선",
+    "066570":"전자", "009150":"전자부품",
+    "096770":"정유화학", "010950":"정유", "015760":"전력",
+    "267250":"조선기자재",
+    "017670":"통신", "030200":"통신", "032640":"통신",
+    "352820":"엔터", "041510":"엔터", "122870":"엔터", "035900":"엔터",
+    "090430":"화장품", "051900":"생활용품", "097950":"식품", "271560":"식품",
+    "011200":"해운", "047050":"무역", "023530":"유통",
+    "018260":"IT서비스", "058470":"반도체장비",
+}
 
 INDUSTRY_KR = {
     # GICS 11개 섹터
@@ -642,11 +573,10 @@ def get_kr_ath(usd_krw, kr_last=None):
     log.info(f"한국 ATH 후보: {len(out)}종목")
 
     if out:
-        log.info(f"한국 업종 매핑표 구축 중 (필요: {len(out)}종목)...")
-        codes_needed = {s["ticker"] for s in out}
-        industry_map = build_kr_industry_map(codes_needed)
+        matched = sum(1 for s in out if s["ticker"] in KR_INDUSTRY_STATIC)
+        log.info(f"한국 업종 조회 (정적표): {matched}/{len(out)}종목 매칭")
         for s in out:
-            s["industry"] = industry_map.get(s["ticker"])
+            s["industry"] = KR_INDUSTRY_STATIC.get(s["ticker"])
 
     # ETF 판별: 이름 기반이 1차 (한국 ETF는 운용사 브랜드 접두사가 사실상 표준),
     # 업종 조회 실패는 보조 신호로만 사용. 업종 조회 자체가 깨졌을 때(=전부 실패) 그걸
