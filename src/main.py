@@ -173,13 +173,13 @@ def new_tickers_html(new_us: list, new_kr: list) -> str:
 
     count_cards = f"""
     <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px">
-      <div style="background:#fff3e0;border-radius:6px;padding:10px 20px">
-        <div style="font-size:11px;color:#555">🇺🇸 미국 신규</div>
-        <div style="font-size:26px;font-weight:bold;color:#1a1a2e">{len(new_us)}종목</div>
-      </div>
       <div style="background:#fce4ec;border-radius:6px;padding:10px 20px">
         <div style="font-size:11px;color:#555">🇰🇷 한국 신규</div>
         <div style="font-size:26px;font-weight:bold;color:#1a1a2e">{len(new_kr)}종목</div>
+      </div>
+      <div style="background:#fff3e0;border-radius:6px;padding:10px 20px">
+        <div style="font-size:11px;color:#555">🇺🇸 미국 신규</div>
+        <div style="font-size:26px;font-weight:bold;color:#1a1a2e">{len(new_us)}종목</div>
       </div>
     </div>"""
 
@@ -217,8 +217,8 @@ def new_tickers_html(new_us: list, new_kr: list) -> str:
                 f"</tr>")
 
     rows = ""
-    for s in new_us: rows += row(s,"🇺🇸","USD")
     for s in new_kr: rows += row(s,"🇰🇷","KRW")
+    for s in new_us: rows += row(s,"🇺🇸","USD")
 
     return f"""
     <div style="background:#fff;padding:20px;border-radius:8px;margin-top:12px;
@@ -578,27 +578,25 @@ def get_kr_ath(usd_krw, kr_last=None):
         for s in out:
             s["industry"] = KR_INDUSTRY_STATIC.get(s["ticker"])
 
-    # ETF 판별: 이름 기반이 1차 (한국 ETF는 운용사 브랜드 접두사가 사실상 표준),
-    # 업종 조회 실패는 보조 신호로만 사용. 업종 조회 자체가 깨졌을 때(=전부 실패) 그걸
-    # 'ETF'로 오인해서 정상 종목까지 전부 걸러버리는 사고를 막기 위함
-    # (2026-09-15 실제로 이 오류로 8종목이 전부 걸러진 적 있음).
+    # ETF 판별: 운용사 브랜드 접두사로 ETF 여부 1차 판별.
+    # 주식형 ETF는 그대로 통과시키고, 채권형 ETF만 이름에 포함된 키워드로 걸러냄.
+    # (업종 정적표는 개별 종목 커버리지용이라 ETF 여부 판별에는 더 이상 쓰지 않음 —
+    #  표에 없는 진짜 회사와 ETF를 구분 못 해서 과거 오판별 사고가 있었음.)
     ETF_BRANDS = ("KODEX","TIGER","ACE","KBSTAR","SOL","HANARO","ARIRANG",
                   "KOSEF","KINDEX","TIMEFOLIO","WOORI","FOCUS","마이다스",
                   "히어로즈","RISE","PLUS")
-    before_etf_filter = len(out)
-    no_industry_count = sum(1 for s in out if not s.get("industry"))
-    industry_lookup_seems_broken = out and no_industry_count == len(out)
+    BOND_ETF_KEYWORDS = ("채권","국채","회사채","통안채","크레딧","단기자금",
+                         "종합채권","CD금리","MMF","머니마켓")
 
-    def looks_like_etf(name: str) -> bool:
+    def is_etf(name: str) -> bool:
         return any(name.upper().startswith(b) for b in ETF_BRANDS)
 
-    if industry_lookup_seems_broken:
-        log.warning("업종 조회가 전체 실패한 것으로 보임 — 이번엔 이름 기반 ETF 판별만 적용")
-        out = [s for s in out if not looks_like_etf(s["name"])]
-    else:
-        out = [s for s in out if s.get("industry") or not looks_like_etf(s["name"])]
+    def is_bond_etf(name: str) -> bool:
+        return any(kw in name for kw in BOND_ETF_KEYWORDS)
 
-    log.info(f"ETF 제외: {before_etf_filter}종목 → {len(out)}종목")
+    before_etf_filter = len(out)
+    out = [s for s in out if not (is_etf(s["name"]) and is_bond_etf(s["name"]))]
+    log.info(f"채권 ETF 제외: {before_etf_filter}종목 → {len(out)}종목")
 
     out.sort(key=lambda x:x["gap"])
     log.info(f"한국 최종:{len(out)}")
@@ -684,22 +682,22 @@ def build_email(us,kr,info,usd_krw,new_us=None,new_kr=None,diag=None,indices=Non
 <body style="font-family:'Apple SD Gothic Neo',sans-serif;max-width:780px;margin:auto;padding:20px;background:#fafafa">
   <div style="background:#1a1a2e;color:#fff;padding:24px;border-radius:8px">
     <h1 style="margin:0;font-size:22px">📈 일일 ATH 리포트</h1>
-    <p style="margin:6px 0 0;opacity:0.7;font-size:26px">발송일:{td} | ATH ~ -10% | USD/KRW {usd_krw:,.0f}원 | S&P500 {sp500_str}{sp500_chg_html} | KOSPI {kospi_str}{kospi_chg_html}</p>
+    <p style="margin:6px 0 0;opacity:0.7;font-size:26px">발송일:{td} | ATH ~ -10% | USD/KRW {usd_krw:,.0f}원 | KOSPI {kospi_str}{kospi_chg_html} | S&P500 {sp500_str}{sp500_chg_html}</p>
   </div>
   {diag_banner}
   {new_tickers_html(new_us or [],new_kr or [])}
   <div style="background:#fff;padding:16px 20px;border-radius:8px;margin-top:12px;box-shadow:0 1px 4px rgba(0,0,0,.08);display:flex;gap:16px;flex-wrap:wrap">
-    <div style="background:#eaf4ff;border-radius:6px;padding:10px 20px">
-      <div style="font-size:11px;color:#555">🇺🇸 미국 ({info['us_last_str']})</div>
-      <div style="font-size:26px;font-weight:bold;color:#1a1a2e">{len(us)}종목</div></div>
     <div style="background:#eaffea;border-radius:6px;padding:10px 20px">
       <div style="font-size:11px;color:#555">🇰🇷 한국 ({info['kr_last_str']})</div>
       <div style="font-size:26px;font-weight:bold;color:#1a1a2e">{len(kr)}종목</div></div>
+    <div style="background:#eaf4ff;border-radius:6px;padding:10px 20px">
+      <div style="font-size:11px;color:#555">🇺🇸 미국 ({info['us_last_str']})</div>
+      <div style="font-size:26px;font-weight:bold;color:#1a1a2e">{len(us)}종목</div></div>
   </div>
   <div style="background:#fff;padding:20px;border-radius:8px;margin-top:12px;box-shadow:0 1px 4px rgba(0,0,0,.08)">
-    {tbl_html(us,"🇺🇸 미국 전체 상장 보통주","USD",info["us_holiday"],info["us_last_str"],info.get("us_holiday_msg",""),"🇺🇸")}
-    <div style="margin-top:36px"></div>
     {tbl_html(kr,"🇰🇷 한국 KOSPI/KOSDAQ 전체","KRW",info["kr_holiday"],info["kr_last_str"],info.get("kr_holiday_msg",""),"🇰🇷")}
+    <div style="margin-top:36px"></div>
+    {tbl_html(us,"🇺🇸 미국 전체 상장 보통주","USD",info["us_holiday"],info["us_last_str"],info.get("us_holiday_msg",""),"🇺🇸")}
   </div>
   <p style="font-size:11px;color:#bbb;margin-top:16px;text-align:center">자동 발송 | All Time High 기준 | 투자 권유 아님</p>
 </body></html>"""
