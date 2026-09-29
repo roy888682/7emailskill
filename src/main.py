@@ -204,10 +204,14 @@ def new_tickers_html(new_us: list, new_kr: list) -> str:
         cc  = "#c0392b" if chg>0 else "#2980b9"; cs = "+" if chg>0 else ""
         streak = s.get("streak",1)
         streak_note = f"{streak}일째" if streak==1 else f"{streak}일째 (과거 재등장)"
+        atype = s.get("asset_type","주식")
+        badge_bg = "#e8eaf6" if atype=="ETF" else "#e0f2f1"
+        badge_fg = "#3949ab" if atype=="ETF" else "#00695c"
         return (f"<tr style='border-bottom:1px solid #f0f0f0'>"
                 f"<td style='padding:7px 10px'>{flag}</td>"
                 f"<td style='padding:7px'><a href='{lk}' target='_blank' style='color:#1565c0;font-weight:bold;text-decoration:none'>{s['ticker']}</a></td>"
                 f"<td style='padding:7px;color:#333'>{s['name']}</td>"
+                f"<td style='padding:7px;text-align:center'><span style='background:{badge_bg};color:{badge_fg};padding:2px 8px;border-radius:10px;font-size:11px;font-weight:bold'>{atype}</span></td>"
                 f"<td style='padding:7px;text-align:right;color:#555;font-size:13px'>{mcap_str}</td>"
                 f"<td style='padding:7px;text-align:center;color:{gc};font-weight:bold'>{gap:+.1f}%</td>"
                 f"<td style='padding:7px;font-size:12px;color:#888'>{ind}</td>"
@@ -234,6 +238,7 @@ def new_tickers_html(new_us: list, new_kr: list) -> str:
             <th style="padding:8px">국가</th>
             <th style="padding:8px;text-align:left">티커</th>
             <th style="padding:8px;text-align:left">종목명</th>
+            <th style="padding:8px;text-align:center">구분</th>
             <th style="padding:8px;text-align:right">시가총액</th>
             <th style="padding:8px;text-align:center">ATH 괴리율</th>
             <th style="padding:8px;text-align:left">업종</th>
@@ -335,18 +340,27 @@ def dl(tickers, period, chunk=80, sleep=1.2):
 
 def get_us_tickers():
     tickers=set(); exchange_map={}; sp500_set=set()
+    security_names={}; etf_flags={}
+    # 컬럼 인덱스: nasdaqlisted.txt = Symbol|Security Name|Market Category|Test Issue|
+    #   Financial Status|Round Lot Size|ETF|NextShares (ETF=6, Test=3) — 검증됨, 정상
+    # otherlisted.txt = ACT Symbol|Security Name|Exchange|CQS Symbol|ETF|Round Lot Size|
+    #   Test Issue|NASDAQ Symbol (ETF=4, Test=6) — 기존 코드가 6,7로 잘못되어 있었음.
+    #   실제 나스닥 공개 샘플 데이터로 검증 후 수정함 (2026-09-XX).
     for url,ec,tc,exch_name in [
         ("https://ftp.nasdaqtrader.com/dynamic/SymbolDirectory/nasdaqlisted.txt",6,3,"NASDAQ"),
-        ("https://ftp.nasdaqtrader.com/dynamic/SymbolDirectory/otherlisted.txt",6,7,"NYSE"),
+        ("https://ftp.nasdaqtrader.com/dynamic/SymbolDirectory/otherlisted.txt",4,6,"NYSE"),
     ]:
         try:
             r=requests.get(url,headers=UA,timeout=30)
             for line in r.text.strip().split("\n")[1:-1]:
                 p=line.split("|")
-                if len(p)<=max(ec,tc): continue
+                if len(p)<=max(ec,tc,1): continue
                 sym=p[0].strip()
-                if sym and not(len(p)>ec and p[ec].strip()=="Y") and not(len(p)>tc and p[tc].strip()=="Y") and sym.replace("-","").isalpha():
+                is_test = len(p)>tc and p[tc].strip()=="Y"
+                if sym and not is_test and sym.replace("-","").isalpha():
                     tickers.add(sym); exchange_map[sym]=exch_name
+                    security_names[sym]=p[1].strip() if len(p)>1 else sym
+                    etf_flags[sym]=(len(p)>ec and p[ec].strip()=="Y")
         except Exception as e: log.error(f"FTP:{e}")
     try:
         import pandas as pd
@@ -354,11 +368,17 @@ def get_us_tickers():
         df=pd.read_html(io.StringIO(r.text))[0]
         for s in df["Symbol"].tolist():
             sym=str(s).replace(".","-"); tickers.add(sym); sp500_set.add(sym)
+            etf_flags.setdefault(sym, False)   # S&P500 구성종목은 전부 일반주
     except: pass
-    result=sorted(tickers); log.info(f"미국 {len(result)}종목"); return result,exchange_map,sp500_set
+    result=sorted(tickers); log.info(f"미국 {len(result)}종목")
+    return result,exchange_map,sp500_set,security_names,etf_flags
+
+US_BOND_ETF_KEYWORDS = ("BOND","TREASURY","MUNICIPAL","MUNI ","T-BILL","TIPS",
+                        "HIGH YIELD BOND","CORPORATE BOND","AGGREGATE BOND",
+                        "DURATION BOND","FIXED INCOME")
 
 def get_us_ath(usd_krw):
-    tickers,exchange_map,sp500_set=get_us_tickers()
+    tickers,exchange_map,sp500_set,security_names,etf_flags=get_us_tickers()
     if not tickers: return []
     d1=dl(tickers,"1y",chunk=100,sleep=1.0)
     cands=[tk for tk,s in d1.items() if len(s)>=2 and float(s.iloc[-1])>=float(s.max())*0.90]
@@ -370,6 +390,10 @@ def get_us_ath(usd_krw):
         try:
             last=float(s.iloc[-1]); prev=float(s.iloc[-2]); ath=float(s.max())
             if last>=ath*0.90:
+                sec_name = security_names.get(tk, tk)
+                is_etf = etf_flags.get(tk, False)
+                if is_etf and any(kw in sec_name.upper() for kw in US_BOND_ETF_KEYWORDS):
+                    continue   # 채권형 ETF만 제외, 주식형 ETF는 통과
                 mcap=None
                 try:
                     m=getattr(yf.Ticker(tk).fast_info,"market_cap",None) or 0
@@ -381,7 +405,9 @@ def get_us_ath(usd_krw):
                 if tk in sp500_set: idx.append("S&P500")
                 idx.append(exchange_map.get(tk,"NYSE"))
                 url=f"https://m.stock.naver.com/worldstock/stock/{tk}/total"
-                out.append({"ticker":tk,"name":tk,"price":round(last,2),
+                out.append({"ticker":tk,"name":sec_name if is_etf else tk,
+                            "asset_type":"ETF" if is_etf else "주식",
+                            "price":round(last,2),
                             "change":round((last-prev)/prev*100,2),
                             "gap":round((last-ath)/ath*100,2),"mcap":mcap,
                             "index":idx,"industry":None,
@@ -598,6 +624,9 @@ def get_kr_ath(usd_krw, kr_last=None):
     out = [s for s in out if not (is_etf(s["name"]) and is_bond_etf(s["name"]))]
     log.info(f"채권 ETF 제외: {before_etf_filter}종목 → {len(out)}종목")
 
+    for s in out:
+        s["asset_type"] = "ETF" if is_etf(s["name"]) else "주식"
+
     out.sort(key=lambda x:x["gap"])
     log.info(f"한국 최종:{len(out)}")
     return out
@@ -625,10 +654,13 @@ def tbl_html(stocks,title,currency,holiday,date_s,hmsg="",flag=""):
         ind=s.get("industry") or "-"
         chg=s.get("change",0)
         cc="#c0392b" if chg>0 else "#2980b9"; cs="+" if chg>0 else ""
+        atype=s.get("asset_type","주식")
+        atype_color="#8e44ad" if atype=="ETF" else "#555"
         rows+=f"""<tr style='background:{bg}'>
           <td style='padding:8px 10px'>{flag}</td>
           <td style='padding:8px'><a href='{lk}' target='_blank' style='color:#1565c0;font-weight:bold;text-decoration:none'>{s['ticker']}</a></td>
           <td style='padding:8px'><a href='{lk}' target='_blank' style='color:#333;text-decoration:none'>{s['name']}</a></td>
+          <td style='padding:8px;text-align:center;color:{atype_color};font-size:12px;font-weight:bold'>{atype}</td>
           <td style='padding:8px;text-align:right'>
             <span style='color:#555;font-size:13px'>{fm(s.get("mcap"))}</span>
             {_badges(s.get("index",[]))}
@@ -646,6 +678,7 @@ def tbl_html(stocks,title,currency,holiday,date_s,hmsg="",flag=""):
         <th style='padding:10px'>국가</th>
         <th style='padding:10px;text-align:left'>티커</th>
         <th style='padding:10px;text-align:left'>종목명</th>
+        <th style='padding:10px;text-align:center'>구분</th>
         <th style='padding:10px;text-align:right'>시가총액</th>
         <th style='padding:10px;text-align:center'>ATH 괴리율</th>
         <th style='padding:10px;text-align:left'>업종</th>
