@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-import os, smtplib, logging, time, io, re, json
+import os, smtplib, logging, time, io, re, json, bisect
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── 한국 업종 정적 매핑표 ────────────────────────────────────────────
@@ -320,6 +320,364 @@ def get_trading_info():
             "kr_holiday_msg":hm(expected,kr_last,"한국") if kr_hol else ""}
 
 # ── 미국: 2단계 yfinance ──────────────────────────────
+# ══ ETF 전용 섹션용 헬퍼 ══════════════════════════════════════════════════
+# 한국 ETF 상세(ETFBase) 응답 필드명은 공개 문서에 없어서, 후보 키를 여러 개 시도하고
+# 첫 응답 구조를 로그([진단ETF])로 남김. 못 찾으면 "-" 또는 대체값(브랜드→운용사,
+# 최초 거래일→설립일)으로 채움.
+
+def _calc_perf(dates, closes):
+    """(최근 1년 수익률%, 5년 연평균수익률%, 최초거래일). 기간이 모자라면 해당 값은 None."""
+    if not dates or len(dates) != len(closes) or len(closes) < 2:
+        return None, None, None
+    last_d, last_p = dates[-1], closes[-1]
+    def price_on_or_before(target):
+        i = bisect.bisect_right(dates, target) - 1
+        return closes[i] if i >= 0 else None
+    p1 = price_on_or_before(last_d - timedelta(days=365))
+    p5 = price_on_or_before(last_d - timedelta(days=1826))
+    ret1  = round((last_p / p1 - 1) * 100, 1) if p1 else None
+    cagr5 = round(((last_p / p5) ** (1 / 5) - 1) * 100, 1) if p5 else None
+    return ret1, cagr5, dates[0]
+
+def _flatten(d, prefix="", depth=0):
+    flat = {}
+    if not isinstance(d, dict):
+        return flat
+    for k, v in d.items():
+        key = f"{prefix}{k}"
+        if isinstance(v, dict) and depth < 2:
+            flat.update(_flatten(v, key + ".", depth + 1))
+        else:
+            flat[key] = v
+    return flat
+
+def _find_val(flat, rules):
+    """rules: [(must_all, must_any, exclude), ...] 순서대로 첫 매칭 값 반환 (str/int만)."""
+    for must_all, must_any, exclude in rules:
+        for k, v in flat.items():
+            if not isinstance(v, (str, int)) or isinstance(v, bool):
+                continue
+            if isinstance(v, str) and not v.strip():
+                continue
+            kl = k.lower()
+            if all(m in kl for m in must_all) \
+               and (not must_any or any(m in kl for m in must_any)) \
+               and not any(e in kl for e in exclude):
+                return v.strip() if isinstance(v, str) else v
+    return None
+
+def _norm_date(v):
+    s = re.sub(r"[^0-9]", "", str(v or ""))
+    if len(s) >= 8:
+        y, m, d = s[:4], s[4:6], s[6:8]
+        if 1980 <= int(y) <= 2100 and 1 <= int(m) <= 12 and 1 <= int(d) <= 31:
+            return f"{y}-{m}-{d}"
+    return None
+
+def _extract_rows(data):
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        for key in ("items", "list", "etfs", "contents", "data", "content", "stocks", "result"):
+            v = data.get(key)
+            if isinstance(v, list):
+                return v
+            if isinstance(v, dict):
+                inner = _extract_rows(v)
+                if inner:
+                    return inner
+    return []
+
+def _won_to_jo(v):
+    """AUM 숫자를 조원으로. 단위가 문서화돼 있지 않아 크기로 판별:
+    1e8 이상이면 원, 미만이면 억원 (ETF 순자산이 1만조 이상일 수는 없으므로 안전)."""
+    try:
+        x = float(str(v).replace(",", ""))
+    except Exception:
+        return None
+    if x <= 0:
+        return None
+    return round(x / 1e12, 4) if x >= 1e8 else round(x / 1e4, 4)
+
+# ── 한국 ETF 이름 기반 판별/분류 ────────────────────────────────────────────
+KR_ETF_BRANDS = ("KODEX","TIGER","ACE","KBSTAR","SOL","HANARO","ARIRANG","KOSEF",
+                 "KINDEX","TIMEFOLIO","WOORI","FOCUS","마이다스","히어로즈","RISE","PLUS",
+                 "KIWOOM","1Q","TIME ","WON ","BNK","HK ","TREX","UNICORN","마이티",
+                 "파워","에셋플러스","KOACT","TRUSTON")
+KR_BOND_ETF_KEYWORDS = ("채권","국채","국고채","회사채","통안채","크레딧","단기자금","종합채권",
+                        "CD금리","MMF","머니마켓","KOFR","SOFR","금리","하이일드","미국채")
+KR_ETF_ISSUER_BRANDS = (
+    ("KODEX","삼성자산운용"),("TIGER","미래에셋자산운용"),("ACE","한국투자신탁운용"),
+    ("KBSTAR","KB자산운용"),("RISE","KB자산운용"),("SOL","신한자산운용"),
+    ("HANARO","NH-Amundi자산운용"),("ARIRANG","한화자산운용"),("PLUS","한화자산운용"),
+    ("KOSEF","키움투자자산운용"),("KIWOOM","키움투자자산운용"),("히어로즈","키움투자자산운용"),
+    ("KINDEX","한국투자신탁운용"),("1Q","하나자산운용"),("TIMEFOLIO","타임폴리오자산운용"),
+    ("TIME ","타임폴리오자산운용"),("WOORI","우리자산운용"),("WON ","우리자산운용"),
+    ("FOCUS","브이아이자산운용"),("마이다스","마이다스에셋자산운용"),("TREX","유리자산운용"),
+    ("HK ","흥국자산운용"),("BNK","BNK자산운용"),("UNICORN","현대자산운용"),
+    ("마이티","DB자산운용"),("파워","교보악사자산운용"),("에셋플러스","에셋플러스자산운용"),
+    ("KOACT","삼성액티브자산운용"),("TRUSTON","트러스톤자산운용"),
+)
+
+def kr_is_etf_name(name: str) -> bool:
+    return any(name.upper().startswith(b) for b in KR_ETF_BRANDS)
+
+def kr_is_bond_etf(name: str) -> bool:
+    return any(kw in name for kw in KR_BOND_ETF_KEYWORDS)
+
+def kr_issuer_from_brand(name: str):
+    up = name.upper()
+    for b, issuer in KR_ETF_ISSUER_BRANDS:
+        if up.startswith(b):
+            return issuer
+    return None
+
+def classify_kr_etf(name: str) -> str:
+    """ETF 이름 키워드로 자산군/테마 분류 (예: '주식 · 미국 반도체', '원자재 · 금')."""
+    n = name.upper()
+    tag = " (인버스)" if "인버스" in name else (" (레버리지)" if ("레버리지" in name or "2X" in n) else "")
+    if re.search(r"골드|금현물|KRX ?금|금선물|(?<![가-힣])금(?![가-힣융])", name):
+        return "원자재 · 금" + tag
+    if re.search(r"은선물|실버|(?<![가-힣])은(?![가-힣행])\b", name) and "은행" not in name:
+        return "원자재 · 은" + tag
+    for kw, label in (("구리","구리"),("원유","원유"),("WTI","원유"),("천연가스","천연가스"),
+                      ("농산물","농산물"),("콩","농산물"),("원자재","원자재"),("팔라듐","귀금속"),
+                      ("탄소배출권","탄소배출권")):
+        if kw in name or kw in n:
+            return f"원자재 · {label}" + tag
+    if re.search(r"비트코인|이더리움|BTC|ETH", n):
+        return "가상자산" + tag
+    if re.search(r"리츠|부동산", name):
+        return "부동산(리츠)" + tag
+    if re.search(r"달러선물|엔선물|위안|엔화|달러(?!채)", name):
+        return "통화" + tag
+    region = None
+    for pat, label in ((r"미국|나스닥|S&P|다우|NASDAQ|(?<![A-Z])US(?![A-Z])", "미국"), (r"중국|차이나|항셍|CSI|홍콩", "중국"),
+                       (r"인도(?!네시아)", "인도"), (r"일본|닛케이|TOPIX", "일본"), (r"베트남", "베트남"),
+                       (r"유럽|독일|영국|프랑스", "유럽"), (r"신흥국|글로벌|선진국|MSCI|해외|아시아", "해외")):
+        if re.search(pat, n):
+            region = label
+            break
+    theme = None
+    for pat, label in ((r"반도체", "반도체"), (r"2차전지|배터리", "2차전지"),
+                       (r"바이오|헬스케어|제약", "바이오/헬스케어"), (r"(?<![A-Z])AI(?![A-Z])|인공지능", "AI"),
+                       (r"로봇", "로봇"), (r"방산|우주", "방산/우주"), (r"조선|해운", "조선/해운"),
+                       (r"자동차|전기차", "자동차"), (r"은행|증권|보험|금융", "금융"),
+                       (r"건설|인프라", "건설/인프라"), (r"원자력|원전|전력|에너지|태양광|수소", "에너지"),
+                       (r"게임|미디어|콘텐츠|엔터", "미디어/게임"),
+                       (r"소프트웨어|클라우드|인터넷|플랫폼|테크|빅테크", "IT/플랫폼"),
+                       (r"배당|커버드콜|프리미엄|인컴", "배당/인컴"),
+                       (r"ESG|밸류|퀄리티|모멘텀|저변동|팩터", "스타일/팩터"),
+                       (r"코스피|KOSPI|200|코스닥|KRX300|TOP ?10|지수", "시장지수")):
+        if re.search(pat, n):
+            theme = label
+            break
+    label = " ".join(x for x in (region, theme or ("시장지수" if region else None)) if x) or "시장지수"
+    return "주식 · " + (label or "기타") + tag
+
+# ── 한국 ETF 목록/상세 수집 ────────────────────────────────────────────────
+_KR_ETF_DIAG = {"base_logged": False}
+
+def get_kr_etf_universe() -> dict:
+    """국내 ETF 목록 (AUM 큰 순). 응답 구조 미문서화 → 후보 키 탐색 + 진단 로그."""
+    out = {}
+    url = "https://stock.naver.com/api/stockSecurity/etfs/v2/domestic"
+    rows = []
+    for size in (300, 100):
+        try:
+            r = requests.get(url, headers=UA,
+                             params={"listingType": "aumDesc", "size": size, "index": 0}, timeout=20)
+            log.info(f"  [진단ETF] 목록 size={size} status={r.status_code} 응답길이={len(r.text)}")
+            if r.status_code != 200:
+                log.warning(f"  [진단ETF] 목록 body일부: {r.text[:200]}")
+                continue
+            data = r.json()
+            rows = _extract_rows(data)
+            if rows:
+                break
+            log.info(f"  [진단ETF] 목록 구조 이상, 최상위: {list(data.keys())[:15] if isinstance(data, dict) else type(data)}")
+        except Exception as e:
+            log.warning(f"  [진단ETF] 목록 예외: {e}")
+    if rows and isinstance(rows[0], dict):
+        log.info(f"  [진단ETF] 첫 행: {json.dumps(rows[0], ensure_ascii=False)[:700]}")
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        flat = _flatten(row)
+        code = str(_find_val(flat, [(["itemcode"], [], []), (["code"], [], ["index", "theme", "type"])]) or "").strip()
+        name = str(_find_val(flat, [(["itemname"], [], []), (["name"], [], ["index", "theme", "issuer"])]) or "").strip()
+        if len(code) != 6 or not name:
+            continue
+        aum_raw = _find_val(flat, [(["aum"], [], ["rate", "change"]), (["marketsum"], [], []),
+                                   (["marketcap"], [], []), (["totalnav"], [], []),
+                                   (["netasset"], [], ["rate"])])
+        out[code] = {"name": name, "mcap": _won_to_jo(aum_raw), "market": "KOSPI", "is_etf": True}
+    log.info(f"한국 ETF 유니버스: {len(out)}종목")
+    return out
+
+def fetch_kr_etf_base(code: str):
+    try:
+        r = requests.get(f"https://stock.naver.com/api/domestic/detail/{code}/ETFBase",
+                         headers=UA, timeout=10)
+        if r.status_code != 200:
+            return None
+        data = r.json()
+        if isinstance(data, dict):
+            if not _KR_ETF_DIAG["base_logged"]:
+                _KR_ETF_DIAG["base_logged"] = True
+                log.info(f"  [진단ETF] ETFBase {code} 키: {json.dumps(_flatten(data), ensure_ascii=False)[:900]}")
+            return data
+    except Exception:
+        pass
+    return None
+
+def parse_kr_etf_base(data):
+    flat = _flatten(data)
+    index_nm = _find_val(flat, [(["index"], ["name", "nm"], ["rate", "price", "value", "code", "type"]),
+                                (["benchmark"], [], ["rate"]), (["underlying"], [], ["rate", "code"]),
+                                (["trackingindex"], [], [])])
+    issuer = _find_val(flat, [(["issuer"], [], ["code"]), (["manage"], ["company", "corp", "name", "nm"], []),
+                              (["amc"], [], []), (["company"], ["name", "nm"], []), (["운용"], [], [])])
+    raw_date = _find_val(flat, [(["list"], ["date", "dt", "day"], ["type"]), (["setup"], [], []),
+                                (["inception"], [], []), (["establish"], [], []),
+                                (["found"], ["date", "dt"], [])])
+    return {"etf_index": index_nm if isinstance(index_nm, str) else None,
+            "issuer": issuer if isinstance(issuer, str) else None,
+            "inception": _norm_date(raw_date)}
+
+# ── 미국 ETF 분류/보강 ───────────────────────────────────────────────────
+US_CATEGORY_KO = {
+    "Large Blend":"미국 대형 혼합","Large Growth":"미국 대형 성장","Large Value":"미국 대형 가치",
+    "Mid-Cap Blend":"미국 중형","Mid-Cap Growth":"미국 중형 성장","Mid-Cap Value":"미국 중형 가치",
+    "Small Blend":"미국 소형","Small Growth":"미국 소형 성장","Small Value":"미국 소형 가치",
+    "Technology":"기술","Health":"헬스케어","Financial":"금융","Industrials":"산업재",
+    "Utilities":"유틸리티","Communications":"커뮤니케이션","Consumer Cyclical":"경기소비재",
+    "Consumer Defensive":"필수소비재","Equity Energy":"에너지","Natural Resources":"천연자원",
+    "Equity Precious Metals":"귀금속 광산","Miscellaneous Sector":"기타 섹터",
+    "Foreign Large Blend":"선진국 대형","Foreign Large Growth":"선진국 성장","Foreign Large Value":"선진국 가치",
+    "Diversified Emerging Mkts":"신흥국","Europe Stock":"유럽","Japan Stock":"일본",
+    "China Region":"중국","India Equity":"인도","Pacific/Asia ex-Japan Stk":"아시아(일본 제외)",
+    "Infrastructure":"인프라","Trading--Leveraged Equity":"레버리지","Trading--Inverse Equity":"인버스",
+    "Global Real Estate":"글로벌 리츠","Real Estate":"리츠","World Large Stock":"글로벌 대형",
+    "Allocation--50% to 70% Equity":"자산배분","Digital Assets":"가상자산",
+}
+
+def classify_us_etf(name: str, category) -> str:
+    n = (name or "").upper()
+    cat = (category or "")
+    cl = cat.lower()
+    miners = ("MINER" in n or "MINING" in n)
+    if not miners and (("commodit" in cl) or re.search(r"\bGOLD\b|\bSILVER\b|PLATINUM|PALLADIUM|\bOIL\b|CRUDE|NATURAL GAS|COPPER|URANIUM|AGRICULT|COMMODITY", n)):
+        sub = "금" if "GOLD" in n else "은" if "SILVER" in n else "원유" if re.search(r"\bOIL\b|CRUDE", n) else \
+              "구리" if "COPPER" in n else "천연가스" if "NATURAL GAS" in n else "원자재"
+        return f"원자재 · {sub}"
+    if "digital asset" in cl or re.search(r"BITCOIN|ETHER(?!NET)|CRYPTO", n):
+        return "가상자산"
+    if "real estate" in cl or "REIT" in n:
+        return "부동산(리츠)"
+    if "currency" in cl:
+        return "통화"
+    return "주식 · " + (US_CATEGORY_KO.get(cat, cat) if cat else "기타")
+
+def _extract_us_index(summary: str):
+    if not summary:
+        return None
+    m = re.search(r"(?:track|tracks|tracking|replicate|replicates|seeks to track|designed to track|benchmark)"
+                  r"[^.]{0,140}?\b(?:the\s+)?([A-Z][A-Za-z0-9&\.\-\u00C0-\u017F ]{2,80}?\bIndex)\b", summary)
+    return m.group(1).strip() if m else None
+
+def enrich_us_etf(tk: str, name: str, usd_krw: float) -> dict:
+    """yfinance info로 운용사·분류·AUM·설립일·추종지수 보강. None 값은 제외해서 반환."""
+    res = {}
+    try:
+        info = yf.Ticker(tk).info or {}
+    except Exception:
+        info = {}
+    res["issuer"] = info.get("fundFamily")
+    res["etf_kind"] = classify_us_etf(name, info.get("category"))
+    ta = info.get("totalAssets")
+    if isinstance(ta, (int, float)) and ta > 0:
+        res["aum"] = round(ta * usd_krw / 1e12, 4)
+    inc = info.get("fundInceptionDate")
+    if isinstance(inc, (int, float)) and inc > 0:
+        try:
+            res["inception"] = datetime.fromtimestamp(inc, tz=timezone.utc).date().isoformat()
+        except Exception:
+            pass
+    res["etf_index"] = _extract_us_index(info.get("longBusinessSummary") or "")
+    return {k: v for k, v in res.items() if v is not None}
+
+
+# ── ETF 전용 섹션 HTML ─────────────────────────────────────────────────────
+def _etf_pct(v):
+    if v is None:
+        return "<span style='color:#aaa'>-</span>"
+    color = "#c0392b" if v > 0 else "#2980b9" if v < 0 else "#555"
+    return f"<span style='color:{color};font-weight:bold'>{v:+.1f}%</span>"
+
+def _etf_aum(v):
+    if not v:
+        return "-"
+    if v < 0.1:
+        return f"{v * 1e4:,.0f}억"
+    return f"{v:,.2f}조" if v < 10 else f"{v:,.1f}조"
+
+def etf_section_html(etf_info):
+    rows_data = etf_info.get("rows", [])
+    pool      = etf_info.get("pool", 0)
+    with_ret  = etf_info.get("with_ret", 0)
+    head = f"""
+    <div style="background:#fff;padding:20px;border-radius:8px;margin-top:12px;
+                border-left:4px solid #8e44ad;box-shadow:0 1px 4px rgba(0,0,0,.08)">
+      <h2 style="margin:0 0 4px;color:#1a1a2e;font-size:18px">🧺 ETF 전용 — 최근 1년 운용실적 낮은 순 {len(rows_data)}개</h2>
+      <p style="margin:0 0 10px;color:#888;font-size:12px">
+        ATH -10% 이내 ETF {pool}개 중 1년 수익률 산출 가능 {with_ret}개 기준 (오름차순, 채권형 제외)
+      </p>"""
+    if not rows_data:
+        return head + "<p style='color:#888;font-size:13px'>해당 ETF 없음</p></div>"
+
+    rows = ""
+    for i, s in enumerate(rows_data):
+        bg   = "#f9f9f9" if i % 2 == 0 else "#fff"
+        flag = "🇺🇸" if s.get("market") == "US" else "🇰🇷"
+        lk   = s.get("url", "#")
+        aum  = s.get("aum") if s.get("aum") else s.get("mcap")
+        inception = s.get("inception") or "-"
+        rows += f"""<tr style='background:{bg}'>
+          <td style='padding:6px 8px'>{flag}</td>
+          <td style='padding:6px 8px'><a href='{lk}' target='_blank' style='color:#1565c0;font-weight:bold;text-decoration:none'>{s['ticker']}</a></td>
+          <td style='padding:6px 8px;color:#333'>{s['name']}</td>
+          <td style='padding:6px 8px;color:#666;font-size:11px'>{s.get("etf_index") or "-"}</td>
+          <td style='padding:6px 8px;text-align:right;color:#555'>{_etf_aum(aum)}</td>
+          <td style='padding:6px 8px;text-align:right'>{_etf_pct(s.get("cagr5y"))}</td>
+          <td style='padding:6px 8px;color:#666;font-size:11px'>{s.get("etf_kind") or "-"}</td>
+          <td style='padding:6px 8px;text-align:right'>{_etf_pct(s.get("ret1y"))}</td>
+          <td style='padding:6px 8px;color:#666;font-size:11px'>{s.get("issuer") or "-"}</td>
+          <td style='padding:6px 8px;color:#666;font-size:11px;white-space:nowrap'>{inception}</td></tr>"""
+    th = "padding:8px;font-size:12px"
+    table = f"""
+      <div style="overflow-x:auto">
+      <table style="border-collapse:collapse;width:100%;font-size:12px">
+        <thead><tr style="background:#8e44ad;color:#fff">
+          <th style="{th}">국가</th>
+          <th style="{th};text-align:left">티커</th>
+          <th style="{th};text-align:left">종목명</th>
+          <th style="{th};text-align:left">추종지수</th>
+          <th style="{th};text-align:right">AUM 시가총액</th>
+          <th style="{th};text-align:right">5년 연평균수익률</th>
+          <th style="{th};text-align:left">ETF 성격</th>
+          <th style="{th};text-align:right">최근 1년 운용실적</th>
+          <th style="{th};text-align:left">운용사</th>
+          <th style="{th};text-align:left">설립일</th>
+        </tr></thead><tbody>{rows}</tbody></table></div>
+      <p style="margin:10px 0 0;color:#aaa;font-size:11px">
+        ※ 한국 ETF는 분배금 미반영 가격수익률, 미국 ETF는 배당 재투자 반영 수정주가 기준임.
+        5년 미만 상장은 '-' 표시. 설립일은 운용사 공시값을 우선하고 없으면 최초 거래일, 운용사는 미확인 시 브랜드로 추정함.
+      </p>
+    </div>"""
+    return head + table
+
+
 def dl(tickers, period, chunk=80, sleep=1.2):
     out={}; n=len(tickers)
     if not n: return out
@@ -405,13 +763,21 @@ def get_us_ath(usd_krw):
                 if tk in sp500_set: idx.append("S&P500")
                 idx.append(exchange_map.get(tk,"NYSE"))
                 url=f"https://m.stock.naver.com/worldstock/stock/{tk}/total"
+                perf={}
+                if is_etf:
+                    try:
+                        dts=[d.date() for d in s.index]
+                        r1,c5,fd=_calc_perf(dts,[float(x) for x in s.tolist()])
+                        perf={"ret1y":r1,"cagr5y":c5,"first_date":fd.isoformat() if fd else None}
+                    except Exception:
+                        perf={}
                 out.append({"ticker":tk,"name":sec_name if is_etf else tk,
                             "asset_type":"ETF" if is_etf else "주식",
                             "price":round(last,2),
                             "change":round((last-prev)/prev*100,2),
                             "gap":round((last-ath)/ath*100,2),"mcap":mcap,
                             "index":idx,"industry":None,
-                            "market":"US","url":url})
+                            "market":"US","url":url, **perf})
         except: pass
     if out:
         log.info(f"미국 업종 조회 중 ({len(out)}종목)...")
@@ -421,6 +787,21 @@ def get_us_ath(usd_krw):
                 s=futs[fut]
                 try: s["industry"]=fut.result()
                 except: s["industry"]=None
+    etf_items=[s for s in out if s["asset_type"]=="ETF"]
+    if etf_items:
+        log.info(f"미국 ETF 상세 조회 중 ({len(etf_items)}종목)...")
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            futs={ex.submit(enrich_us_etf,s["ticker"],s["name"],usd_krw):s for s in etf_items}
+            for fut in as_completed(futs):
+                s=futs[fut]
+                try: s.update(fut.result())
+                except Exception: pass
+        for s in etf_items:
+            s.setdefault("etf_kind", classify_us_etf(s["name"], None))
+            s.setdefault("aum", s.get("mcap"))
+            s.setdefault("inception", s.get("first_date"))
+        log.info(f"미국 ETF 상세 결과: 운용사 {sum(1 for s in etf_items if s.get('issuer'))}/{len(etf_items)}, "
+                 f"추종지수 {sum(1 for s in etf_items if s.get('etf_index'))}/{len(etf_items)}")
     out.sort(key=lambda x:x["gap"])
     log.info(f"미국 최종:{len(out)}"); return out
 
@@ -557,6 +938,28 @@ def _kr_price_history(code: str, count: int = 3000) -> list:
     except Exception:
         return []
 
+def _kr_price_history_dated(code: str, count: int = 8000):
+    """네이버 fchart에서 (날짜 리스트, 종가 리스트) 반환 — ETF 5년/1년 수익률·설립일 계산용"""
+    try:
+        url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count={count}&requestType=0"
+        r = requests.get(url, headers=UA, timeout=20)
+        items = re.findall(r"""data=['"]([^'"]+)['"]""", r.text)
+        dates, closes = [], []
+        for it in items:
+            parts = it.split("|")
+            if len(parts) >= 5:
+                try:
+                    c = float(parts[4])
+                    d = datetime.strptime(parts[0], "%Y%m%d").date()
+                    if c > 0:
+                        dates.append(d); closes.append(c)
+                except Exception:
+                    pass
+        return dates, closes
+    except Exception:
+        return [], []
+
+
 def get_kr_ath(usd_krw, kr_last=None):
     universe = get_kr_universe()
     if not universe:
@@ -567,26 +970,45 @@ def get_kr_ath(usd_krw, kr_last=None):
         log.error("한국 종목 유니버스 재시도까지 실패 — 0종목 반환 (네트워크 문제 지속 중일 가능성)")
         return []
 
-    log.info(f"한국 {len(universe)}종목 fchart 가격이력 조회 시작 (15 workers)...")
+    etf_universe = get_kr_etf_universe()
+    for _code, _meta in etf_universe.items():
+        if _code in universe:
+            universe[_code]["is_etf"] = True
+            if not universe[_code].get("mcap") and _meta.get("mcap"):
+                universe[_code]["mcap"] = _meta["mcap"]
+        else:
+            universe[_code] = _meta
+    log.info(f"한국 {len(universe)}종목 fchart 가격이력 조회 시작 (ETF {len(etf_universe)}종목 포함, 15 workers)...")
 
     def fetch_one(code, meta):
         name = meta["name"]
         if "스팩" in name:
             return None
-        closes = _kr_price_history(code, count=3000)
+        etf_flag = bool(meta.get("is_etf")) or kr_is_etf_name(name)
+        dates = None
+        if etf_flag:
+            dates, closes = _kr_price_history_dated(code, count=8000)   # 설립일/5년 수익률용 장기 이력
+        else:
+            closes = _kr_price_history(code, count=3000)
         if len(closes) < 30:
             return None
         last, prev, ath = closes[-1], closes[-2], max(closes)
         if last <= 0 or ath <= 0:
             return None
         if last >= ath * 0.90:
-            return {"ticker":code, "name":name, "price":int(last),
-                    "change":round((last-prev)/prev*100,2),
-                    "gap":round((last-ath)/ath*100,2),
-                    "mcap":meta.get("mcap"),
-                    "index":[meta.get("market","KR")], "industry":None,
-                    "market":meta.get("market","KR"),
-                    "url":f"https://m.stock.naver.com/domestic/stock/{code}/total"}
+            res = {"ticker":code, "name":name, "price":int(last),
+                   "change":round((last-prev)/prev*100,2),
+                   "gap":round((last-ath)/ath*100,2),
+                   "mcap":meta.get("mcap"),
+                   "index":[meta.get("market","KR")], "industry":None,
+                   "market":meta.get("market","KR"),
+                   "is_etf":etf_flag,
+                   "url":f"https://m.stock.naver.com/domestic/stock/{code}/total"}
+            if etf_flag and dates and len(dates) == len(closes):
+                r1, c5, fd = _calc_perf(dates, closes)
+                res.update({"ret1y": r1, "cagr5y": c5,
+                            "first_date": fd.isoformat() if fd else None})
+            return res
         return None
 
     out = []
@@ -604,28 +1026,33 @@ def get_kr_ath(usd_krw, kr_last=None):
         for s in out:
             s["industry"] = KR_INDUSTRY_STATIC.get(s["ticker"])
 
-    # ETF 판별: 운용사 브랜드 접두사로 ETF 여부 1차 판별.
-    # 주식형 ETF는 그대로 통과시키고, 채권형 ETF만 이름에 포함된 키워드로 걸러냄.
-    # (업종 정적표는 개별 종목 커버리지용이라 ETF 여부 판별에는 더 이상 쓰지 않음 —
-    #  표에 없는 진짜 회사와 ETF를 구분 못 해서 과거 오판별 사고가 있었음.)
-    ETF_BRANDS = ("KODEX","TIGER","ACE","KBSTAR","SOL","HANARO","ARIRANG",
-                  "KOSEF","KINDEX","TIMEFOLIO","WOORI","FOCUS","마이다스",
-                  "히어로즈","RISE","PLUS")
-    BOND_ETF_KEYWORDS = ("채권","국채","회사채","통안채","크레딧","단기자금",
-                         "종합채권","CD금리","MMF","머니마켓")
-
-    def is_etf(name: str) -> bool:
-        return any(name.upper().startswith(b) for b in ETF_BRANDS)
-
-    def is_bond_etf(name: str) -> bool:
-        return any(kw in name for kw in BOND_ETF_KEYWORDS)
-
+    # ETF 판별: 국내 ETF 목록 API 소속이면 확정, 아니면 운용사 브랜드 접두사로 보조 판별.
+    # 주식형·원자재 등 비채권 ETF는 통과시키고, 채권형 ETF만 이름 키워드로 제외.
     before_etf_filter = len(out)
-    out = [s for s in out if not (is_etf(s["name"]) and is_bond_etf(s["name"]))]
+    out = [s for s in out if not (s.get("is_etf") and kr_is_bond_etf(s["name"]))]
     log.info(f"채권 ETF 제외: {before_etf_filter}종목 → {len(out)}종목")
 
     for s in out:
-        s["asset_type"] = "ETF" if is_etf(s["name"]) else "주식"
+        s["asset_type"] = "ETF" if s.get("is_etf") else "주식"
+
+    etf_items = [s for s in out if s["asset_type"] == "ETF"]
+    if etf_items:
+        log.info(f"한국 ETF 상세 조회 중 ({len(etf_items)}종목)...")
+        def enrich_kr(s):
+            try:
+                base = fetch_kr_etf_base(s["ticker"])
+                parsed = parse_kr_etf_base(base) if base else {}
+            except Exception:
+                parsed = {}
+            s["etf_index"] = parsed.get("etf_index")
+            s["issuer"] = parsed.get("issuer") or kr_issuer_from_brand(s["name"])
+            s["inception"] = parsed.get("inception") or s.get("first_date")
+            s["aum"] = s.get("mcap")
+            s["etf_kind"] = classify_kr_etf(s["name"])
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            list(ex.map(enrich_kr, etf_items))
+        log.info(f"한국 ETF 상세 결과: 추종지수 {sum(1 for s in etf_items if s.get('etf_index'))}/{len(etf_items)}, "
+                 f"운용사 {sum(1 for s in etf_items if s.get('issuer'))}/{len(etf_items)}")
 
     out.sort(key=lambda x:x["gap"])
     log.info(f"한국 최종:{len(out)}")
@@ -687,7 +1114,7 @@ def tbl_html(stocks,title,currency,holiday,date_s,hmsg="",flag=""):
         <th style='padding:10px;text-align:center'>누적일수</th>
       </tr></thead><tbody>{rows}</tbody></table>"""
 
-def build_email(us,kr,info,usd_krw,new_us=None,new_kr=None,diag=None,indices=None):
+def build_email(us,kr,info,usd_krw,new_us=None,new_kr=None,diag=None,indices=None,etf_info=None):
     td=datetime.now(KST).strftime("%Y년 %m월 %d일")
     diag = diag or {}
     indices = indices or {}
@@ -732,6 +1159,7 @@ def build_email(us,kr,info,usd_krw,new_us=None,new_kr=None,diag=None,indices=Non
     <div style="margin-top:36px"></div>
     {tbl_html(us,"🇺🇸 미국 전체 상장 보통주","USD",info["us_holiday"],info["us_last_str"],info.get("us_holiday_msg",""),"🇺🇸")}
   </div>
+  {etf_section_html(etf_info or {})}
   <p style="font-size:11px;color:#bbb;margin-top:16px;text-align:center">자동 발송 | All Time High 기준 | 투자 권유 아님</p>
 </body></html>"""
 
@@ -748,7 +1176,7 @@ def send_email(html,subject):
         s.login(user,pwd); s.sendmail(user,to,msg.as_string())
     log.info(f"✅ 발송→{to}")
 
-CODE_VERSION = "2026-07-08-streak-v2"
+CODE_VERSION = "2026-10-03-etf-section"
 
 def main():
     log.info(f"=== ATH 리포트 시작 (코드버전: {CODE_VERSION}) ===")
@@ -775,8 +1203,14 @@ def main():
     for s in us: s["streak"] = us_streak.get(s["ticker"], 1)
     for s in kr: s["streak"] = kr_streak.get(s["ticker"], 1)
 
+    # ETF 전용 섹션: ATH -10% 이내 ETF(한국+미국) 중 최근 1년 수익률 낮은 순 20개
+    etf_pool = [s for s in kr + us if s.get("asset_type") == "ETF"]
+    etf_ranked = sorted([s for s in etf_pool if s.get("ret1y") is not None], key=lambda x: x["ret1y"])
+    etf_info = {"rows": etf_ranked[:20], "pool": len(etf_pool), "with_ret": len(etf_ranked)}
+    log.info(f"ETF 섹션: 풀 {len(etf_pool)}개 / 1년수익률 산출 {len(etf_ranked)}개 / 표시 {len(etf_info['rows'])}개")
+
     diag = {"us_days_before": us_days_before, "kr_days_before": kr_days_before}
-    send_email(build_email(us,kr,info,usd_krw,new_us,new_kr,diag,indices), build_subject(info))
+    send_email(build_email(us,kr,info,usd_krw,new_us,new_kr,diag,indices,etf_info), build_subject(info))
 
     # 스냅샷 저장 (Actions Cache로 다음 실행에 전달됨)
     save_snapshots(snapshots)
