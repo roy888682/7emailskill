@@ -135,13 +135,13 @@ class EtfRankingAndHtmlTests(unittest.TestCase):
         html = etf_section_html({"rows": [row], "pool": 1, "with_ret": 1})
         self.assertIn(">20.0</span>", html)
         self.assertIn(">30.0</span>", html)
-        self.assertEqual(len(re.findall(r'<span[^>]*class="flat">-</span>', html)), 3)
+        self.assertEqual(len(re.findall(r'<span[^>]*class="[^"]*flat[^"]*"[^>]*>-</span>', html)), 3)
 
     def test_missing_cumulative_return_is_shown_as_dash(self):
         row = {"ticker": "ETF", "name": "Example ETF", "cagr1y": 10.0}
         html = etf_section_html({"rows": [row], "pool": 1, "with_ret": 1})
         self.assertIn('data-period="cumulative"', html)
-        self.assertEqual(len(re.findall(r'<span[^>]*class="flat">-</span>', html)), 4)
+        self.assertEqual(len(re.findall(r'<span[^>]*class="[^"]*flat[^"]*"[^>]*>-</span>', html)), 4)
 
     def test_footer_explains_cumulative_return_basis(self):
         row = {"ticker": "ETF", "name": "Example ETF", "cagr1y": 10.0}

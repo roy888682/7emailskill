@@ -1107,54 +1107,48 @@ def tbl_html(stocks,title,currency,holiday,date_s,hmsg="",flag=""):
 
 
 def build_email(us,kr,info,usd_krw,new_us=None,new_kr=None,diag=None,indices=None,
-                etf_info=None,include_all=False):
+                etf_info=None):
     return email_layout.render_email(us, kr, info, usd_krw, new_us, new_kr,
-                                     diag, indices, etf_info, include_all)
+                                     diag, indices, etf_info)
 
 def build_subject(info):
     ut=" [휴장]" if info["us_holiday"] else ""; kt=" [휴장]" if info["kr_holiday"] else ""
     return f"ATH & ETF | 미국 {info['us_last_str']}{ut} / 한국 {info['kr_last_str']}{kt}"
 
 
-def compose_email_message(html, subject, user, to, report_html=None):
-    """Related CID flags, a text fallback, and a complete report when body is shortened."""
-    if len(html.encode("utf-8")) > email_layout.MAX_BODY_BYTES:
-        raise ValueError("Email body exceeds safe size")
-    msg = MIMEMultipart("mixed")
+def compose_email_message(html, subject, user, to):
+    """One complete HTML body with inline flags and zero attachment parts."""
+    msg = MIMEMultipart("related")
     msg["Subject"], msg["From"], msg["To"] = subject, user, to
-    related = MIMEMultipart("related")
     alternative = MIMEMultipart("alternative")
-    alternative.attach(MIMEText("오늘의 ATH & ETF 리포트입니다. HTML 보기에서 국기와 ETF 수익률 카드를 확인하세요.", "plain", "utf-8"))
+    alternative.attach(MIMEText("오늘의 ATH & ETF 전체 리포트입니다. HTML 보기에서 모든 후보와 ETF 수익률을 확인하세요.", "plain", "utf-8"))
     alternative.attach(MIMEText(html, "html", "utf-8"))
-    related.attach(alternative)
+    msg.attach(alternative)
     for country, png in email_flags.flag_images().items():
         asset = MIMEImage(png, _subtype="png")
         asset.add_header("Content-ID", f"<ath-flag-{country}>")
-        asset.add_header("Content-Disposition", "inline", filename=f"flag-{country}.png")
-        related.attach(asset)
-    msg.attach(related)
-    if report_html and report_html != html:
-        report = MIMEText(email_flags.inline_flag_sources(report_html), "html", "utf-8")
-        report.add_header("Content-Disposition", "attachment", filename="ATH-full-report.html")
-        msg.attach(report)
+        asset.add_header("Content-Disposition", "inline")
+        msg.attach(asset)
     return msg
 
 
-def send_email(html, subject, report_html=None, preview_name="email-preview"):
+def send_email(html, subject):
     user=os.environ["GMAIL_USER"]; pwd=os.environ["GMAIL_APP_PASSWORD"]
     to=os.environ.get("RECIPIENT_EMAIL","ykhan@dacpole.com")
-    msg = compose_email_message(html, subject, user, to, report_html)
+    msg = compose_email_message(html, subject, user, to)
     preview_dir = Path("work")
     preview_dir.mkdir(exist_ok=True)
-    (preview_dir / (preview_name + ".html")).write_text(email_flags.inline_flag_sources(html), encoding="utf-8")
-    if report_html:
-        (preview_dir / "email-full-report.html").write_text(email_flags.inline_flag_sources(report_html), encoding="utf-8")
-    log.info(f"메일 레이아웃: 본문 {len(html.encode('utf-8')):,}바이트 / 전체리포트 {len((report_html or html).encode('utf-8')):,}바이트 / 국기 PNG 2개")
+    (preview_dir / "email-preview.html").write_text(email_flags.inline_flag_sources(html), encoding="utf-8")
+    us_rows = html.count('data-key="US:') - html.count('class="new-row" data-key="US:')
+    kr_rows = html.count('data-key="KR:') - html.count('class="new-row" data-key="KR:')
+    attachment_count = sum(part.get_content_disposition() == "attachment" for part in msg.walk())
+    log.info(f"메일 전체 본문: 미국 {us_rows}종목 / 한국 {kr_rows}종목 / "
+             f"{len(html.encode('utf-8')):,}바이트 / 첨부 {attachment_count}개 / 국기 PNG 2개")
     with smtplib.SMTP_SSL("smtp.gmail.com",465) as smtp:
         smtp.login(user,pwd); smtp.sendmail(user,to,msg.as_string())
     log.info(f"✅ 발송→{to}")
 
-CODE_VERSION = "2026-10-09-new-list-aum"
+CODE_VERSION = "2026-10-09-all-candidates-body-preview"
 
 def main():
     log.info(f"=== ATH 리포트 시작 (코드버전: {CODE_VERSION}) ===")
@@ -1186,13 +1180,15 @@ def main():
     log.info(f"ETF 섹션: 풀 {etf_info['pool']}개 / 1년수익률 산출 {etf_info['with_ret']}개 / 표시 {len(etf_info['rows'])}개")
 
     diag = {"us_days_before": us_days_before, "kr_days_before": kr_days_before}
-    email_pages = email_layout.render_email_pages(us,kr,info,usd_krw,new_us,new_kr,diag,indices,etf_info)
-    full_report = build_email(us,kr,info,usd_krw,new_us,new_kr,diag,indices,etf_info,include_all=True)
-    log.info(f"신규 상세 목록 보호: {len(new_us) + len(new_kr)}개 전부 표시 / 메일 {len(email_pages)}통")
-    for page_number, email_html in enumerate(email_pages, 1):
-        suffix = f" [{page_number}/{len(email_pages)}]" if len(email_pages) > 1 else ""
-        preview_name = "email-preview" if page_number == 1 else f"email-preview-{page_number}"
-        send_email(email_html, build_subject(info) + suffix, full_report if page_number == 1 else None, preview_name)
+    email_html = build_email(us,kr,info,usd_krw,new_us,new_kr,diag,indices,etf_info)
+    # Enforce exact full-list membership before delivery, independent of HTML length.
+    actual_keys = re.findall(r'class="stock-row" data-key="([^"]+)"', email_html)
+    expected_keys = ["KR:" + s["ticker"] for s in kr] + ["US:" + s["ticker"] for s in us]
+    if actual_keys != expected_keys:
+        raise RuntimeError("Email candidate list does not match collected data")
+    log.info(f"본문 전체 목록 검증: 미국 {len(us)}/{len(us)} · 한국 {len(kr)}/{len(kr)} · "
+             f"신규 {len(new_us) + len(new_kr)}개 / 단일 메일")
+    send_email(email_html, build_subject(info))
 
     # 스냅샷 저장 (Actions Cache로 다음 실행에 전달됨)
     save_snapshots(snapshots)

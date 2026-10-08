@@ -1,4 +1,4 @@
-"""Delivery tests: embedded flags, complete reports, and SMTP payload."""
+"""Delivery regressions: every candidate in one body and zero attachments."""
 import os
 import tempfile
 import unittest
@@ -6,8 +6,10 @@ from email import message_from_string
 from pathlib import Path
 from unittest.mock import patch
 
-from src.main import compose_email_message, send_email, build_subject
-from src.email_layout import MAX_BODY_BYTES
+from src.main import compose_email_message, send_email, build_subject, main
+from tools.preview_email import sample_data, make_stock
+from datetime import date
+import re
 
 
 class EmailDeliveryTests(unittest.TestCase):
@@ -26,25 +28,38 @@ class EmailDeliveryTests(unittest.TestCase):
         self.assertEqual(body.get_payload(decode=True).decode("utf-8"), html)
         self.assertTrue(any(part.get_content_type() == "text/plain" for part in parts))
 
-    def test_complete_report_attachment_has_self_contained_flags(self):
-        html = '<img src="cid:ath-flag-kr">short'
-        full = '<img src="cid:ath-flag-kr">all-stock-data'
-        message = compose_email_message(html, "test", "sender@example.test", "reader@example.test", full)
-        attachments = [part for part in message.walk() if part.get_content_disposition() == "attachment"]
-        self.assertEqual(len(attachments), 1)
-        self.assertEqual(attachments[0].get_filename(), "ATH-full-report.html")
-        report = attachments[0].get_payload(decode=True).decode("utf-8")
-        self.assertIn("all-stock-data", report)
-        self.assertIn("data:image/png;base64,", report)
-        self.assertNotIn("cid:", report)
-
-    def test_identical_complete_report_is_not_duplicated(self):
-        message = compose_email_message("same", "test", "a@example.test", "b@example.test", "same")
+    def test_complete_large_html_is_allowed_with_no_attachment(self):
+        html = '<img src="cid:ath-flag-us">' + "가" * 85000
+        message = compose_email_message(html, "test", "a@example.test", "b@example.test")
+        self.assertEqual(message.get_content_type(), "multipart/related")
         self.assertFalse(any(part.get_content_disposition() == "attachment" for part in message.walk()))
+        bodies = [part for part in message.walk() if part.get_content_type() == "text/html"]
+        self.assertEqual(len(bodies), 1)
+        self.assertEqual(bodies[0].get_payload(decode=True).decode("utf-8"), html)
 
-    def test_oversized_message_is_rejected_before_smtp(self):
-        with self.assertRaises(ValueError):
-            compose_email_message("가" * MAX_BODY_BYTES, "test", "a@example.test", "b@example.test")
+    def test_main_sends_all_218_us_and_17_kr_candidates_once(self):
+        data = sample_data()
+        data["us"].extend(make_stock(f"EXTRA{i}", number=i) for i in range(5))
+        info = dict(data["info"], us_last=date(2026,10,8), kr_last=date(2026,10,8))
+        with (
+            patch("src.main.get_trading_info", return_value=info),
+            patch("src.main.get_usd_krw", return_value=1342),
+            patch("src.main.get_market_indices", return_value=data["indices"]),
+            patch("src.main.get_us_ath", return_value=data["us"]),
+            patch("src.main.get_kr_ath", return_value=data["kr"]),
+            patch("src.main.load_snapshots", return_value={}),
+            patch("src.main.save_snapshots"),
+            patch("src.main.send_email") as send,
+        ):
+            main()
+        send.assert_called_once()
+        self.assertEqual(len(send.call_args.args), 2)
+        html = send.call_args.args[0]
+        keys = re.findall(r'class="stock-row" data-key="([^"]+)"', html)
+        self.assertEqual(keys, ["KR:" + r["ticker"] for r in data["kr"]] + ["US:" + r["ticker"] for r in data["us"]])
+        self.assertEqual(sum(key.startswith("US:") for key in keys), 218)
+        self.assertEqual(sum(key.startswith("KR:") for key in keys), 17)
+        self.assertNotIn("첨부", html)
 
     def test_subject_uses_country_names_instead_of_flag_letter_glyphs(self):
         subject = build_subject({"us_holiday": False, "kr_holiday": False,
@@ -64,10 +79,13 @@ class EmailDeliveryTests(unittest.TestCase):
                                              "GMAIL_APP_PASSWORD": "test-password",
                                              "RECIPIENT_EMAIL": "b@example.test"}):
                     with patch("src.main.smtplib.SMTP_SSL") as smtp:
-                        send_email(html, "test", html)
+                        send_email(html, "test")
                         sent = smtp.return_value.__enter__.return_value.sendmail.call_args.args[2]
                         message = message_from_string(sent)
                         self.assertEqual(sum(p.get_content_type() == "image/png" for p in message.walk()), 2)
+                        smtp.return_value.__enter__.return_value.sendmail.assert_called_once()
+                        self.assertFalse(any(p.get_content_disposition() == "attachment" for p in message.walk()))
+                        self.assertFalse(Path("work/email-full-report.html").exists())
                         preview = Path("work/email-preview.html").read_text(encoding="utf-8")
                         self.assertIn("data:image/png;base64,", preview)
                         self.assertNotIn("cid:", preview)

@@ -75,12 +75,27 @@ LAYOUT_CHECK = """() => {
    problems.push("document overflow: "+document.documentElement.scrollWidth+" > "+viewport);
  const periods=["1y","3y","5y","10y","cumulative"];
  const etfs=Array.from(document.querySelectorAll(".etf-row[data-ticker]"));
- const stocks=Array.from(document.querySelectorAll(".stock-row[data-ticker]"));
- const newRows=Array.from(document.querySelectorAll(".new-row[data-ticker]"));
+ const stocks=Array.from(document.querySelectorAll(".stock-row[data-key]"));
+ const newRows=Array.from(document.querySelectorAll(".new-row[data-key]"));
  const newSection=document.querySelector("#new-stocks");
  if(!newSection||newRows.length!==Number(newSection.dataset.shown))problems.push("New securities missing from visible list");
  if(document.querySelector("thead")?.textContent.includes("현재가"))problems.push("Current-price column is still displayed");
  if(!etfs.length)problems.push("ETF rows were not rendered");
+ const counts={};
+ document.querySelectorAll(".stock-table").forEach(table=>{
+   const rows=Array.from(table.querySelectorAll("tbody .stock-row"));
+   const expected=Number(table.dataset.count),country=table.dataset.country;
+   counts[country]={expected,visible:rows.length};
+   if(rows.length!==expected)problems.push(country+" candidate count differs from rendered list");
+   const keys=rows.map(row=>row.dataset.key);
+   if(keys.some(key=>!key.startsWith(country+":")))problems.push(country+" table contains wrong-country rows");
+   if(new Set(keys).size!==keys.length)problems.push(country+" table contains duplicate candidates");
+   const section=table.closest(".stock-section");
+   if(!section.querySelector(".intro").textContent.includes(expected+"종목"))problems.push(country+" heading count differs from rows");
+ });
+ if(document.body.textContent.includes("첨부"))problems.push("Attachment-related copy remains");
+ if(etfs.length&&document.querySelector("#new-stocks").compareDocumentPosition(document.querySelector("#etf"))&Node.DOCUMENT_POSITION_PRECEDING)
+   problems.push("New list must precede ETF comparison");
  etfs.forEach((row,index)=>{
    const metrics=periods.map(period=>row.querySelector('[data-period="'+period+'"]'));
    if(metrics.some(metric=>!metric)){problems.push("ETF "+index+" missing a return metric");return;}
@@ -89,13 +104,13 @@ LAYOUT_CHECK = """() => {
    const size=row.querySelector('[data-field="aum"]');
    if(!date||!size||cumulative.nextElementSibling!==size||size.nextElementSibling!==date)
      problems.push("ETF "+index+" requires cumulative → KRW AUM → inception");
-   const colors=metrics.slice(0,4).map(metric=>getComputedStyle(metric.querySelector("strong span")).color);
+   const colors=metrics.slice(0,4).map(metric=>getComputedStyle(metric).color);
    if(new Set(colors).size!==4)problems.push("ETF "+index+" return colors are not distinct");
  });
  [...stocks,...newRows].forEach(row=>{
-   for(const key of ["gap","change"]){
-     const span=row.querySelector('[data-field="'+key+'"] span');
-     if(!span||getComputedStyle(span).color!=="rgb(194, 57, 50)")problems.push("ATH/day change must be red");
+   for(const column of [5,7]){
+     const cell=row.cells[column];
+     if(!cell||getComputedStyle(cell).color!=="rgb(194, 57, 50)")problems.push("ATH/day change must be red");
    }
  });
  const stockBadge=document.querySelector(".asset-stock"),etfBadge=document.querySelector(".asset-etf");
@@ -120,7 +135,7 @@ LAYOUT_CHECK = """() => {
      }
    }
  });
- return {viewport,etfs:etfs.length,stocks:stocks.length,newRows:newRows.length,
+ return {viewport,etfs:etfs.length,stocks:stocks.length,newRows:newRows.length,counts,
          etfHeight:Math.round(document.querySelector(".etf-table")?.getBoundingClientRect().height||0),problems};
 }"""
 
@@ -165,6 +180,12 @@ def main():
                         stock_section.scroll_into_view_if_needed()
                         stock_png = page.screenshot(path=str(args.output / ("email-" + name + "-stocks.png")), full_page=False)
                         print("PREVIEW_IMAGE_" + name.upper() + "_STOCKS:" + base64.b64encode(stock_png).decode("ascii"), flush=True)
+                if width == 1600:
+                    last_row = page.locator(".stock-row").last
+                    if last_row.count():
+                        last_row.scroll_into_view_if_needed()
+                        last_png = page.screenshot(path=str(args.output / "email-desktop-last.png"), full_page=False)
+                        print("PREVIEW_IMAGE_DESKTOP_LAST:" + base64.b64encode(last_png).decode("ascii"), flush=True)
                 page.close()
         finally:
             browser.close()

@@ -1,7 +1,7 @@
 import re
 import unittest
 from html.parser import HTMLParser
-from src.email_layout import MAX_BODY_BYTES, etf_section_html, inception_text, render_email, render_email_pages, row_size, industry_text
+from src.email_layout import etf_section_html, inception_text, render_email, row_size, industry_text
 from tools.preview_email import make_stock, sample_data
 
 class EtfRows(HTMLParser):
@@ -61,32 +61,32 @@ class EmailLayoutTests(unittest.TestCase):
         row = self.data["etf_info"]["rows"][0]
         row.update({"name": '<script>alert("name")</script>' + "긴종목명" * 60,
                     "issuer": '<img onerror="alert(1)">', "etf_index": "<b>index</b>"})
-        source = render_email(**self.data, include_all=True)
+        source = render_email(**self.data)
         self.assertNotIn("<script>", source)
         self.assertNotIn('<img onerror=', source)
         self.assertIn("&lt;script&gt;", source)
         self.assertIn("&lt;b&gt;index&lt;/b&gt;", source)
 
-    def test_body_budget_preserves_etfs_and_complete_attachment(self):
-        self.assertLessEqual(MAX_BODY_BYTES, 85000)
-        self.data["us"] = [make_stock("US%04d" % i, number=i) for i in range(500)]
-        self.data["kr"] = [make_stock("KR%04d" % i, market="KOSPI", number=i) for i in range(500)]
+    def test_all_candidates_are_in_body_even_above_previous_85kb_limit(self):
+        self.data["us"] = [make_stock(f"US{i:04d}", number=i) for i in range(500)]
+        self.data["kr"] = [make_stock(f"KR{i:04d}", market="KOSPI", number=i) for i in range(500)]
         body = render_email(**self.data)
-        self.assertLessEqual(len(body.encode("utf-8")), MAX_BODY_BYTES)
-        self.assertIn("전체 목록은 첨부 리포트", body)
+        self.assertGreater(len(body.encode("utf-8")), 85000)
+        expected = ["KR:" + r["ticker"] for r in self.data["kr"]] + ["US:" + r["ticker"] for r in self.data["us"]]
+        keys = re.findall(r'class="stock-row" data-key="([^"]+)"', body)
+        self.assertEqual(keys, expected)
         self.assertEqual(len(rows_from(body)), 20)
-        complete = render_email(**self.data, include_all=True)
-        for stock in self.data["us"] + self.data["kr"]:
-            self.assertIn(stock["ticker"], complete)
+        self.assertNotIn("첨부", body)
+        self.assertIn('data-country="US" data-count="500"', body)
+        self.assertIn('data-country="KR" data-count="500"', body)
 
-    def test_comparison_uses_shared_unit_and_details_stay_in_attachment(self):
+    def test_etf_details_and_shared_units_are_in_body(self):
         body = render_email(**self.data)
-        complete = render_email(**self.data, include_all=True)
         self.assertIn("단위: %", body)
         self.assertIn("최근 1·3·5·10년: 연평균수익률(CAGR)", body)
-        self.assertNotIn('<div class="etf-details">', body)
-        self.assertIn('<div class="etf-details">', complete)
-        self.assertIn("신한자산운용 주식회사", complete)
+        self.assertIn('<div class="etf-details">', body)
+        self.assertIn("신한자산운용 주식회사", body)
+        self.assertNotIn("첨부", body)
 
     def test_inception_date_uses_disclosed_date_and_history_fallback(self):
         self.assertEqual(inception_text({"inception": "2018-04-05", "first_date": "2016-01-02"}), "2018-04-05")
@@ -105,34 +105,35 @@ class EmailLayoutTests(unittest.TestCase):
         expected = ["KR:" + r["ticker"] for r in self.data["new_kr"]] + ["US:" + r["ticker"] for r in self.data["new_us"]]
         self.assertEqual(keys, expected)
 
-    def test_large_new_lists_are_paginated_without_omission_or_duplicates(self):
+    def test_large_new_lists_and_regular_lists_remain_in_single_body(self):
         for count in (119, 500):
             with self.subTest(count=count):
                 data = sample_data()
                 data["us"] = [make_stock(f"NEW{i:04d}", number=i) for i in range(count)]
                 data["new_us"] = data["us"]
-                pages = render_email_pages(**data)
-                self.assertGreater(len(pages), 1)
-                keys = []
-                for page in pages:
-                    self.assertLessEqual(len(page.encode("utf-8")), MAX_BODY_BYTES)
-                    keys.extend(re.findall(r'class="new-row"[^>]*data-key="([^"]+)"', page))
+                body = render_email(**data)
+                new_keys = re.findall(r'class="new-row"[^>]*data-key="([^"]+)"', body)
+                stock_keys = re.findall(r'class="stock-row"[^>]*data-key="([^"]+)"', body)
                 expected = ["KR:" + r["ticker"] for r in data["new_kr"]] + ["US:" + r["ticker"] for r in data["new_us"]]
-                self.assertEqual(keys, expected)
-                self.assertEqual(sum(len(rows_from(page)) for page in pages), 20)
+                self.assertEqual(new_keys, expected)
+                self.assertEqual(len(stock_keys), len(data["kr"]) + count)
+                self.assertEqual(len(rows_from(body)), 20)
+                self.assertNotIn("첨부", body)
 
     def test_requested_colors_size_preference_and_no_current_price(self):
         source = render_email(**self.data)
         self.assertNotIn("현재가", source)
-        for period, color in (("1y", "#c23932"), ("3y", "#245ba6"), ("5y", "#087d67"), ("10y", "#7944b0")):
-            self.assertRegex(source, f'data-period="{period}"[^>]*>.*?style="color:{color}"')
+        for period, cls, color in (("1y", "p1", "#c23932"), ("3y", "p3", "#245ba6"),
+                                   ("5y", "p5", "#087d67"), ("10y", "p10", "#7944b0")):
+            self.assertIn(f".{cls}" + "{color:" + color + "}", source)
+            self.assertRegex(source, f'class="metric [^"]*{cls}" data-period="{period}"')
         self.assertIn('class="asset asset-etf"', source)
         self.assertIn('class="asset asset-stock"', source)
         for value in (-9.9, 0, 2.5):
             row = make_stock("COLOR")
             row.update(gap=value, change=value)
             html = render_email([row], [], self.data["info"], 1400)
-            self.assertEqual(html.count('class="signal-red" style="color:#c23932"'), 2)
+            self.assertEqual(html.count('class="n red"'), 2)
         self.assertEqual(row_size({"asset_type": "ETF", "aum": 1.4, "mcap": 9}), "1.40조원")
         self.assertEqual(row_size({"asset_type": "ETF", "aum": None, "mcap": .0034}), "34억원")
         self.assertEqual(row_size({"asset_type": "주식", "aum": 9, "mcap": 1.2}), "1.20조원")
@@ -142,7 +143,6 @@ class EmailLayoutTests(unittest.TestCase):
 
     def test_empty_report_is_valid(self):
         source = render_email([], [], self.data["info"], 1343.4)
-        self.assertLessEqual(len(source.encode("utf-8")), MAX_BODY_BYTES)
         self.assertIn("해당 ETF 없음", source)
         self.assertEqual(rows_from(source), [])
         self.assertNotIn("None", source)

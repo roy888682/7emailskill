@@ -4,9 +4,13 @@ on:
   schedule:
     - cron: '0 22 * * 1-5'   # 22:00 UTC = 07:00 KST (화~토)
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['src/**', 'tests/**', 'tools/**']
 
 jobs:
   send-ath-email:
+    if: github.event_name != 'push' || contains(github.event.head_commit.message, '[send-all-candidates-body]')
     runs-on: ubuntu-latest
     timeout-minutes: 55
 
@@ -75,9 +79,48 @@ jobs:
           RECIPIENT_EMAIL:    ${{ secrets.RECIPIENT_EMAIL }}
         run: python src/main.py
 
+      - name: 실제 전체 본문 PC 레이아웃 검증
+        if: github.event_name == 'push'
+        run: |
+          pip install playwright
+          playwright install --with-deps chromium
+          sudo apt-get install -y fonts-noto-cjk
+          python tools/preview_email.py --html work/email-preview.html --output work/check-sent
+
+      - name: 실제 메일 미리보기 저장
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: complete-email-desktop
+          path: work/
+
       - name: 💾 누적 스냅샷 저장 (다음 실행에서 자동 복원됨)
         if: always()
         uses: actions/cache/save@v4
         with:
           path: data/daily_snapshots.json
           key: ath-snapshot-${{ github.run_id }}
+
+  preview-email:
+    if: github.event_name == 'push' && contains(github.event.head_commit.message, '[run-all-candidates-preview]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - run: pip install -r requirements.txt
+      - name: All-candidate and no-attachment regression checks
+        run: python -m unittest discover -s tests -v
+      - name: Full-body PC layout checks
+        run: |
+          pip install playwright
+          playwright install --with-deps chromium
+          sudo apt-get install -y fonts-noto-cjk
+          python tools/preview_email.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: complete-email-desktop-preview
+          path: work/
