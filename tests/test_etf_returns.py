@@ -141,7 +141,7 @@ class EtfRankingAndHtmlTests(unittest.TestCase):
         row = {"ticker": "ETF", "name": "Example ETF", "cagr1y": 10.0}
         html = etf_section_html({"rows": [row], "pool": 1, "with_ret": 1})
         self.assertIn('data-period="cumulative"', html)
-        self.assertEqual(html.count('<span class="flat">-</span>'), 4)
+        self.assertEqual(len(re.findall(r'<span[^>]*class="flat">-</span>', html)), 4)
 
     def test_footer_explains_cumulative_return_basis(self):
         row = {"ticker": "ETF", "name": "Example ETF", "cagr1y": 10.0}

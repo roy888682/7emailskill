@@ -243,6 +243,8 @@ def render_email(us, kr, info, usd_krw, new_us=None, new_kr=None, diag=None,
         reduced = us_count < len(us) or kr_count < len(kr)
         note = (f'<p class="report-note">전체 {len(us) + len(kr)}종목 중 본문 {us_count + kr_count}종목을 표시합니다. '
                 '전체 목록은 첨부 리포트에서 확인하세요.</p>') if reduced else ""
+        if not show_regular:
+            note = '<p class="report-note">이 메일에는 신규 상세 목록을 표시합니다. 전체 후보 목록은 첫 번째 메일의 첨부 리포트에서 확인하세요.</p>'
         lists = (stocks_table(kr[:kr_count], "한국 ATH 후보", "KRW", info.get("kr_holiday", False),
                                info.get("kr_last_str", "-"), info.get("kr_holiday_msg", ""),
                                [s.get("ticker") for s in new_kr])
