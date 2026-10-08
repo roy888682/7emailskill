@@ -326,18 +326,18 @@ def get_trading_info():
 # 최초 거래일→설립일)으로 채움.
 
 def _calc_perf(dates, closes):
-    """(최근 1년 수익률%, 5년 연평균수익률%, 최초거래일). 기간이 모자라면 해당 값은 None."""
+    """(최근 3년 연평균수익률%, 5년 연평균수익률%, 최초거래일). 기간이 모자라면 해당 값은 None."""
     if not dates or len(dates) != len(closes) or len(closes) < 2:
         return None, None, None
     last_d, last_p = dates[-1], closes[-1]
     def price_on_or_before(target):
         i = bisect.bisect_right(dates, target) - 1
         return closes[i] if i >= 0 else None
-    p1 = price_on_or_before(last_d - timedelta(days=365))
+    p3 = price_on_or_before(last_d - timedelta(days=1096))
     p5 = price_on_or_before(last_d - timedelta(days=1826))
-    ret1  = round((last_p / p1 - 1) * 100, 1) if p1 else None
+    cagr3 = round(((last_p / p3) ** (1 / 3) - 1) * 100, 1) if p3 else None
     cagr5 = round(((last_p / p5) ** (1 / 5) - 1) * 100, 1) if p5 else None
-    return ret1, cagr5, dates[0]
+    return cagr3, cagr5, dates[0]
 
 def _flatten(d, prefix="", depth=0):
     flat = {}
@@ -629,9 +629,9 @@ def etf_section_html(etf_info):
     head = f"""
     <div style="background:#fff;padding:20px;border-radius:8px;margin-top:12px;
                 border-left:4px solid #8e44ad;box-shadow:0 1px 4px rgba(0,0,0,.08)">
-      <h2 style="margin:0 0 4px;color:#1a1a2e;font-size:18px">🧺 ETF 전용 — 최근 1년 운용실적 낮은 순 {len(rows_data)}개</h2>
+      <h2 style="margin:0 0 4px;color:#1a1a2e;font-size:18px">🧺 ETF 전용 — 최근 3년 연평균 수익률 높은 순 {len(rows_data)}개</h2>
       <p style="margin:0 0 10px;color:#888;font-size:12px">
-        ATH -10% 이내 ETF {pool}개 중 1년 수익률 산출 가능 {with_ret}개 기준 (오름차순, 채권형 제외)
+        ATH -10% 이내 ETF {pool}개 중 3년 연평균 수익률 산출 가능 {with_ret}개 기준 (내림차순, 채권형·상장 3년 미만 제외)
       </p>"""
     if not rows_data:
         return head + "<p style='color:#888;font-size:13px'>해당 ETF 없음</p></div>"
@@ -651,7 +651,7 @@ def etf_section_html(etf_info):
           <td style='padding:6px 8px;text-align:right;color:#555'>{_etf_aum(aum)}</td>
           <td style='padding:6px 8px;text-align:right'>{_etf_pct(s.get("cagr5y"))}</td>
           <td style='padding:6px 8px;color:#666;font-size:11px'>{s.get("etf_kind") or "-"}</td>
-          <td style='padding:6px 8px;text-align:right'>{_etf_pct(s.get("ret1y"))}</td>
+          <td style='padding:6px 8px;text-align:right'>{_etf_pct(s.get("cagr3y"))}</td>
           <td style='padding:6px 8px;color:#666;font-size:11px'>{s.get("issuer") or "-"}</td>
           <td style='padding:6px 8px;color:#666;font-size:11px;white-space:nowrap'>{inception}</td></tr>"""
     th = "padding:8px;font-size:12px"
@@ -666,13 +666,13 @@ def etf_section_html(etf_info):
           <th style="{th};text-align:right">AUM 시가총액</th>
           <th style="{th};text-align:right">5년 연평균수익률</th>
           <th style="{th};text-align:left">ETF 성격</th>
-          <th style="{th};text-align:right">최근 1년 운용실적</th>
+          <th style="{th};text-align:right">최근 3년 연평균 수익률</th>
           <th style="{th};text-align:left">운용사</th>
           <th style="{th};text-align:left">설립일</th>
         </tr></thead><tbody>{rows}</tbody></table></div>
       <p style="margin:10px 0 0;color:#aaa;font-size:11px">
         ※ 한국 ETF는 분배금 미반영 가격수익률, 미국 ETF는 배당 재투자 반영 수정주가 기준임.
-        5년 미만 상장은 '-' 표시. 설립일은 운용사 공시값을 우선하고 없으면 최초 거래일, 운용사는 미확인 시 브랜드로 추정함.
+        상장 3년·5년 미만이면 해당 수익률은 '-' 표시. 설립일은 운용사 공시값을 우선하고 없으면 최초 거래일, 운용사는 미확인 시 브랜드로 추정함.
       </p>
     </div>"""
     return head + table
@@ -696,30 +696,124 @@ def dl(tickers, period, chunk=80, sleep=1.2):
         time.sleep(sleep)
     log.info(f"  US완료:{len(out)}/{n}"); return out
 
+# 미국 본토 주요 ETF (시가총액·거래량 상위 위주, 채권형 제외). NASDAQ 심볼 파일이 막혀도
+# 항상 포함되도록 정적 목록으로 관리함. 빠진 ETF가 있으면 "티커": "이름" 한 줄만 추가하면 됨.
+US_MAJOR_ETFS = {
+    # 미국 시장 전체/대형주
+    "SPY":"SPDR S&P 500 ETF Trust","VOO":"Vanguard S&P 500 ETF","IVV":"iShares Core S&P 500 ETF",
+    "VTI":"Vanguard Total Stock Market ETF","QQQ":"Invesco QQQ Trust, Series 1","QQQM":"Invesco NASDAQ 100 ETF",
+    "DIA":"SPDR Dow Jones Industrial Average ETF Trust","SPLG":"SPDR Portfolio S&P 500 ETF",
+    "RSP":"Invesco S&P 500 Equal Weight ETF","VV":"Vanguard Large-Cap ETF","SCHX":"Schwab U.S. Large-Cap ETF",
+    "SCHB":"Schwab U.S. Broad Market ETF","ITOT":"iShares Core S&P Total U.S. Stock Market ETF",
+    "IWB":"iShares Russell 1000 ETF","OEF":"iShares S&P 100 ETF","XLG":"Invesco S&P 500 Top 50 ETF",
+    "DFAC":"Dimensional U.S. Core Equity 2 ETF","MAGS":"Roundhill Magnificent Seven ETF",
+    # 중소형주
+    "IWM":"iShares Russell 2000 ETF","IJH":"iShares Core S&P Mid-Cap ETF","IJR":"iShares Core S&P Small-Cap ETF",
+    "MDY":"SPDR S&P MidCap 400 ETF Trust","VB":"Vanguard Small-Cap ETF","VO":"Vanguard Mid-Cap ETF",
+    "SCHA":"Schwab U.S. Small-Cap ETF","IWR":"iShares Russell Mid-Cap ETF","AVUV":"Avantis U.S. Small Cap Value ETF",
+    "VBR":"Vanguard Small-Cap Value ETF","VBK":"Vanguard Small-Cap Growth ETF","VOT":"Vanguard Mid-Cap Growth ETF",
+    "IWO":"iShares Russell 2000 Growth ETF","IWN":"iShares Russell 2000 Value ETF","IWP":"iShares Russell Mid-Cap Growth ETF",
+    # 성장/가치/팩터
+    "VUG":"Vanguard Growth ETF","VTV":"Vanguard Value ETF","IWF":"iShares Russell 1000 Growth ETF",
+    "IWD":"iShares Russell 1000 Value ETF","SCHG":"Schwab U.S. Large-Cap Growth ETF","SPYG":"SPDR Portfolio S&P 500 Growth ETF",
+    "SPYV":"SPDR Portfolio S&P 500 Value ETF","IVW":"iShares S&P 500 Growth ETF","IVE":"iShares S&P 500 Value ETF",
+    "IUSG":"iShares Core S&P U.S. Growth ETF","IUSV":"iShares Core S&P U.S. Value ETF","MTUM":"iShares MSCI USA Momentum Factor ETF",
+    "QUAL":"iShares MSCI USA Quality Factor ETF","USMV":"iShares MSCI USA Min Vol Factor ETF","SPMO":"Invesco S&P 500 Momentum ETF",
+    "SPHQ":"Invesco S&P 500 Quality ETF","SPLV":"Invesco S&P 500 Low Volatility ETF","COWZ":"Pacer US Cash Cows 100 ETF",
+    "MOAT":"VanEck Morningstar Wide Moat ETF",
+    # 배당/인컴
+    "SCHD":"Schwab U.S. Dividend Equity ETF","VIG":"Vanguard Dividend Appreciation ETF","VYM":"Vanguard High Dividend Yield ETF",
+    "DGRO":"iShares Core Dividend Growth ETF","DVY":"iShares Select Dividend ETF","HDV":"iShares Core High Dividend ETF",
+    "SDY":"SPDR S&P Dividend ETF","NOBL":"ProShares S&P 500 Dividend Aristocrats ETF","JEPI":"JPMorgan Equity Premium Income ETF",
+    "JEPQ":"JPMorgan Nasdaq Equity Premium Income ETF",
+    # 섹터
+    "XLK":"Technology Select Sector SPDR Fund","XLF":"Financial Select Sector SPDR Fund","XLV":"Health Care Select Sector SPDR Fund",
+    "XLE":"Energy Select Sector SPDR Fund","XLY":"Consumer Discretionary Select Sector SPDR Fund",
+    "XLP":"Consumer Staples Select Sector SPDR Fund","XLI":"Industrial Select Sector SPDR Fund","XLU":"Utilities Select Sector SPDR Fund",
+    "XLB":"Materials Select Sector SPDR Fund","XLRE":"Real Estate Select Sector SPDR Fund","XLC":"Communication Services Select Sector SPDR Fund",
+    "VGT":"Vanguard Information Technology ETF","VHT":"Vanguard Health Care ETF","VFH":"Vanguard Financials ETF",
+    "VDE":"Vanguard Energy ETF","VIS":"Vanguard Industrials ETF","VPU":"Vanguard Utilities ETF","VOX":"Vanguard Communication Services ETF",
+    "FTEC":"Fidelity MSCI Information Technology Index ETF","IYW":"iShares U.S. Technology ETF","IXN":"iShares Global Tech ETF",
+    "QTEC":"First Trust NASDAQ-100-Technology Sector Index Fund","FDN":"First Trust Dow Jones Internet Index Fund",
+    # 테마/산업
+    "SMH":"VanEck Semiconductor ETF","SOXX":"iShares Semiconductor ETF","SOXQ":"Invesco PHLX Semiconductor ETF",
+    "XSD":"SPDR S&P Semiconductor ETF","IGV":"iShares Expanded Tech-Software Sector ETF","XBI":"SPDR S&P Biotech ETF",
+    "IBB":"iShares Biotechnology ETF","XHB":"SPDR S&P Homebuilders ETF","ITB":"iShares U.S. Home Construction ETF",
+    "KRE":"SPDR S&P Regional Banking ETF","KBE":"SPDR S&P Bank ETF","XOP":"SPDR S&P Oil & Gas Exploration & Production ETF",
+    "OIH":"VanEck Oil Services ETF","ITA":"iShares U.S. Aerospace & Defense ETF","XAR":"SPDR S&P Aerospace & Defense ETF",
+    "ARKK":"ARK Innovation ETF","ARKQ":"ARK Autonomous Technology & Robotics ETF","ARKG":"ARK Genomic Revolution ETF",
+    "ARKW":"ARK Next Generation Internet ETF","BOTZ":"Global X Robotics & Artificial Intelligence ETF",
+    "ROBO":"ROBO Global Robotics and Automation Index ETF","AIQ":"Global X Artificial Intelligence & Technology ETF",
+    "CIBR":"First Trust NASDAQ Cybersecurity ETF","HACK":"Amplify Cybersecurity ETF","SKYY":"First Trust Cloud Computing ETF",
+    "CLOU":"Global X Cloud Computing ETF","URA":"Global X Uranium ETF","LIT":"Global X Lithium & Battery Tech ETF",
+    "TAN":"Invesco Solar ETF","ICLN":"iShares Global Clean Energy ETF","PAVE":"Global X U.S. Infrastructure Development ETF",
+    # 레버리지(서학개미 인기)
+    "TQQQ":"ProShares UltraPro QQQ","SOXL":"Direxion Daily Semiconductor Bull 3X Shares","UPRO":"ProShares UltraPro S&P500",
+    "SPXL":"Direxion Daily S&P 500 Bull 3X Shares","QLD":"ProShares Ultra QQQ","SSO":"ProShares Ultra S&P500",
+    "TECL":"Direxion Daily Technology Bull 3X Shares",
+    # 해외/신흥국
+    "VEA":"Vanguard FTSE Developed Markets ETF","VWO":"Vanguard FTSE Emerging Markets ETF","IEFA":"iShares Core MSCI EAFE ETF",
+    "IEMG":"iShares Core MSCI Emerging Markets ETF","EFA":"iShares MSCI EAFE ETF","EEM":"iShares MSCI Emerging Markets ETF",
+    "VXUS":"Vanguard Total International Stock ETF","IXUS":"iShares Core MSCI Total International Stock ETF",
+    "ACWI":"iShares MSCI ACWI ETF","VT":"Vanguard Total World Stock ETF","VEU":"Vanguard FTSE All-World ex-US ETF",
+    "SCHF":"Schwab International Equity ETF","SCHE":"Schwab Emerging Markets Equity ETF","FXI":"iShares China Large-Cap ETF",
+    "MCHI":"iShares MSCI China ETF","KWEB":"KraneShares CSI China Internet ETF","EWJ":"iShares MSCI Japan ETF",
+    "EWY":"iShares MSCI South Korea ETF","EWT":"iShares MSCI Taiwan ETF","INDA":"iShares MSCI India ETF",
+    "EWZ":"iShares MSCI Brazil ETF","EWG":"iShares MSCI Germany ETF","VGK":"Vanguard FTSE Europe ETF",
+    "EZU":"iShares MSCI Eurozone ETF","EWU":"iShares MSCI United Kingdom ETF","EWC":"iShares MSCI Canada ETF",
+    "EWA":"iShares MSCI Australia ETF","VNM":"VanEck Vietnam ETF","DXJ":"WisdomTree Japan Hedged Equity Fund",
+    # 원자재/귀금속/광산
+    "GLD":"SPDR Gold Shares","IAU":"iShares Gold Trust","GLDM":"SPDR Gold MiniShares Trust","SLV":"iShares Silver Trust",
+    "PPLT":"abrdn Physical Platinum Shares ETF","PALL":"abrdn Physical Palladium Shares ETF","CPER":"United States Copper Index Fund",
+    "USO":"United States Oil Fund LP","UNG":"United States Natural Gas Fund LP","DBC":"Invesco DB Commodity Index Tracking Fund",
+    "GSG":"iShares S&P GSCI Commodity-Indexed Trust","DBA":"Invesco DB Agriculture Fund","COPX":"Global X Copper Miners ETF",
+    "GDX":"VanEck Gold Miners ETF","GDXJ":"VanEck Junior Gold Miners ETF","SIL":"Global X Silver Miners ETF",
+    "URNM":"Sprott Uranium Miners ETF","REMX":"VanEck Rare Earth and Strategic Metals ETF","XME":"SPDR S&P Metals & Mining ETF",
+    # 리츠/가상자산/통화
+    "VNQ":"Vanguard Real Estate ETF","IYR":"iShares U.S. Real Estate ETF","SCHH":"Schwab U.S. REIT ETF","REET":"iShares Global REIT ETF",
+    "IBIT":"iShares Bitcoin Trust ETF","FBTC":"Fidelity Wise Origin Bitcoin Fund","GBTC":"Grayscale Bitcoin Trust ETF",
+    "ETHA":"iShares Ethereum Trust ETF","BITO":"ProShares Bitcoin ETF","UUP":"Invesco DB US Dollar Index Bullish Fund",
+}
+
+def _load_nasdaq_symbol_file(fname, ec, tc, exch_name, tickers, exchange_map, security_names, etf_flags):
+    """NASDAQ 심볼 파일 로드. www 호스트 → ftp 호스트 순으로 시도, 호스트당 10초 타임아웃.
+    (2026-09 중순부터 ftp 호스트가 GitHub Actions에서 매번 타임아웃 → 로그로 확인됨)
+    ETF는 US_MAJOR_ETFS 소속만 통과시킴 (전체 ETF는 수천 개라 잡음·지연이 큼)."""
+    for base in ("https://www.nasdaqtrader.com/dynamic/SymbolDirectory/",
+                 "https://ftp.nasdaqtrader.com/dynamic/SymbolDirectory/"):
+        try:
+            r = requests.get(base + fname, headers=UA, timeout=10)
+            if r.status_code != 200 or "|" not in r.text:
+                log.warning(f"  NASDAQ 심볼 {fname} status={r.status_code} ({base})")
+                continue
+            added = 0
+            for line in r.text.strip().split("\n")[1:-1]:
+                p = line.split("|")
+                if len(p) <= max(ec, tc, 1): continue
+                sym = p[0].strip()
+                is_test = len(p) > tc and p[tc].strip() == "Y"
+                is_etf  = len(p) > ec and p[ec].strip() == "Y"
+                if not sym or is_test or not sym.replace("-", "").isalpha(): continue
+                if is_etf and sym not in US_MAJOR_ETFS: continue
+                tickers.add(sym); exchange_map[sym] = exch_name
+                security_names[sym] = p[1].strip() if len(p) > 1 else sym
+                etf_flags[sym] = is_etf
+                added += 1
+            log.info(f"  NASDAQ 심볼 {fname}: {added}개 ({base})")
+            return True
+        except Exception as e:
+            log.warning(f"  NASDAQ 심볼 {fname} 실패 ({base}): {e}")
+    return False
+
 def get_us_tickers():
     tickers=set(); exchange_map={}; sp500_set=set()
     security_names={}; etf_flags={}
     # 컬럼 인덱스: nasdaqlisted.txt = Symbol|Security Name|Market Category|Test Issue|
-    #   Financial Status|Round Lot Size|ETF|NextShares (ETF=6, Test=3) — 검증됨, 정상
+    #   Financial Status|Round Lot Size|ETF|NextShares (ETF=6, Test=3)
     # otherlisted.txt = ACT Symbol|Security Name|Exchange|CQS Symbol|ETF|Round Lot Size|
-    #   Test Issue|NASDAQ Symbol (ETF=4, Test=6) — 기존 코드가 6,7로 잘못되어 있었음.
-    #   실제 나스닥 공개 샘플 데이터로 검증 후 수정함 (2026-09-XX).
-    for url,ec,tc,exch_name in [
-        ("https://ftp.nasdaqtrader.com/dynamic/SymbolDirectory/nasdaqlisted.txt",6,3,"NASDAQ"),
-        ("https://ftp.nasdaqtrader.com/dynamic/SymbolDirectory/otherlisted.txt",4,6,"NYSE"),
-    ]:
-        try:
-            r=requests.get(url,headers=UA,timeout=30)
-            for line in r.text.strip().split("\n")[1:-1]:
-                p=line.split("|")
-                if len(p)<=max(ec,tc,1): continue
-                sym=p[0].strip()
-                is_test = len(p)>tc and p[tc].strip()=="Y"
-                if sym and not is_test and sym.replace("-","").isalpha():
-                    tickers.add(sym); exchange_map[sym]=exch_name
-                    security_names[sym]=p[1].strip() if len(p)>1 else sym
-                    etf_flags[sym]=(len(p)>ec and p[ec].strip()=="Y")
-        except Exception as e: log.error(f"FTP:{e}")
+    #   Test Issue|NASDAQ Symbol (ETF=4, Test=6)
+    _load_nasdaq_symbol_file("nasdaqlisted.txt", 6, 3, "NASDAQ", tickers, exchange_map, security_names, etf_flags)
+    _load_nasdaq_symbol_file("otherlisted.txt",  4, 6, "NYSE",   tickers, exchange_map, security_names, etf_flags)
     try:
         import pandas as pd
         r=requests.get("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",headers=UA,timeout=20)
@@ -728,8 +822,12 @@ def get_us_tickers():
             sym=str(s).replace(".","-"); tickers.add(sym); sp500_set.add(sym)
             etf_flags.setdefault(sym, False)   # S&P500 구성종목은 전부 일반주
     except: pass
-    result=sorted(tickers); log.info(f"미국 {len(result)}종목")
-    return result,exchange_map,sp500_set,security_names,etf_flags
+    # 미국 본토 주요 ETF: 심볼 파일 성공 여부와 무관하게 항상 포함 (QQQ 등)
+    for sym, nm in US_MAJOR_ETFS.items():
+        tickers.add(sym); security_names[sym] = nm
+        etf_flags[sym] = True; exchange_map[sym] = "ETF"
+    log.info(f"미국 {len(tickers)}종목 (주요 ETF {len(US_MAJOR_ETFS)}개 포함)")
+    return sorted(tickers),exchange_map,sp500_set,security_names,etf_flags
 
 US_BOND_ETF_KEYWORDS = ("BOND","TREASURY","MUNICIPAL","MUNI ","T-BILL","TIPS",
                         "HIGH YIELD BOND","CORPORATE BOND","AGGREGATE BOND",
@@ -767,8 +865,8 @@ def get_us_ath(usd_krw):
                 if is_etf:
                     try:
                         dts=[d.date() for d in s.index]
-                        r1,c5,fd=_calc_perf(dts,[float(x) for x in s.tolist()])
-                        perf={"ret1y":r1,"cagr5y":c5,"first_date":fd.isoformat() if fd else None}
+                        c3,c5,fd=_calc_perf(dts,[float(x) for x in s.tolist()])
+                        perf={"cagr3y":c3,"cagr5y":c5,"first_date":fd.isoformat() if fd else None}
                     except Exception:
                         perf={}
                 out.append({"ticker":tk,"name":sec_name if is_etf else tk,
@@ -1005,8 +1103,8 @@ def get_kr_ath(usd_krw, kr_last=None):
                    "is_etf":etf_flag,
                    "url":f"https://m.stock.naver.com/domestic/stock/{code}/total"}
             if etf_flag and dates and len(dates) == len(closes):
-                r1, c5, fd = _calc_perf(dates, closes)
-                res.update({"ret1y": r1, "cagr5y": c5,
+                c3, c5, fd = _calc_perf(dates, closes)
+                res.update({"cagr3y": c3, "cagr5y": c5,
                             "first_date": fd.isoformat() if fd else None})
             return res
         return None
@@ -1176,7 +1274,7 @@ def send_email(html,subject):
         s.login(user,pwd); s.sendmail(user,to,msg.as_string())
     log.info(f"✅ 발송→{to}")
 
-CODE_VERSION = "2026-10-03-etf-section"
+CODE_VERSION = "2026-10-04-etf-us-cagr3"
 
 def main():
     log.info(f"=== ATH 리포트 시작 (코드버전: {CODE_VERSION}) ===")
@@ -1203,11 +1301,12 @@ def main():
     for s in us: s["streak"] = us_streak.get(s["ticker"], 1)
     for s in kr: s["streak"] = kr_streak.get(s["ticker"], 1)
 
-    # ETF 전용 섹션: ATH -10% 이내 ETF(한국+미국) 중 최근 1년 수익률 낮은 순 20개
+    # ETF 전용 섹션: ATH -10% 이내 ETF(한국+미국) 중 최근 3년 연평균 수익률 높은 순 20개
     etf_pool = [s for s in kr + us if s.get("asset_type") == "ETF"]
-    etf_ranked = sorted([s for s in etf_pool if s.get("ret1y") is not None], key=lambda x: x["ret1y"])
+    etf_ranked = sorted([s for s in etf_pool if s.get("cagr3y") is not None],
+                        key=lambda x: x["cagr3y"], reverse=True)
     etf_info = {"rows": etf_ranked[:20], "pool": len(etf_pool), "with_ret": len(etf_ranked)}
-    log.info(f"ETF 섹션: 풀 {len(etf_pool)}개 / 1년수익률 산출 {len(etf_ranked)}개 / 표시 {len(etf_info['rows'])}개")
+    log.info(f"ETF 섹션: 풀 {len(etf_pool)}개 / 3년수익률 산출 {len(etf_ranked)}개 / 표시 {len(etf_info['rows'])}개")
 
     diag = {"us_days_before": us_days_before, "kr_days_before": kr_days_before}
     send_email(build_email(us,kr,info,usd_krw,new_us,new_kr,diag,indices,etf_info), build_subject(info))
