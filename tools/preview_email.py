@@ -48,7 +48,7 @@ def sample_data():
                          "cagr3y": round(39.28 - rank * 1.5, 2),
                          "cagr5y": None if rank % 7 == 0 else round(24.46 - rank * .67, 2),
                          "cagr10y": None if rank % 3 == 0 else round(18.33 - rank * .31, 2),
-                         "cumulative_return": round(1280.43 - rank * 44.21, 2),
+                         "cumulative_return": 103383.7 if rank == 1 else round(1280.43 - rank * 44.21, 2),
                          "etf_index": "FnGuide 차세대 인공지능 반도체 소부장 산업 지수" if korean else
                                       "Philadelphia Semiconductor Sector Total Return Index",
                          "issuer": "신한자산운용 주식회사" if korean else "Vanguard Group, Inc.",
@@ -72,30 +72,34 @@ LAYOUT_CHECK = """() => {
  if(document.documentElement.scrollWidth>viewport+tolerance)
    problems.push("document overflow: "+document.documentElement.scrollWidth+" > "+viewport);
  const periods=["1y","3y","5y","10y","cumulative"];
- const cards=Array.from(document.querySelectorAll(".etf-card[data-ticker]"));
- if(!cards.length)problems.push("ETF cards were not rendered");
- cards.forEach((card,index)=>{
-  const bounds=card.getBoundingClientRect();
+ const rows=Array.from(document.querySelectorAll(".etf-row[data-ticker]"));
+ if(!rows.length)problems.push("ETF rows were not rendered");
+ rows.forEach((row,index)=>{
+  const bounds=row.getBoundingClientRect();
   if(bounds.left< -tolerance||bounds.right>viewport+tolerance)problems.push("ETF "+index+" exceeds viewport width");
   periods.forEach(period=>{
-   const metric=card.querySelector('[data-period="'+period+'"]');
+   const metric=row.querySelector('[data-period="'+period+'"]');
    if(!metric){problems.push("ETF "+index+" missing metric "+period);return;}
    const box=metric.getBoundingClientRect(),style=getComputedStyle(metric);
    if(!box.width||!box.height||style.display==="none"||style.visibility==="hidden"||!metric.textContent.trim())
      problems.push("ETF "+index+" metric "+period+" hidden");
    if(box.left<bounds.left-tolerance||box.right>bounds.right+tolerance)
-     problems.push("ETF "+index+" metric "+period+" exceeds card");
+     problems.push("ETF "+index+" metric "+period+" exceeds row");
    const walker=document.createTreeWalker(metric,NodeFilter.SHOW_TEXT);let node;
    while((node=walker.nextNode())){
     if(!node.textContent.trim())continue;
     const range=document.createRange();range.selectNodeContents(node);
     for(const rect of range.getClientRects())
-      if(rect.width&&(rect.left<bounds.left-tolerance||rect.right>bounds.right+tolerance))
+      if(rect.width&&(rect.left<box.left-tolerance||rect.right>box.right+tolerance))
         problems.push("ETF "+index+" text "+period+" overflows: "+node.textContent.trim());
    }
   });
+  const valueBoxes=periods.map(period=>row.querySelector('[data-period="'+period+'"] strong').getBoundingClientRect());
+  if(valueBoxes.some(box=>Math.abs(box.top-valueBoxes[0].top)>tolerance))
+    problems.push("ETF "+index+" values do not share a comparison line");
  });
- return {viewport,cards:cards.length,problems};
+ const table=document.querySelector(".etf-comparison");
+ return {viewport,rows:rows.length,tableHeight:Math.round(table.getBoundingClientRect().height),problems};
 }"""
 
 def main():
@@ -113,7 +117,7 @@ def main():
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
         try:
-            for width in (320, 375, 680):
+            for width in (320, 375, 680, 920):
                 page = browser.new_page(viewport={"width": width, "height": 1700}, device_scale_factor=1)
                 page.set_content(html_source, wait_until="load")
                 page.evaluate("document.fonts.ready")
@@ -125,7 +129,7 @@ def main():
                     "imgs => imgs.filter(i=>!i.complete||!i.naturalWidth).map(i=>i.alt)")
                 if broken:
                     raise AssertionError("Flag images did not load: %s" % broken)
-                if width in (320, 680):
+                if width in (320, 920):
                     name = "mobile" if width == 320 else "desktop"
                     png = page.screenshot(path=str(args.output / ("email-" + name + ".png")), full_page=False)
                     print("PREVIEW_IMAGE_" + name.upper() + ":" + base64.b64encode(png).decode("ascii"), flush=True)
@@ -134,6 +138,16 @@ def main():
                         stock_section.scroll_into_view_if_needed()
                         stock_png = page.screenshot(path=str(args.output / ("email-" + name + "-stocks.png")), full_page=False)
                         print("PREVIEW_IMAGE_" + name.upper() + "_STOCKS:" + base64.b64encode(stock_png).decode("ascii"), flush=True)
+                if width == 320:
+                    # Keep the mobile layout usable when email clients ignore media queries.
+                    page.evaluate("""() => {for(const sheet of document.styleSheets){
+                        for(let i=sheet.cssRules.length-1;i>=0;i--)
+                            if(sheet.cssRules[i].type===CSSRule.MEDIA_RULE)sheet.deleteRule(i);
+                    }}""")
+                    fallback = page.evaluate(LAYOUT_CHECK)
+                    print("LAYOUT_FALLBACK_QA:%s" % fallback, flush=True)
+                    if fallback["problems"]:
+                        raise AssertionError("; ".join(fallback["problems"]))
                 page.close()
         finally:
             browser.close()

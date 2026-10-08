@@ -13,34 +13,51 @@ MAX_BODY_BYTES = 85000
 CSS = """
 body{margin:0;background:#eef2f6;color:#17263d;font-family:Arial,'Malgun Gothic','Apple SD Gothic Neo',sans-serif;font-size:14px;line-height:1.55}
 table{border-collapse:collapse}td{vertical-align:top}a{color:#163b68;text-decoration:none}
-.shell{max-width:680px;margin:0 auto;padding:18px 12px}.layout{width:100%;table-layout:fixed}
-.hero{background:#11243c;color:#fff;border-radius:18px;padding:24px}
+.shell{max-width:860px;margin:0 auto;padding:18px 12px}.layout{width:100%;table-layout:fixed}
+.hero{background:#11243c;color:#fff;border-radius:12px;padding:16px 20px}
 .eyebrow{font-size:10px;font-weight:bold;letter-spacing:2px;color:#8fb6c8;margin:0 0 8px}
-.hero h1{font-size:28px;line-height:1.25;letter-spacing:-1px;margin:0 0 8px}
-.date{font-size:13px;color:#c5d5e4}.hero .foot{font-size:11px;color:#9eb5cc;border-top:1px solid #30465f;padding-top:12px;margin-top:16px}
-.summary{margin-top:12px;background:#fff;border:1px solid #dfe7ef;border-radius:14px;padding:16px}
-.summary td{width:50%;padding:0 8px}.count{font-size:27px;font-weight:bold;letter-spacing:-1px}
+.hero h1{font-size:24px;line-height:1.25;letter-spacing:-1px;margin:0 0 8px}
+.date{font-size:13px;color:#c5d5e4}.hero .foot{font-size:11px;color:#9eb5cc;border-top:1px solid #30465f;padding-top:8px;margin-top:10px}
+.summary{margin-top:10px;background:#fff;border:1px solid #dfe7ef;border-radius:10px;padding:10px 12px}
+.summary td{width:50%;padding:0 8px}.count{font-size:23px;font-weight:bold;letter-spacing:-1px}
 .market{font-weight:bold;font-size:13px;margin-bottom:3px}.muted{font-size:11px;color:#667a90}
-.section{margin-top:24px}.section h2{margin:0;font-size:21px;line-height:1.3;letter-spacing:-.6px}
-.intro{font-size:12px;color:#667a90;margin:6px 0 14px}
-.etf-card{background:#fff;border:1px solid #dce5ee;border-radius:14px;margin:0 0 12px;padding:16px;word-wrap:break-word;word-break:break-word}
-.etf-feature{width:106px;text-align:right}
-.rank{display:inline-block;background:#163b68;color:#fff;border-radius:5px;padding:1px 6px;font-size:11px;font-weight:bold;margin-right:5px}
-.ticker{font-size:13px;font-weight:bold;letter-spacing:.4px}.etf-name{font-size:17px;font-weight:bold;line-height:1.4;margin:8px 10px 12px 0}
-.metric-label{display:block;color:#60758c;font-size:11px;font-weight:normal;line-height:1.5}
-.metric strong{display:block;font-size:18px;line-height:1.4;letter-spacing:-.4px;word-break:break-word}
-.featured strong{font-size:25px}.featured .metric-label{font-size:11px}
-.returns td{width:33.33%;padding:10px 3px;text-align:center;background:#f3f6fa;border:2px solid #fff}
-.cumulative{background:#edf7f4;padding:10px 12px;border-radius:7px;margin-top:6px}
-.cumulative .metric-label{display:inline-block;font-size:11px;color:#42675d}
-.cumulative strong{display:inline-block;margin-left:8px;font-size:18px}
-.details{font-size:11px;color:#64778b;border-top:1px solid #ecf0f4;padding-top:10px;margin-top:12px;line-height:1.7}
-.details b{color:#40566e;font-weight:normal}.up{color:#c04840}.down{color:#2862a6}.flat{color:#52677d}
+.section{margin-top:18px}.section h2{margin:0;font-size:19px;line-height:1.3;letter-spacing:-.6px}
+.intro{font-size:11px;color:#667a90;margin:4px 0 8px}
+
+.etf-comparison{background:#fff;border:1px solid #dce5ee;border-radius:10px}
+.etf-row{border-top:1px solid #e3eaf2;padding:0 8px;word-wrap:break-word;word-break:break-word}
+.etf-row:first-child{border-top:0}.etf-row:nth-child(even){background:#f7f9fc}
+.etf-outer{width:100%;table-layout:fixed}
+.etf-outer,.etf-outer>tbody,.etf-line,.etf-identity,.etf-numbers{display:block;width:100%;box-sizing:border-box}
+.etf-identity{padding:7px 2px 3px;font-size:12px;line-height:1.45}
+.etf-identity img{width:22px;height:auto;margin-right:4px!important}
+.rank{display:inline-block;background:#163b68;color:#fff;border-radius:3px;padding:0 4px;font-size:10px;font-weight:bold;margin-right:4px}
+.ticker{font-size:12px;font-weight:bold;letter-spacing:.2px;margin-right:4px}
+.etf-name{font-size:12px;color:#40566e}.etf-numbers{padding:0 0 6px}
+.etf-metrics{width:100%;table-layout:fixed}.etf-metrics td{width:20%;padding:4px 1px;text-align:center;vertical-align:middle}
+.etf-metrics .metric-label{display:block;color:#64778b;font-size:10px;line-height:1.4;margin-bottom:2px}
+.etf-metrics strong{display:block;font-size:12px;line-height:1.45;letter-spacing:-.3px;word-wrap:break-word;word-break:break-word;font-variant-numeric:tabular-nums}
+.etf-metrics .one-year{background:#eaf1fb;border-radius:4px}
+.etf-column-head{display:none}.etf-caption{font-size:11px;color:#64778b;margin:6px 0 10px;line-height:1.5}
+.etf-details{margin-top:16px;border-top:1px solid #dce5ee;padding-top:12px}
+.etf-details h3{font-size:15px;margin:0 0 8px}.etf-detail{font-size:11px;color:#64778b;border-bottom:1px solid #e3eaf2;padding:7px 0;word-break:break-word}
+.etf-detail b{color:#40566e}.up{color:#c04840}.down{color:#2862a6}.flat{color:#52677d}
+@media screen and (min-width:600px){
+.etf-outer{display:table}.etf-outer>tbody{display:table-row-group}.etf-line{display:table-row}
+.etf-identity,.etf-numbers{display:table-cell;vertical-align:middle;padding:7px 2px}
+.etf-identity{width:40%;padding-right:10px}.etf-numbers{width:60%}
+.etf-metrics .metric-label{display:none}.etf-metrics strong{font-size:13px}
+.etf-metrics td{padding:6px 2px}
+.etf-column-head{display:block;background:#11243c;color:#fff;padding:0 8px;border-radius:9px 9px 0 0}
+.etf-column-head .etf-identity{font-size:11px;color:#d4e1ee}
+.etf-column-head .etf-metrics td{font-size:11px;color:#d4e1ee}
+.etf-column-head .one-year{background:#2b4665;color:#fff}
+}
 .new-summary{background:#e8f0f8;border-radius:12px;padding:16px;margin-top:18px}
 .new-summary h3{font-size:15px;margin:0 0 8px}.new-summary td{width:50%;font-size:13px}
 .new{background:#e6f3ed;color:#237353;border-radius:4px;padding:1px 5px;font-size:10px;font-weight:bold}
 .stocks{background:#fff;border:1px solid #dce5ee;border-radius:12px;padding:4px 12px}
-.stocks td{padding:11px 0;border-bottom:1px solid #eaf0f5;word-break:break-word;word-wrap:break-word}
+.stocks td{padding:8px 0;border-bottom:1px solid #eaf0f5;word-break:break-word;word-wrap:break-word}
 .stocks tr:last-child td{border-bottom:0}.stock-name{padding-right:12px!important}
 .stock-name a{display:block;font-size:13px;font-weight:bold;line-height:1.45}
 .stock-name small{display:block;color:#667a90;font-size:11px;line-height:1.6;margin-top:4px}
@@ -48,7 +65,7 @@ table{border-collapse:collapse}td{vertical-align:top}a{color:#163b68;text-decora
 .notice{background:#fff4dc;color:#796438;border-radius:8px;padding:10px 12px;font-size:12px;margin:12px 0}
 .report-note{padding:12px;background:#e8f0f8;border-radius:8px;color:#405d7a;font-size:12px}
 .notes{font-size:10px;line-height:1.7;color:#75869a;margin:14px 0}.footer{text-align:center;color:#8a9aab;font-size:10px;padding:24px 0 12px}
-@media screen and (max-width:420px){.shell{padding:10px 8px}.hero{padding:20px 16px}.hero h1{font-size:25px}.summary{padding:13px 8px}.summary td{padding:0 6px}.count{font-size:24px}.etf-card{padding:12px}.etf-name{font-size:15px}.etf-feature{width:96px}.featured strong{font-size:22px}.returns .metric strong{font-size:16px}.stock-values{width:100px}}
+@media screen and (max-width:420px){.shell{padding:8px 6px}.hero{padding:12px 14px}.hero h1{font-size:22px}.hero .eyebrow{display:none}.summary{padding:8px 6px}.summary td{padding:0 5px}.count{font-size:22px}.stock-values{width:100px}}
 """
 
 def h(value):
@@ -69,47 +86,61 @@ def aum(value):
     if value < .1: return f"{value * 1e4:,.0f}억"
     return f"{value:,.2f}조" if value < 10 else f"{value:,.1f}조"
 
-def metric(period, label, value, extra=""):
-    return (f'<div class="metric {extra}" data-period="{period}">'
-            f'<span class="metric-label">{label}</span><strong>{pct(value)}</strong></div>')
+def compact_metric(period, label, value):
+    # The shared percent unit keeps five columns legible on a 320px screen.
+    number = pct(value).replace("+", "").replace("%", "")
+    return (f'<div class="metric" data-period="{period}">'
+            f'<span class="metric-label">{label}</span><strong>{number}</strong></div>')
 
-def etf_section_html(etf_info):
+def etf_section_html(etf_info, include_details=False):
     rows = etf_info.get("rows", [])
-    head = ('<div class="section" id="etf"><p class="eyebrow">ETF PERFORMANCE</p>'
-            '<h2>ETF 수익률 랭킹</h2>'
+    head = ('<div class="section" id="etf"><h2>ETF 수익률 비교</h2>'
             f'<p class="intro">1년 연평균수익률 내림차순 · 상위 {len(rows)}개'
-            f' · 산출 가능 {etf_info.get("with_ret", 0)} / 후보 {etf_info.get("pool", 0)}개</p>')
+            f' · 산출 가능 {etf_info.get("with_ret", 0)} / 후보 {etf_info.get("pool", 0)}개</p>'
+            '<p class="etf-caption">최근 1·3·5·10년: 연평균수익률(CAGR) · 누적: 설립 이래 누적수익률 · 단위: %</p>')
     if not rows:
-        return head + '<div class="etf-card muted">해당 ETF 없음</div></div>'
-    cards = []
-    for i, s in enumerate(rows, 1):
-        country = "US" if s.get("market") == "US" else "KR"
-        ticker = h(s.get("ticker"))
-        cards.append(
-            f'<div class="etf-card" data-ticker="{ticker}">'
-            '<table role="presentation" class="layout etf-head"><tr><td>'
-            f'{flag_html(country)}<span class="rank">{i:02d}</span>'
-            f'<a class="ticker" href="{safe_url(s.get("url"))}">{ticker}</a>'
-            f'<div class="etf-name">{h(s.get("name"))}</div></td><td class="etf-feature">'
-            f'{metric("1y", "최근 1년<br>연평균수익률", s.get("cagr1y"), "featured")}'
-            '</td></tr></table><table role="presentation" class="layout returns"><tr>'
-            f'<td>{metric("3y", "최근 3년<br>연평균수익률", s.get("cagr3y"))}</td>'
-            f'<td>{metric("5y", "최근 5년<br>연평균수익률", s.get("cagr5y"))}</td>'
-            f'<td>{metric("10y", "최근 10년<br>연평균수익률", s.get("cagr10y"))}</td>'
-            '</tr></table>'
-            f'{metric("cumulative", "설립 이래 누적수익률", s.get("cumulative_return"), "cumulative")}'
-            '<div class="details">'
-            f'<b>추종지수</b> {h(s.get("etf_index"))}<br>'
-            f'<b>ETF 성격</b> {h(s.get("etf_kind"))}<br>'
-            f'<b>운용사</b> {h(s.get("issuer"))} · <b>AUM</b> {aum(s.get("aum") or s.get("mcap"))}<br>'
-            f'<b>설립일</b> {h(s.get("inception") or s.get("first_date"))}'
-            '</div></div>')
-    notes = ('<p class="notes">ATH -10% 이내 비채권 ETF 기준. 1년 이력이 없는 ETF는 순위에서 제외합니다.<br>'
-             '연평균수익률은 복리(CAGR) 기준이며, 해당 기간의 가격 이력이 부족하면 -로 표시합니다.<br>'
+        return head + '<p class="muted">해당 ETF 없음</p></div>'
+    labels = (("1y", "1년 ↓", "cagr1y"), ("3y", "3년", "cagr3y"),
+              ("5y", "5년", "cagr5y"), ("10y", "10년", "cagr10y"),
+              ("cumulative", "누적", "cumulative_return"))
+    column_head = ('<div class="etf-column-head"><table role="presentation" class="etf-outer">'
+                   '<tr class="etf-line"><td class="etf-identity">순위 · 국가 · 종목</td>'
+                   '<td class="etf-numbers"><table role="presentation" class="etf-metrics"><tr>' +
+                   "".join(f'<td class="{"one-year" if period == "1y" else ""}">{label}</td>'
+                           for period, label, _ in labels) +
+                   '</tr></table></td></tr></table></div>')
+    lines = []
+    for rank, row in enumerate(rows, 1):
+        country = "US" if row.get("market") == "US" else "KR"
+        ticker = h(row.get("ticker"))
+        lines.append(
+            f'<div class="etf-row" data-ticker="{ticker}">'
+            '<table role="presentation" class="etf-outer"><tr class="etf-line">'
+            f'<td class="etf-identity">{flag_html(country)}<span class="rank">{rank:02d}</span>'
+            f'<a href="{safe_url(row.get("url"))}"><b class="ticker">{ticker}</b>'
+            f'<span class="etf-name">{h(row.get("name"))}</span></a></td>'
+            '<td class="etf-numbers"><table role="presentation" class="etf-metrics"><tr>' +
+            "".join(f'<td class="{"one-year" if period == "1y" else ""}">'
+                    f'{compact_metric(period, label, row.get(key))}</td>'
+                    for period, label, key in labels) +
+            '</tr></table></td></tr></table></div>')
+    notes = ('<p class="notes">ATH -10% 이내 비채권 ETF 기준. 1년 이력이 없는 ETF는 순위에서 제외합니다. '
+             '기간 이력이 부족하면 -로 표시합니다.<br>'
              '설립 이래 누적수익률은 수집 가능한 최초 거래일 종가 대비 최신 종가의 전체 상승률이며, 연환산하지 않음.<br>'
-             '한국 ETF는 분배금 미반영 가격수익률, 미국 ETF는 배당 재투자 반영 수정주가 기준입니다.<br>'
-             '설립일은 운용사 공시값을 우선하고 없으면 최초 거래일, 운용사는 미확인 시 브랜드로 추정합니다.</p>')
-    return head + "".join(cards) + notes + "</div>"
+             '한국 ETF는 분배금 미반영 가격수익률, 미국 ETF는 배당 재투자 반영 수정주가 기준입니다.</p>')
+    details = ""
+    if include_details:
+        details = '<div class="etf-details"><h3>ETF 상세정보</h3>'
+        for rank, row in enumerate(rows, 1):
+            details += (f'<div class="etf-detail"><b>{rank:02d} · {h(row.get("ticker"))} · {h(row.get("name"))}</b><br>'
+                        f'추종지수 {h(row.get("etf_index"))} · ETF 성격 {h(row.get("etf_kind"))}<br>'
+                        f'운용사 {h(row.get("issuer"))} · AUM {aum(row.get("aum") or row.get("mcap"))} · '
+                        f'설립일 {h(row.get("inception") or row.get("first_date"))}</div>')
+        details += ('<p class="notes">설립일은 운용사 공시값을 우선하고 없으면 최초 거래일, '
+                    '운용사는 미확인 시 브랜드로 추정합니다.</p></div>')
+    else:
+        details = '<p class="muted">추종지수·ETF 성격·운용사·AUM·설립일은 첨부 리포트의 ETF 상세정보에서 확인하세요.</p>'
+    return head + '<div class="etf-comparison">' + column_head + "".join(lines) + '</div>' + notes + details + "</div>"
 
 def new_summary(new_us, new_kr):
     return ('<div class="new-summary"><h3>오늘의 신규 등장</h3>'
@@ -169,7 +200,7 @@ def render_email(us, kr, info, usd_krw, new_us=None, new_kr=None, diag=None,
               '<div class="shell"><div class="hero"><p class="eyebrow">DAILY MARKET NOTE</p>'
               f'<h1>오늘의 ATH &amp; ETF</h1><div class="date">{date_label} · 일일 시장 리포트</div>'
               f'<div class="foot">All Time High −10% 이내 · 원/달러 {usd_krw:,.0f}원</div></div>')
-    prefix = header + _summary(us, kr, info, indices) + etf_section_html(etf_info) + new_summary(new_us, new_kr)
+    prefix = header + _summary(us, kr, info, indices) + etf_section_html(etf_info, include_details=include_all) + new_summary(new_us, new_kr)
     footer = '<div class="footer">일일 ATH 리포트 · 가격 이력 기준 · 투자 권유 아님</div></div></body></html>'
     us_count, kr_count = len(us), len(kr)
     while True:

@@ -118,14 +118,14 @@ class EtfRankingAndHtmlTests(unittest.TestCase):
                          list(map(float, range(24, 4, -1))))
         self.assertEqual((info["pool"], info["with_ret"]), (25, 25))
 
-    def test_cards_show_all_five_return_metrics_in_order(self):
+    def test_comparison_shows_all_five_return_metrics_in_order(self):
         row = {"ticker": "ETF", "name": "Example ETF", "market": "US",
                "cagr1y": 12.3, "cagr3y": 9.1, "cagr5y": 8.0, "cagr10y": 6.0,
                "cumulative_return": 159.4}
         html = etf_section_html({"rows": [row], "pool": 1, "with_ret": 1})
         periods = re.findall(r'data-period="([^"]+)"', html)
         self.assertEqual(periods, ["1y", "3y", "5y", "10y", "cumulative"])
-        for expected in ["+12.3%", "+9.1%", "+8.0%", "+6.0%", "+159.4%"]:
+        for expected in [">12.3</span>", ">9.1</span>", ">8.0</span>", ">6.0</span>", ">159.4</span>"]:
             self.assertIn(expected, html)
         self.assertIn("1년 연평균수익률 내림차순", html)
 
@@ -133,8 +133,8 @@ class EtfRankingAndHtmlTests(unittest.TestCase):
         row = {"ticker": "NEW", "name": "New ETF", "cagr1y": 20.0,
                "cumulative_return": 30.0}
         html = etf_section_html({"rows": [row], "pool": 1, "with_ret": 1})
-        self.assertIn("+20.0%", html)
-        self.assertIn("+30.0%", html)
+        self.assertIn(">20.0</span>", html)
+        self.assertIn(">30.0</span>", html)
         self.assertEqual(html.count('<span class="flat">-</span>'), 3)
 
     def test_missing_cumulative_return_is_shown_as_dash(self):
