@@ -1,0 +1,25 @@
+name: TQQQ 10-Year Return Verification
+on:
+  push:
+    branches: ['codex/tqqq-return-verification-20261009']
+    paths: ['.github/workflows/tqqq_verification.yml', 'tools/verify_tqqq.py']
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - run: pip install -r requirements.txt
+      - name: Recompute exact TQQQ return endpoints
+        run: python tools/verify_tqqq.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: TQQQ-10y-verification-data
+          path: work/tqqq-verification/
