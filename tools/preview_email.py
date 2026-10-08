@@ -129,6 +129,11 @@ def main():
                     name = "mobile" if width == 320 else "desktop"
                     png = page.screenshot(path=str(args.output / ("email-" + name + ".png")), full_page=False)
                     print("PREVIEW_IMAGE_" + name.upper() + ":" + base64.b64encode(png).decode("ascii"), flush=True)
+                    stock_section = page.locator(".stock-section").first
+                    if stock_section.count():
+                        stock_section.scroll_into_view_if_needed()
+                        stock_png = page.screenshot(path=str(args.output / ("email-" + name + "-stocks.png")), full_page=False)
+                        print("PREVIEW_IMAGE_" + name.upper() + "_STOCKS:" + base64.b64encode(stock_png).decode("ascii"), flush=True)
                 page.close()
         finally:
             browser.close()
