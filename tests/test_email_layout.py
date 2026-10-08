@@ -1,7 +1,7 @@
 import re
 import unittest
 from html.parser import HTMLParser
-from src.email_layout import MAX_BODY_BYTES, etf_section_html, render_email
+from src.email_layout import MAX_BODY_BYTES, etf_section_html, inception_text, render_email
 from tools.preview_email import make_stock, sample_data
 
 class EtfRows(HTMLParser):
@@ -85,6 +85,16 @@ class EmailLayoutTests(unittest.TestCase):
         self.assertNotIn('<div class="etf-details">', body)
         self.assertIn('<div class="etf-details">', complete)
         self.assertIn("신한자산운용 주식회사", complete)
+
+    def test_inception_date_uses_disclosed_date_and_history_fallback(self):
+        self.assertEqual(inception_text({"inception": "2018-04-05", "first_date": "2016-01-02"}), "2018-04-05")
+        self.assertEqual(inception_text({"first_date": "2016-01-02"}), "2016-01-02")
+        self.assertEqual(inception_text({"inception": "20230425"}), "2023-04-25")
+        self.assertEqual(inception_text({}), "-")
+        row = dict(self.data["etf_info"]["rows"][0], inception="2018-04-05")
+        source = etf_section_html({"rows": [row]})
+        self.assertRegex(source, r'data-period="cumulative"[\s\S]*?</td><td class="date-cell" data-field="inception">2018-04-05</td>')
+        self.assertIn('<th data-field="inception">설립일</th>', source)
 
     def test_empty_report_is_valid(self):
         source = render_email([], [], self.data["info"], 1343.4)

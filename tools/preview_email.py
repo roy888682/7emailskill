@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render representative or actual email HTML and check narrow-screen geometry."""
+"""Render desktop emails and verify one visible line per security."""
 import argparse
 import base64
 import sys
@@ -68,40 +68,42 @@ def build_preview_html():
     return render_email(**sample_data())
 
 LAYOUT_CHECK = """() => {
- const tolerance=1.5, viewport=window.innerWidth, problems=[];
+ const tolerance=1.5,viewport=window.innerWidth,problems=[];
  if(document.documentElement.scrollWidth>viewport+tolerance)
    problems.push("document overflow: "+document.documentElement.scrollWidth+" > "+viewport);
  const periods=["1y","3y","5y","10y","cumulative"];
- const rows=Array.from(document.querySelectorAll(".etf-row[data-ticker]"));
- if(!rows.length)problems.push("ETF rows were not rendered");
- rows.forEach((row,index)=>{
-  const bounds=row.getBoundingClientRect();
-  if(bounds.left< -tolerance||bounds.right>viewport+tolerance)problems.push("ETF "+index+" exceeds viewport width");
-  periods.forEach(period=>{
-   const metric=row.querySelector('[data-period="'+period+'"]');
-   if(!metric){problems.push("ETF "+index+" missing metric "+period);return;}
-   const box=metric.getBoundingClientRect(),style=getComputedStyle(metric);
-   if(!box.width||!box.height||style.display==="none"||style.visibility==="hidden"||!metric.textContent.trim())
-     problems.push("ETF "+index+" metric "+period+" hidden");
-   if(box.left<bounds.left-tolerance||box.right>bounds.right+tolerance)
-     problems.push("ETF "+index+" metric "+period+" exceeds row");
-   const walker=document.createTreeWalker(metric,NodeFilter.SHOW_TEXT);let node;
-   while((node=walker.nextNode())){
-    if(!node.textContent.trim())continue;
-    const range=document.createRange();range.selectNodeContents(node);
-    for(const rect of range.getClientRects())
-      if(rect.width&&(rect.left<box.left-tolerance||rect.right>box.right+tolerance))
-        problems.push("ETF "+index+" text "+period+" overflows: "+node.textContent.trim());
-   }
-  });
-  const valueBoxes=periods.map(period=>row.querySelector('[data-period="'+period+'"] strong').getBoundingClientRect());
-  if(valueBoxes.some(box=>Math.abs(box.top-valueBoxes[0].top)>tolerance))
-    problems.push("ETF "+index+" values do not share a comparison line");
+ const etfs=Array.from(document.querySelectorAll(".etf-row[data-ticker]"));
+ const stocks=Array.from(document.querySelectorAll(".stock-row[data-ticker]"));
+ if(!etfs.length)problems.push("ETF rows were not rendered");
+ etfs.forEach((row,index)=>{
+   const metrics=periods.map(period=>row.querySelector('[data-period="'+period+'"]'));
+   if(metrics.some(metric=>!metric)){problems.push("ETF "+index+" missing a return metric");return;}
+   const date=row.querySelector('[data-field="inception"]');
+   const cumulative=metrics[4].closest("td");
+   if(!date||cumulative.nextElementSibling!==date)
+     problems.push("ETF "+index+" inception date is not immediately after cumulative return");
  });
- if(viewport>=600&&getComputedStyle(document.querySelector(".etf-column-head")).display==="none")
-   problems.push("Desktop comparison headers are hidden");
- const table=document.querySelector(".etf-comparison");
- return {viewport,rows:rows.length,tableHeight:Math.round(table.getBoundingClientRect().height),problems};
+ [...etfs,...stocks].forEach((row,index)=>{
+   const box=row.getBoundingClientRect();
+   if(box.height>32)problems.push("Row "+index+" is taller than a single line: "+box.height);
+   if(box.left< -tolerance||box.right>viewport+tolerance)problems.push("Row "+index+" exceeds viewport");
+   for(const cell of row.cells){
+     const bounds=cell.getBoundingClientRect();
+     if(getComputedStyle(cell).whiteSpace!=="nowrap")problems.push("Row "+index+" permits wrapping");
+     const walker=document.createTreeWalker(cell,NodeFilter.SHOW_TEXT);let node;
+     while((node=walker.nextNode())){
+       if(!node.textContent.trim())continue;
+       const range=document.createRange();range.selectNodeContents(node);
+       const rects=Array.from(range.getClientRects()).filter(rect=>rect.width);
+       if(rects.length>1)problems.push("Row "+index+" wraps text: "+node.textContent.trim());
+       for(const rect of rects)
+         if(rect.left<bounds.left-tolerance||rect.right>bounds.right+tolerance)
+           problems.push("Row "+index+" text exceeds cell: "+node.textContent.trim());
+     }
+   }
+ });
+ return {viewport,etfs:etfs.length,stocks:stocks.length,
+         etfHeight:Math.round(document.querySelector(".etf-table").getBoundingClientRect().height),problems};
 }"""
 
 def main():
@@ -119,8 +121,8 @@ def main():
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
         try:
-            for width in (320, 375, 680, 920):
-                page = browser.new_page(viewport={"width": width, "height": 1700}, device_scale_factor=1)
+            for width in (1024, 1280, 1600, 1920):
+                page = browser.new_page(viewport={"width": width, "height": 1200}, device_scale_factor=1)
                 page.set_content(html_source, wait_until="load")
                 page.evaluate("document.fonts.ready")
                 result = page.evaluate(LAYOUT_CHECK)
@@ -131,8 +133,8 @@ def main():
                     "imgs => imgs.filter(i=>!i.complete||!i.naturalWidth).map(i=>i.alt)")
                 if broken:
                     raise AssertionError("Flag images did not load: %s" % broken)
-                if width in (320, 920):
-                    name = "mobile" if width == 320 else "desktop"
+                if width in (1024, 1600):
+                    name = "compact" if width == 1024 else "desktop"
                     png = page.screenshot(path=str(args.output / ("email-" + name + ".png")), full_page=False)
                     print("PREVIEW_IMAGE_" + name.upper() + ":" + base64.b64encode(png).decode("ascii"), flush=True)
                     stock_section = page.locator(".stock-section").first
@@ -140,16 +142,6 @@ def main():
                         stock_section.scroll_into_view_if_needed()
                         stock_png = page.screenshot(path=str(args.output / ("email-" + name + "-stocks.png")), full_page=False)
                         print("PREVIEW_IMAGE_" + name.upper() + "_STOCKS:" + base64.b64encode(stock_png).decode("ascii"), flush=True)
-                if width == 320:
-                    # Keep the mobile layout usable when email clients ignore media queries.
-                    page.evaluate("""() => {for(const sheet of document.styleSheets){
-                        for(let i=sheet.cssRules.length-1;i>=0;i--)
-                            if(sheet.cssRules[i].type===CSSRule.MEDIA_RULE)sheet.deleteRule(i);
-                    }}""")
-                    fallback = page.evaluate(LAYOUT_CHECK)
-                    print("LAYOUT_FALLBACK_QA:%s" % fallback, flush=True)
-                    if fallback["problems"]:
-                        raise AssertionError("; ".join(fallback["problems"]))
                 page.close()
         finally:
             browser.close()
