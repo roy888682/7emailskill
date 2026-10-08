@@ -1148,7 +1148,7 @@ def send_email(html, subject):
         smtp.login(user,pwd); smtp.sendmail(user,to,msg.as_string())
     log.info(f"✅ 발송→{to}")
 
-CODE_VERSION = "2026-10-09-all-candidates-body-preview"
+CODE_VERSION = "2026-10-09-all-candidates-body"
 
 def main():
     log.info(f"=== ATH 리포트 시작 (코드버전: {CODE_VERSION}) ===")
