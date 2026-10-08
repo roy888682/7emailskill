@@ -1,7 +1,7 @@
 import re
 import unittest
 from html.parser import HTMLParser
-from src.email_layout import MAX_BODY_BYTES, etf_section_html, inception_text, render_email
+from src.email_layout import MAX_BODY_BYTES, etf_section_html, inception_text, render_email, render_email_pages, row_size, industry_text
 from tools.preview_email import make_stock, sample_data
 
 class EtfRows(HTMLParser):
@@ -26,10 +26,12 @@ def rows_from(source):
 class EmailLayoutTests(unittest.TestCase):
     def setUp(self):
         self.data = sample_data()
+        self.data["new_us"] = self.data["new_us"][:10]
 
     def test_representative_fixture_counts(self):
         self.assertEqual((len(self.data["us"]), len(self.data["kr"])), (213, 17))
-        self.assertEqual((len(self.data["new_us"]), len(self.data["new_kr"])), (119, 1))
+        fixture = sample_data()
+        self.assertEqual((len(fixture["new_us"]), len(fixture["new_kr"])), (119, 1))
         self.assertEqual(len(self.data["etf_info"]["rows"]), 20)
 
     def test_rows_preserve_rank_and_all_five_periods(self):
@@ -40,8 +42,8 @@ class EmailLayoutTests(unittest.TestCase):
 
     def test_etf_section_precedes_stock_lists(self):
         source = render_email(**self.data)
-        self.assertLess(source.index('id="etf"'), source.index("US0000"))
-        self.assertLess(source.index('id="etf"'), source.index("KR0000"))
+        self.assertLess(source.index('id="etf"'), source.index('class="section stock-section"'))
+        self.assertLess(source.index('id="etf"'), source.index('class="section stock-section"'))
 
     def test_countries_are_image_flags(self):
         source = render_email(**self.data)
@@ -93,8 +95,50 @@ class EmailLayoutTests(unittest.TestCase):
         self.assertEqual(inception_text({}), "-")
         row = dict(self.data["etf_info"]["rows"][0], inception="2018-04-05")
         source = etf_section_html({"rows": [row]})
-        self.assertRegex(source, r'data-period="cumulative"[\s\S]*?</td><td class="date-cell" data-field="inception">2018-04-05</td>')
+        self.assertRegex(source, r'data-period="cumulative"[\s\S]*?</td><td class="number" data-field="aum">[^<]+</td><td class="date-cell" data-field="inception">2018-04-05</td>')
         self.assertIn('<th data-field="inception">설립일</th>', source)
+
+    def test_new_list_is_visible_before_etf_and_contains_every_new_security(self):
+        source = render_email(**self.data)
+        self.assertLess(source.index('id="new-stocks"'), source.index('id="etf"'))
+        keys = re.findall(r'class="new-row"[^>]*data-key="([^"]+)"', source)
+        expected = ["KR:" + r["ticker"] for r in self.data["new_kr"]] + ["US:" + r["ticker"] for r in self.data["new_us"]]
+        self.assertEqual(keys, expected)
+
+    def test_large_new_lists_are_paginated_without_omission_or_duplicates(self):
+        for count in (119, 500):
+            with self.subTest(count=count):
+                data = sample_data()
+                data["us"] = [make_stock(f"NEW{i:04d}", number=i) for i in range(count)]
+                data["new_us"] = data["us"]
+                pages = render_email_pages(**data)
+                self.assertGreater(len(pages), 1)
+                keys = []
+                for page in pages:
+                    self.assertLessEqual(len(page.encode("utf-8")), MAX_BODY_BYTES)
+                    keys.extend(re.findall(r'class="new-row"[^>]*data-key="([^"]+)"', page))
+                expected = ["KR:" + r["ticker"] for r in data["new_kr"]] + ["US:" + r["ticker"] for r in data["new_us"]]
+                self.assertEqual(keys, expected)
+                self.assertEqual(sum(len(rows_from(page)) for page in pages), 20)
+
+    def test_requested_colors_size_preference_and_no_current_price(self):
+        source = render_email(**self.data)
+        self.assertNotIn("현재가", source)
+        for period, color in (("1y", "#c23932"), ("3y", "#245ba6"), ("5y", "#087d67"), ("10y", "#7944b0")):
+            self.assertRegex(source, f'data-period="{period}"[^>]*>.*?style="color:{color}"')
+        self.assertIn('class="asset asset-etf"', source)
+        self.assertIn('class="asset asset-stock"', source)
+        for value in (-9.9, 0, 2.5):
+            row = make_stock("COLOR")
+            row.update(gap=value, change=value)
+            html = render_email([row], [], self.data["info"], 1400)
+            self.assertEqual(html.count('class="signal-red" style="color:#c23932"'), 2)
+        self.assertEqual(row_size({"asset_type": "ETF", "aum": 1.4, "mcap": 9}), "1.40조원")
+        self.assertEqual(row_size({"asset_type": "ETF", "aum": None, "mcap": .0034}), "34억원")
+        self.assertEqual(row_size({"asset_type": "주식", "aum": 9, "mcap": 1.2}), "1.20조원")
+        self.assertEqual(industry_text({"asset_type": "ETF", "investment_area": "반도체"}), "반도체")
+        self.assertIn("명칭 기준", industry_text({"asset_type": "ETF", "etf_kind": "반도체"}))
+        self.assertEqual(industry_text({"asset_type": "주식"}), "미확인")
 
     def test_empty_report_is_valid(self):
         source = render_email([], [], self.data["info"], 1343.4)

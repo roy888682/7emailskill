@@ -17,8 +17,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 # (2026-09-22 확정: 5가지 API 방식 전부 실패 - 마지막 시도는 다른 개발자의
 #  자체 백엔드 주소를 잘못 참조한 것으로 404 확정). 그래서 ATH 후보에 자주
 # 등장하는 시가총액 상위권 종목 위주로 직접 정리한 정적 표를 사용함.
-# 표에 없는 종목은 -로 표시됨. 특정 종목이 계속 -로 나오면 아래에
-# 종목코드: 업종명 한 줄만 추가하면 됨.
+# 표에 없는 일반주는 Yahoo 업종 메타데이터를 보강하고, 실패하면 미확인으로 표시함.
 KR_INDUSTRY_STATIC = {
     "005930":"반도체", "000660":"반도체", "042700":"반도체장비",
     "403870":"반도체장비", "112040":"반도체장비", "039030":"반도체장비",
@@ -451,7 +450,9 @@ def get_kr_etf_universe() -> dict:
         aum_raw = _find_val(flat, [(["aum"], [], ["rate", "change"]), (["marketsum"], [], []),
                                    (["marketcap"], [], []), (["totalnav"], [], []),
                                    (["netasset"], [], ["rate"])])
-        out[code] = {"name": name, "mcap": _won_to_jo(aum_raw), "market": "KOSPI", "is_etf": True}
+        out[code] = {"name": name, "mcap": None, "market": "KOSPI", "is_etf": True,
+                     "investment_area": row.get("etfType"),
+                     "investment_area_source": "Naver ETF 목록 분류"}
     log.info(f"한국 ETF 유니버스: {len(out)}종목")
     return out
 
@@ -481,9 +482,23 @@ def parse_kr_etf_base(data):
     raw_date = _find_val(flat, [(["list"], ["date", "dt", "day"], ["type"]), (["setup"], [], []),
                                 (["inception"], [], []), (["establish"], [], []),
                                 (["found"], ["date", "dt"], [])])
-    return {"etf_index": index_nm if isinstance(index_nm, str) else None,
-            "issuer": issuer if isinstance(issuer, str) else None,
-            "inception": _norm_date(raw_date)}
+    def exact(key):
+        return next((v for k, v in flat.items() if k.split(".")[-1].lower() == key.lower()), None)
+    # Confirmed ETFBase fields: totalNetAssets is raw KRW, not 억원.
+    net_assets = None
+    try:
+        raw = float(str(exact("totalNetAssets")).replace(",", ""))
+        if math.isfinite(raw) and raw > 0:
+            net_assets = round(raw / 1e12, 4)
+    except (TypeError, ValueError):
+        pass
+    area = exact("etfType")
+    return {"etf_index": exact("etfBaseIdx") or (index_nm if isinstance(index_nm, str) else None),
+            "issuer": exact("issueName") or (issuer if isinstance(issuer, str) else None),
+            "inception": _norm_date(exact("listedDate") or raw_date),
+            "aum": net_assets,
+            "investment_area": area if isinstance(area, str) and area.strip() else None,
+            "investment_area_source": "Naver ETF 공시 분류" if isinstance(area, str) and area.strip() else None}
 
 # ── 미국 ETF 분류/보강 ───────────────────────────────────────────────────
 US_CATEGORY_KO = {
@@ -535,8 +550,12 @@ def enrich_us_etf(tk: str, name: str, usd_krw: float) -> dict:
         info = {}
     res["issuer"] = info.get("fundFamily")
     res["etf_kind"] = classify_us_etf(name, info.get("category"))
+    sector, category = info.get("sector"), info.get("category")
+    res["investment_area"] = (INDUSTRY_KR.get(sector, sector) if sector else
+                              US_CATEGORY_KO.get(category, category) if category else None)
+    res["investment_area_source"] = "Yahoo 펀드 분류" if res["investment_area"] else None
     ta = info.get("totalAssets")
-    if isinstance(ta, (int, float)) and ta > 0:
+    if isinstance(ta, (int, float)) and math.isfinite(ta) and ta > 0:
         res["aum"] = round(ta * usd_krw / 1e12, 4)
     inc = info.get("fundInceptionDate")
     if isinstance(inc, (int, float)) and inc > 0:
@@ -748,7 +767,7 @@ def get_us_ath(usd_krw):
                 mcap=None
                 try:
                     m=getattr(yf.Ticker(tk).fast_info,"market_cap",None) or 0
-                    if m>0: mcap=round(m*usd_krw/1e12,1)
+                    if m>0: mcap=round(m*usd_krw/1e12,4)
                 except: pass
                 # 지수 레이블
                 idx=[]
@@ -775,9 +794,10 @@ def get_us_ath(usd_krw):
                             "market":"US","url":url, **perf})
         except: pass
     if out:
-        log.info(f"미국 업종 조회 중 ({len(out)}종목)...")
+        general = [s for s in out if s["asset_type"] != "ETF"]
+        log.info(f"미국 일반주 업종 조회 중 ({len(general)}종목)...")
         with ThreadPoolExecutor(max_workers=10) as ex:
-            futs={ex.submit(get_us_industry,s["ticker"]):s for s in out}
+            futs={ex.submit(get_us_industry,s["ticker"]):s for s in general}
             for fut in as_completed(futs):
                 s=futs[fut]
                 try: s["industry"]=fut.result()
@@ -800,7 +820,7 @@ def get_us_ath(usd_krw):
     out.sort(key=lambda x:x["gap"])
     log.info(f"미국 최종:{len(out)}"); return out
 
-# ── 한국: Naver Finance 전용 (yfinance .KS/.KQ, FDR, KRX API 전부 미사용) ──
+# ── 한국: 가격·시총 Naver Finance, 미확인 일반주 업종만 Yahoo 메타데이터 보강 ──
 # 근거: finance.naver.com은 이미 업종 조회로 접속 성공이 확인됐고,
 #       yfinance .KS/.KQ 배치·FDR·data.krx.co.kr 은 GitHub Actions에서 반복적으로 0건 반환됨.
 def _kr_market_stock_page(market_type: str, start_idx: int, page_size: int = 100):
@@ -863,7 +883,7 @@ def _parse_kr_stock_row(row: dict):
             try:
                 v = float(str(raw_mcap).replace(",", ""))
                 if v > 0:
-                    mcap = round(v / 1e12, 1)   # 원(raw) -> 조원. 기존 '억원' 가정이 틀려서
+                    mcap = round(v / 1e12, 4)   # 원(raw) -> 조원. 기존 '억원' 가정이 틀려서
                                                  # 시가총액이 비정상적으로 크게 나왔던 원인이었음
             except Exception:
                 pass
@@ -969,6 +989,8 @@ def get_kr_ath(usd_krw, kr_last=None):
     for _code, _meta in etf_universe.items():
         if _code in universe:
             universe[_code]["is_etf"] = True
+            universe[_code]["investment_area"] = _meta.get("investment_area")
+            universe[_code]["investment_area_source"] = _meta.get("investment_area_source")
             if not universe[_code].get("mcap") and _meta.get("mcap"):
                 universe[_code]["mcap"] = _meta["mcap"]
         else:
@@ -998,6 +1020,8 @@ def get_kr_ath(usd_krw, kr_last=None):
                    "index":[meta.get("market","KR")], "industry":None,
                    "market":meta.get("market","KR"),
                    "is_etf":etf_flag,
+                   "investment_area":meta.get("investment_area"),
+                   "investment_area_source":meta.get("investment_area_source"),
                    "url":f"https://m.stock.naver.com/domestic/stock/{code}/total"}
             if etf_flag and dates and len(dates) == len(closes):
                 c1, c3, c5, c10, cumulative, fd = _calc_perf(dates, closes)
@@ -1016,11 +1040,22 @@ def get_kr_ath(usd_krw, kr_last=None):
 
     log.info(f"한국 ATH 후보: {len(out)}종목")
 
-    if out:
-        matched = sum(1 for s in out if s["ticker"] in KR_INDUSTRY_STATIC)
-        log.info(f"한국 업종 조회 (정적표): {matched}/{len(out)}종목 매칭")
-        for s in out:
-            s["industry"] = KR_INDUSTRY_STATIC.get(s["ticker"])
+    general = [s for s in out if not s.get("is_etf")]
+    for item in general:
+        item["industry"] = KR_INDUSTRY_STATIC.get(item["ticker"])
+    missing = [item for item in general if not item.get("industry")]
+    # Price history remains Naver-only. Query Yahoo metadata only for unmatched equities.
+    if missing:
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            futures = {ex.submit(get_us_industry, item["ticker"] +
+                       (".KQ" if item.get("market") == "KOSDAQ" else ".KS")): item for item in missing}
+            for future in as_completed(futures):
+                try:
+                    futures[future]["industry"] = future.result()
+                except Exception:
+                    pass
+    log.info(f"한국 일반주 업종: {sum(bool(item.get('industry')) for item in general)}/{len(general)} "
+             f"(Yahoo 추가 조회 {len(missing)}개)")
 
     # ETF 판별: 국내 ETF 목록 API 소속이면 확정, 아니면 운용사 브랜드 접두사로 보조 판별.
     # 주식형·원자재 등 비채권 ETF는 통과시키고, 채권형 ETF만 이름 키워드로 제외.
@@ -1043,7 +1078,10 @@ def get_kr_ath(usd_krw, kr_last=None):
             s["etf_index"] = parsed.get("etf_index")
             s["issuer"] = parsed.get("issuer") or kr_issuer_from_brand(s["name"])
             s["inception"] = parsed.get("inception") or s.get("first_date")
-            s["aum"] = s.get("mcap")
+            s["aum"] = parsed.get("aum") or s.get("mcap")
+            if parsed.get("investment_area"):
+                s["investment_area"] = parsed["investment_area"]
+                s["investment_area_source"] = parsed["investment_area_source"]
             s["etf_kind"] = classify_kr_etf(s["name"])
         with ThreadPoolExecutor(max_workers=8) as ex:
             list(ex.map(enrich_kr, etf_items))
@@ -1099,13 +1137,13 @@ def compose_email_message(html, subject, user, to, report_html=None):
     return msg
 
 
-def send_email(html, subject, report_html=None):
+def send_email(html, subject, report_html=None, preview_name="email-preview"):
     user=os.environ["GMAIL_USER"]; pwd=os.environ["GMAIL_APP_PASSWORD"]
     to=os.environ.get("RECIPIENT_EMAIL","ykhan@dacpole.com")
     msg = compose_email_message(html, subject, user, to, report_html)
     preview_dir = Path("work")
     preview_dir.mkdir(exist_ok=True)
-    (preview_dir / "email-preview.html").write_text(email_flags.inline_flag_sources(html), encoding="utf-8")
+    (preview_dir / (preview_name + ".html")).write_text(email_flags.inline_flag_sources(html), encoding="utf-8")
     if report_html:
         (preview_dir / "email-full-report.html").write_text(email_flags.inline_flag_sources(report_html), encoding="utf-8")
     log.info(f"메일 레이아웃: 본문 {len(html.encode('utf-8')):,}바이트 / 전체리포트 {len((report_html or html).encode('utf-8')):,}바이트 / 국기 PNG 2개")
@@ -1113,7 +1151,7 @@ def send_email(html, subject, report_html=None):
         smtp.login(user,pwd); smtp.sendmail(user,to,msg.as_string())
     log.info(f"✅ 발송→{to}")
 
-CODE_VERSION = "2026-10-09-desktop-single-row"
+CODE_VERSION = "2026-10-09-new-list-aum-preview"
 
 def main():
     log.info(f"=== ATH 리포트 시작 (코드버전: {CODE_VERSION}) ===")
@@ -1145,9 +1183,13 @@ def main():
     log.info(f"ETF 섹션: 풀 {etf_info['pool']}개 / 1년수익률 산출 {etf_info['with_ret']}개 / 표시 {len(etf_info['rows'])}개")
 
     diag = {"us_days_before": us_days_before, "kr_days_before": kr_days_before}
-    email_html = build_email(us,kr,info,usd_krw,new_us,new_kr,diag,indices,etf_info)
+    email_pages = email_layout.render_email_pages(us,kr,info,usd_krw,new_us,new_kr,diag,indices,etf_info)
     full_report = build_email(us,kr,info,usd_krw,new_us,new_kr,diag,indices,etf_info,include_all=True)
-    send_email(email_html, build_subject(info), full_report)
+    log.info(f"신규 상세 목록 보호: {len(new_us) + len(new_kr)}개 전부 표시 / 메일 {len(email_pages)}통")
+    for page_number, email_html in enumerate(email_pages, 1):
+        suffix = f" [{page_number}/{len(email_pages)}]" if len(email_pages) > 1 else ""
+        preview_name = "email-preview" if page_number == 1 else f"email-preview-{page_number}"
+        send_email(email_html, build_subject(info) + suffix, full_report if page_number == 1 else None, preview_name)
 
     # 스냅샷 저장 (Actions Cache로 다음 실행에 전달됨)
     save_snapshots(snapshots)

@@ -1,4 +1,4 @@
-"""Fluid email layouts with size-bounded bodies and complete reports."""
+"""Dense desktop email tables with protected new-stock lists and bounded bodies."""
 import math
 import re
 from datetime import datetime
@@ -26,7 +26,7 @@ table{border-collapse:collapse}a{color:#1260ad;text-decoration:none}
 .data-table th,.data-table td{white-space:nowrap;padding:3px 3px;text-align:left;vertical-align:middle}
 .data-table th{background:#163b68;color:#fff;font-weight:bold;font-size:10px}
 .stock-table th{background:#ee990b;color:#fff}
-.asset{display:inline-block;background:#e1f4f0;color:#087569;border-radius:3px;padding:1px 4px;font-size:9px}
+.asset{display:inline-block;border-radius:3px;padding:1px 4px;font-size:9px;font-weight:bold}.asset-stock{background:#dff3ee;color:#087569}.asset-etf{background:#eee5fa;color:#753caf}
 .data-table td{border-bottom:1px solid #e7edf3}.data-table tbody tr:nth-child(even){background:#f6f8fb}
 .data-table .number{text-align:right;font-variant-numeric:tabular-nums}
 .data-table .flag-cell{text-align:center;padding-left:3px;padding-right:3px}.flag-cell img{width:20px;height:auto;vertical-align:middle}
@@ -35,8 +35,7 @@ table{border-collapse:collapse}a{color:#1260ad;text-decoration:none}
 .etf-comparison .data-table{font-size:10px}.metric-label{display:none}.metric strong{font-size:10px;font-weight:bold;line-height:1.25}
 .etf-details{margin-top:12px}.etf-details h3{font-size:13px;margin:0 0 6px}
 .up{color:#c04840}.down{color:#2862a6}.flat{color:#52677d}
-.new-summary{background:#fff3df;border-radius:8px;padding:10px 12px;margin-top:14px}
-.new-summary h3{font-size:14px;margin:0 0 6px}.new-summary td{width:50%;font-size:11px}
+.new-section{border-top:3px solid #ee990b;padding-top:8px}.new-table th{background:#ee990b}.signal-red{color:#c23932}
 .new{background:#e6f3ed;color:#237353;border-radius:3px;padding:0 3px;margin-left:3px;font-size:8px;font-weight:bold}
 .notice{background:#fff4dc;color:#796438;border-radius:6px;padding:8px 10px;font-size:10px;margin:8px 0}
 .report-note{padding:8px 10px;background:#e8f0f8;border-radius:6px;color:#405d7a;font-size:10px}
@@ -57,9 +56,33 @@ def pct(value):
     return f'<span class="{state}">{value:+.1f}%</span>'
 
 def aum(value):
-    if not value: return "-"
-    if value < .1: return f"{value * 1e4:,.0f}억"
-    return f"{value:,.2f}조" if value < 10 else f"{value:,.1f}조"
+    """Input is already KRW trillions; never apply FX in the renderer."""
+    if not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+        return "-"
+    if value < 1:
+        return f"{value * 1e4:,.0f}억원"
+    return f"{value:,.2f}조원" if value < 10 else f"{value:,.1f}조원"
+
+def row_size(row):
+    value = row.get("aum") if row.get("asset_type") == "ETF" else None
+    if not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+        value = row.get("mcap")
+    return aum(value)
+
+def signal_pct(value):
+    return pct(value).replace('class="up"', 'class="signal-red" style="color:#c23932"').replace(
+        'class="down"', 'class="signal-red" style="color:#c23932"').replace(
+        'class="flat"', 'class="signal-red" style="color:#c23932"')
+
+def industry_text(row):
+    if row.get("asset_type") == "ETF":
+        area = row.get("investment_area")
+        if area:
+            return str(area)
+        kind = row.get("etf_kind")
+        return f"{kind} (명칭 기준)" if kind else "투자분야 미확인"
+    return row.get("industry") or "미확인"
+
 
 def flag_icon(market):
     """Small drawn PNG flags for dense desktop table cells."""
@@ -77,6 +100,9 @@ def inception_text(row):
 
 def compact_metric(period, label, value):
     number = pct(value).replace("+", "").replace("%", "")
+    colors = {"1y": "#c23932", "3y": "#245ba6", "5y": "#087d67", "10y": "#7944b0"}
+    if period in colors:
+        number = number.replace('class="', f'style="color:{colors[period]}" class="', 1)
     return (f'<div class="metric" data-period="{period}">'
             f'<span class="metric-label">{label}</span><strong>{number}</strong></div>')
 
@@ -95,7 +121,7 @@ def etf_section_html(etf_info, include_details=False):
              '<th class="number">순위</th><th class="flag-cell">국가</th><th>티커</th><th>종목명</th>' +
              "".join(f'<th class="number {"one-year" if period == "1y" else ""}">{label}</th>'
                      for period, label, _ in labels) +
-             '<th data-field="inception">설립일</th></tr></thead><tbody>')
+             '<th class="number" data-field="aum">AUM·시총(원화)</th><th data-field="inception">설립일</th></tr></thead><tbody>')
     for rank, row in enumerate(rows, 1):
         country = "US" if row.get("market") == "US" else "KR"
         ticker = h(row.get("ticker"))
@@ -106,13 +132,14 @@ def etf_section_html(etf_info, include_details=False):
                   "".join(f'<td class="number {"one-year" if period == "1y" else ""}">'
                           f'{compact_metric(period, label, row.get(key))}</td>'
                           for period, label, key in labels) +
+                  f'<td class="number" data-field="aum">{row_size(dict(row, asset_type="ETF"))}</td>'
                   f'<td class="date-cell" data-field="inception">{h(inception_text(row))}</td></tr>')
     table += '</tbody></table></div>'
     notes = ('<p class="notes">ATH -10% 이내 비채권 ETF 기준. 1년 이력이 없는 ETF는 순위에서 제외합니다. '
              '기간 이력이 부족하면 -로 표시합니다.<br>'
              '설립 이래 누적수익률은 수집 가능한 최초 거래일 종가 대비 최신 종가의 전체 상승률이며, 연환산하지 않음.<br>'
              '한국 ETF는 분배금 미반영 가격수익률, 미국 ETF는 배당 재투자 반영 수정주가 기준입니다.<br>'
-             '설립일은 운용사 공시값을 우선하고, 없으면 수집 가능한 최초 거래일을 표시합니다.</p>')
+             '설립일은 운용사 공시값을 우선하고, 없으면 수집 가능한 최초 거래일을 표시합니다. AUM 우선, 없으면 시총을 원화로 표시합니다.</p>')
     details = ""
     if include_details:
         details = ('<div class="etf-details"><h3>ETF 상세정보</h3><table class="data-table">'
@@ -125,17 +152,49 @@ def etf_section_html(etf_info, include_details=False):
                         f'<td>{h(inception_text(row))}</td></tr>')
         details += ('</tbody></table><p class="notes">운용사는 미확인 시 브랜드로 추정합니다.</p></div>')
     else:
-        details = '<p class="muted">추종지수·ETF 성격·운용사·AUM은 첨부 리포트의 ETF 상세정보에서 확인하세요.</p>'
+        details = '<p class="muted">추종지수·ETF 성격·운용사는 첨부 리포트의 ETF 상세정보에서 확인하세요.</p>'
     return head + table + notes + details + "</div>"
 
-def new_summary(new_us, new_kr):
-    return ('<div class="new-summary"><h3>오늘의 신규 등장</h3>'
-            '<table role="presentation" class="layout"><tr>'
-            f'<td>{flag_html("KR")}<b>{len(new_kr)}</b> 종목</td>'
-            f'<td>{flag_html("US")}<b>{len(new_us)}</b> 종목</td>'
-            '</tr></table><div class="muted" style="margin-top:6px">'
-            '신규 종목은 아래 목록에 신규 배지로 표시합니다. 누적일수는 과거 재등장을 포함합니다.'
-            '</div></div>')
+def _stock_row(row, country, new=False, compact=False):
+    ticker = h(row.get("ticker"))
+    asset = row.get("asset_type", "주식")
+    kind = "etf" if asset == "ETF" else "stock"
+    badges = " · ".join(str(x) for x in row.get("index", []) if x not in ("US", "KR")) or "-"
+    new_badge = '<span class="new">신규</span>' if new and not compact else ""
+    cls = "new-row" if compact else "stock-row"
+    source = h(row.get("investment_area_source") or "업종 데이터")
+    cells = (f'<tr class="{cls}" data-ticker="{ticker}" data-key="{country}:{ticker}">'
+             f'<td class="flag-cell">{flag_icon(country)}</td>'
+             f'<td class="ticker-cell"><a href="{safe_url(row.get("url"))}">{ticker}</a>{new_badge}</td>'
+             f'<td class="name-cell">{h(row.get("name"))}</td>'
+             f'<td><span class="asset asset-{kind}">{h(asset)}</span></td>'
+             f'<td class="number" data-field="size">{row_size(row)}</td>'
+             f'<td class="number" data-field="gap">{signal_pct(row.get("gap"))}</td>'
+             f'<td title="{source}">{h(industry_text(row))}</td>'
+             f'<td class="number" data-field="change">{signal_pct(row.get("change"))}</td>'
+             f'<td class="number">{h(row.get("streak", 1))}일째</td>')
+    return cells + ("" if compact else f'<td>{h(badges)}</td>') + "</tr>"
+
+def _stock_head(compact=False):
+    return ('<thead><tr><th class="flag-cell">국가</th><th>티커</th><th>종목명</th><th>구분</th>'
+            '<th class="number">시총·AUM(원화)</th><th class="number">ATH 괴리율</th>'
+            '<th>업종·투자분야</th><th class="number">전일 등락률</th><th class="number">누적일수</th>' +
+            ("" if compact else "<th>지수</th>") + "</tr></thead><tbody>")
+
+def new_summary(new_us, new_kr, totals=None, offset=0):
+    """All new securities are a dedicated visible list, never count-only badges."""
+    total_kr, total_us = totals or (len(new_kr), len(new_us))
+    count = len(new_us) + len(new_kr)
+    overall = total_kr + total_us
+    note = (f" · 전체 {overall}개 중 {offset + 1}~{offset + count}번째" if count < overall else "")
+    head = (f'<div class="section new-section" id="new-stocks" data-total="{overall}" data-shown="{count}">'
+            f'<h2>오늘의 신규 등장 · 한국 {total_kr} · 미국 {total_us}{note}</h2>'
+            '<p class="intro">직전 거래일에 없던 종목 · 누적일수는 과거 재등장을 포함합니다.</p>')
+    if not count:
+        return head + '<p class="muted">오늘의 신규 등장 종목이 없습니다.</p></div>'
+    rows = "".join(_stock_row(row, country, compact=True)
+                   for country, items in (("KR", new_kr), ("US", new_us)) for row in items)
+    return head + '<table class="data-table new-table">' + _stock_head(True) + rows + '</tbody></table></div>'
 
 def stocks_table(stocks, title, currency, holiday, date_s, hmsg="", new_tickers=None):
     country = "US" if currency == "USD" else "KR"
@@ -145,26 +204,8 @@ def stocks_table(stocks, title, currency, holiday, date_s, hmsg="", new_tickers=
     banner = f'<div class="notice">{h(hmsg)}</div>' if holiday and hmsg else ""
     if not stocks:
         return head + banner + '<p class="muted">해당 종목 없음</p></div>'
-    table = ('<table class="data-table stock-table"><thead><tr>'
-             '<th class="flag-cell">국가</th><th>티커</th><th>종목명</th><th>구분</th>'
-             '<th class="number">시가총액</th><th class="number">ATH 괴리율</th><th>업종</th>'
-             '<th class="number">전일 등락률</th><th class="number">현재가</th>'
-             '<th class="number">누적일수</th><th>지수</th></tr></thead><tbody>')
-    for row in stocks:
-        price = row.get("price", 0)
-        price_s = f"{price:,.2f} USD" if currency == "USD" else f"{price:,} KRW"
-        badges = " · ".join(str(x) for x in row.get("index", []) if x not in ("US", "KR")) or "-"
-        new = '<span class="new">신규</span>' if row.get("ticker") in new_tickers else ""
-        table += (f'<tr class="stock-row" data-ticker="{h(row.get("ticker"))}">'
-                  f'<td class="flag-cell">{flag_icon(country)}</td>'
-                  f'<td class="ticker-cell"><a href="{safe_url(row.get("url"))}">{h(row.get("ticker"))}</a>{new}</td>'
-                  f'<td class="name-cell">{h(row.get("name"))}</td><td><span class="asset">{h(row.get("asset_type", "주식"))}</span></td>'
-                  f'<td class="number">{aum(row.get("mcap"))}</td>'
-                  f'<td class="number">{pct(row.get("gap", 0))}</td>'
-                  f'<td>{h(row.get("industry") or "-")}</td>'
-                  f'<td class="number">{pct(row.get("change", 0))}</td>'
-                  f'<td class="number">{price_s}</td>'
-                  f'<td class="number">{h(row.get("streak", 1))}일째</td><td>{h(badges)}</td></tr>')
+    table = '<table class="data-table stock-table">' + _stock_head()
+    table += "".join(_stock_row(row, country, row.get("ticker") in new_tickers) for row in stocks)
     return head + banner + table + '</tbody></table></div>'
 
 def _summary(us, kr, info, indices):
@@ -180,7 +221,8 @@ def _summary(us, kr, info, indices):
             '</td></tr></table></div>')
 
 def render_email(us, kr, info, usd_krw, new_us=None, new_kr=None, diag=None,
-                 indices=None, etf_info=None, include_all=False):
+                 indices=None, etf_info=None, include_all=False, show_etf=True,
+                 show_regular=True, new_totals=None, new_offset=0):
     new_us, new_kr = new_us or [], new_kr or []
     indices, etf_info = indices or {}, etf_info or {}
     date_label = datetime.now(pytz.timezone("Asia/Seoul")).strftime("%Y.%m.%d")
@@ -191,27 +233,66 @@ def render_email(us, kr, info, usd_krw, new_us=None, new_kr=None, diag=None,
               '<div class="shell"><div class="hero"><p class="eyebrow">DAILY MARKET NOTE</p>'
               f'<h1>오늘의 ATH &amp; ETF</h1><div class="date">{date_label} · 일일 시장 리포트</div>'
               f'<div class="foot">All Time High −10% 이내 · 원/달러 {usd_krw:,.0f}원</div></div>')
-    prefix = header + _summary(us, kr, info, indices) + etf_section_html(etf_info, include_details=include_all) + new_summary(new_us, new_kr)
+    prefix = header + _summary(us, kr, info, indices) + new_summary(new_us, new_kr, new_totals, new_offset)
+    if show_etf:
+        prefix += etf_section_html(etf_info, include_details=include_all)
+    prefix += '<p class="notes">업종·투자분야: 주식은 기업 업종, ETF는 제공업체 분류를 표시합니다. 분류가 없으면 명칭 기준으로 표시합니다.</p>'
     footer = '<div class="footer">일일 ATH 리포트 · 가격 이력 기준 · 투자 권유 아님</div></div></body></html>'
-    us_count, kr_count = len(us), len(kr)
+    us_count, kr_count = (len(us), len(kr)) if show_regular else (0, 0)
     while True:
         reduced = us_count < len(us) or kr_count < len(kr)
         note = (f'<p class="report-note">전체 {len(us) + len(kr)}종목 중 본문 {us_count + kr_count}종목을 표시합니다. '
                 '전체 목록은 첨부 리포트에서 확인하세요.</p>') if reduced else ""
-        html = (prefix + note
-                + stocks_table(kr[:kr_count], "한국 ATH 후보", "KRW", info.get("kr_holiday", False),
+        lists = (stocks_table(kr[:kr_count], "한국 ATH 후보", "KRW", info.get("kr_holiday", False),
                                info.get("kr_last_str", "-"), info.get("kr_holiday_msg", ""),
                                [s.get("ticker") for s in new_kr])
                 + stocks_table(us[:us_count], "미국 ATH 후보", "USD", info.get("us_holiday", False),
                                info.get("us_last_str", "-"), info.get("us_holiday_msg", ""),
                                [s.get("ticker") for s in new_us])
-                + footer)
+                ) if show_regular else ""
+        html = prefix + note + lists + footer
         html = re.sub(r">\s+<", "><", html).strip()
         if include_all or len(html.encode("utf-8")) <= MAX_BODY_BYTES:
             return html
         if us_count == 0 and kr_count == 0:
-            raise ValueError("ETF section alone exceeds safe email body size")
+            raise ValueError("Protected new-stock list and ETF section exceed safe email body size")
         if us_count >= kr_count and us_count:
             us_count = max(0, us_count - max(1, us_count // 5))
         else:
             kr_count = max(0, kr_count - max(1, kr_count // 5))
+
+def render_email_pages(us, kr, info, usd_krw, new_us=None, new_kr=None, diag=None,
+                       indices=None, etf_info=None):
+    """Protect every new row; split only when the fixed sections cannot fit."""
+    new_us, new_kr = new_us or [], new_kr or []
+    common = dict(us=us, kr=kr, info=info, usd_krw=usd_krw, diag=diag,
+                  indices=indices, etf_info=etf_info)
+    try:
+        return [render_email(**common, new_us=new_us, new_kr=new_kr)]
+    except ValueError:
+        pass
+    pending = [("KR", row) for row in new_kr] + [("US", row) for row in new_us]
+    totals = (len(new_kr), len(new_us))
+    pages, offset = [], 0
+    while offset < len(pending):
+        low, high, best = 1, len(pending) - offset, None
+        best_count = 0
+        while low <= high:
+            count = (low + high) // 2
+            chunk = pending[offset:offset + count]
+            try:
+                candidate = render_email(
+                    **common, new_us=[r for c, r in chunk if c == "US"],
+                    new_kr=[r for c, r in chunk if c == "KR"],
+                    show_regular=False, show_etf=not pages,
+                    new_totals=totals, new_offset=offset)
+                best, best_count, low = candidate, count, count + 1
+            except ValueError:
+                high = count - 1
+        if best is None:
+            raise ValueError("A single new-stock row cannot fit in a safe email body")
+        pages.append(best)
+        offset += best_count
+    if not pages:
+        raise ValueError("ETF section exceeds safe email body size")
+    return pages

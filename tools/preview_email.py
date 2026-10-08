@@ -65,7 +65,9 @@ def sample_data():
 
 def build_preview_html():
     from src.email_layout import render_email
-    return render_email(**sample_data())
+    data = sample_data()
+    data["new_us"] = data["new_us"][:10]
+    return render_email(**data)
 
 LAYOUT_CHECK = """() => {
  const tolerance=1.5,viewport=window.innerWidth,problems=[];
@@ -74,16 +76,32 @@ LAYOUT_CHECK = """() => {
  const periods=["1y","3y","5y","10y","cumulative"];
  const etfs=Array.from(document.querySelectorAll(".etf-row[data-ticker]"));
  const stocks=Array.from(document.querySelectorAll(".stock-row[data-ticker]"));
+ const newRows=Array.from(document.querySelectorAll(".new-row[data-ticker]"));
+ const newSection=document.querySelector("#new-stocks");
+ if(!newSection||newRows.length!==Number(newSection.dataset.shown))problems.push("New securities missing from visible list");
+ if(document.querySelector("thead")?.textContent.includes("현재가"))problems.push("Current-price column is still displayed");
  if(!etfs.length)problems.push("ETF rows were not rendered");
  etfs.forEach((row,index)=>{
    const metrics=periods.map(period=>row.querySelector('[data-period="'+period+'"]'));
    if(metrics.some(metric=>!metric)){problems.push("ETF "+index+" missing a return metric");return;}
    const date=row.querySelector('[data-field="inception"]');
    const cumulative=metrics[4].closest("td");
-   if(!date||cumulative.nextElementSibling!==date)
-     problems.push("ETF "+index+" inception date is not immediately after cumulative return");
+   const size=row.querySelector('[data-field="aum"]');
+   if(!date||!size||cumulative.nextElementSibling!==size||size.nextElementSibling!==date)
+     problems.push("ETF "+index+" requires cumulative → KRW AUM → inception");
+   const colors=metrics.slice(0,4).map(metric=>getComputedStyle(metric.querySelector("strong span")).color);
+   if(new Set(colors).size!==4)problems.push("ETF "+index+" return colors are not distinct");
  });
- [...etfs,...stocks].forEach((row,index)=>{
+ [...stocks,...newRows].forEach(row=>{
+   for(const key of ["gap","change"]){
+     const span=row.querySelector('[data-field="'+key+'"] span');
+     if(!span||getComputedStyle(span).color!=="rgb(194, 57, 50)")problems.push("ATH/day change must be red");
+   }
+ });
+ const stockBadge=document.querySelector(".asset-stock"),etfBadge=document.querySelector(".asset-etf");
+ if(stockBadge&&etfBadge&&getComputedStyle(stockBadge).backgroundColor===getComputedStyle(etfBadge).backgroundColor)
+   problems.push("Stock and ETF badge colors are identical");
+ [...etfs,...stocks,...newRows].forEach((row,index)=>{
    const box=row.getBoundingClientRect();
    if(box.height>32)problems.push("Row "+index+" is taller than a single line: "+box.height);
    if(box.left< -tolerance||box.right>viewport+tolerance)problems.push("Row "+index+" exceeds viewport");
@@ -102,8 +120,8 @@ LAYOUT_CHECK = """() => {
      }
    }
  });
- return {viewport,etfs:etfs.length,stocks:stocks.length,
-         etfHeight:Math.round(document.querySelector(".etf-table").getBoundingClientRect().height),problems};
+ return {viewport,etfs:etfs.length,stocks:stocks.length,newRows:newRows.length,
+         etfHeight:Math.round(document.querySelector(".etf-table")?.getBoundingClientRect().height||0),problems};
 }"""
 
 def main():
@@ -137,6 +155,11 @@ def main():
                     name = "compact" if width == 1024 else "desktop"
                     png = page.screenshot(path=str(args.output / ("email-" + name + ".png")), full_page=False)
                     print("PREVIEW_IMAGE_" + name.upper() + ":" + base64.b64encode(png).decode("ascii"), flush=True)
+                    new_section = page.locator("#new-stocks")
+                    if new_section.count():
+                        new_section.scroll_into_view_if_needed()
+                        new_png = page.screenshot(path=str(args.output / ("email-" + name + "-new.png")), full_page=False)
+                        print("PREVIEW_IMAGE_" + name.upper() + "_NEW:" + base64.b64encode(new_png).decode("ascii"), flush=True)
                     stock_section = page.locator(".stock-section").first
                     if stock_section.count():
                         stock_section.scroll_into_view_if_needed()
