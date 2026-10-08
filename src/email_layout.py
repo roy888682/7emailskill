@@ -23,7 +23,7 @@ table{border-collapse:collapse}a{color:#1260ad;text-decoration:none}
 .section{margin-top:14px}.section h2{margin:0;font-size:16px;line-height:1.25}
 .intro,.etf-caption{font-size:10px;color:#64778b;margin:4px 0 7px}
 .data-table{width:100%;table-layout:auto;background:#fff;border:1px solid #dce5ee;font-size:9.5px;line-height:1.25}
-.data-table th,.data-table td{white-space:nowrap;padding:3px 4px;text-align:left;vertical-align:middle}
+.data-table th,.data-table td{white-space:nowrap;padding:3px 3px;text-align:left;vertical-align:middle}
 .data-table th{background:#163b68;color:#fff;font-weight:bold;font-size:10px}
 .stock-table th{background:#ee990b;color:#fff}
 .asset{display:inline-block;background:#e1f4f0;color:#087569;border-radius:3px;padding:1px 4px;font-size:9px}
