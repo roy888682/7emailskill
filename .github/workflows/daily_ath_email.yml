@@ -4,16 +4,9 @@ on:
   schedule:
     - cron: '0 22 * * 1-5'   # 22:00 UTC = 07:00 KST (화~토)
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - 'src/**'
-      - 'tests/**'
-      - 'tools/**'
 
 jobs:
   send-ath-email:
-    if: github.event_name != 'push' || contains(github.event.head_commit.message, '[send-email-layout]')
     runs-on: ubuntu-latest
     timeout-minutes: 55
 
@@ -82,57 +75,9 @@ jobs:
           RECIPIENT_EMAIL:    ${{ secrets.RECIPIENT_EMAIL }}
         run: python src/main.py
 
-      - name: 🖼️ 실제 메일 모바일·PC 레이아웃 검증
-        if: contains(github.event.head_commit.message, '[send-email-layout]')
-        run: |
-          pip install playwright
-          python -m playwright install --with-deps chromium
-          sudo apt-get install -y fonts-noto-cjk
-          python tools/preview_email.py --html work/email-preview.html
-
-      - name: 📎 메일 미리보기 저장
-        if: contains(github.event.head_commit.message, '[send-email-layout]')
-        uses: actions/upload-artifact@v4
-        with:
-          name: email-layout-preview
-          path: |
-            work/email-preview.html
-            work/email-full-report.html
-            work/email-mobile.png
-            work/email-desktop.png
-
       - name: 💾 누적 스냅샷 저장 (다음 실행에서 자동 복원됨)
         if: always()
         uses: actions/cache/save@v4
         with:
           path: data/daily_snapshots.json
           key: ath-snapshot-${{ github.run_id }}
-
-  layout-preview:
-    if: github.event_name == 'push' && contains(github.event.head_commit.message, '[run-layout-preview]')
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: pip
-      - name: 📦 의존성 설치
-        run: pip install -r requirements.txt
-      - name: 🧪 수익률·메일 레이아웃 검증
-        run: python -m unittest discover -s tests -v
-      - name: 🖼️ 모바일·PC 미리보기 렌더
-        run: |
-          pip install playwright
-          python -m playwright install --with-deps chromium
-          sudo apt-get install -y fonts-noto-cjk
-          python tools/preview_email.py
-      - name: 📎 메일 미리보기 저장
-        uses: actions/upload-artifact@v4
-        with:
-          name: email-layout-preview
-          path: |
-            work/email-preview.html
-            work/email-mobile.png
-            work/email-desktop.png
