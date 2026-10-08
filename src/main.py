@@ -1216,11 +1216,18 @@ def send_prepared():
     html = (directory / "email-body.html").read_text(encoding="utf-8")
     manifest = json.loads((directory / "report-manifest.json").read_text(encoding="utf-8"))
     email_layout.validate_inventory(html, manifest)
-    email_layout.validate_size(html)
+    html_bytes = email_layout.validate_size(html)
     proof = json.loads((directory / "preview-passed.json").read_text(encoding="utf-8"))
     import hashlib
-    if proof.get("sha256") != hashlib.sha256(html.encode("utf-8")).hexdigest():
-        raise RuntimeError("Email changed after browser validation")
+    if (
+        proof.get("sha256") != hashlib.sha256(html.encode("utf-8")).hexdigest()
+        or proof.get("all_passed") is not True
+        or proof.get("html_bytes") != html_bytes
+        or proof.get("counts") != {key: len(values) for key, values in manifest.items()}
+        or set(proof.get("hosts", [])) != {"standalone", "gmail"}
+        or set(proof.get("viewports", [])) != {900, 1024, 1280, 1600, 1920}
+    ):
+        raise RuntimeError("Email changed or browser validation proof is incomplete")
     send_email(html, (directory / "email-subject.txt").read_text(encoding="utf-8"))
     save_snapshots(json.loads((directory / "pending-snapshots.json").read_text(encoding="utf-8")))
 

@@ -6,7 +6,7 @@ from email import message_from_string
 from pathlib import Path
 from unittest.mock import patch
 
-from src.main import compose_email_message, send_email, build_subject, main
+from src.main import compose_email_message, send_email, build_subject, main, send_prepared
 from tools.preview_email import sample_data, make_stock
 from datetime import date
 import re
@@ -64,6 +64,39 @@ class EmailDeliveryTests(unittest.TestCase):
         self.assertEqual(sum(key.startswith("US:") for key in keys), 218)
         self.assertEqual(sum(key.startswith("KR:") for key in keys), 17)
         self.assertNotIn("첨부", html)
+
+    def test_prepared_delivery_requires_complete_matching_browser_proof(self):
+        import hashlib, json
+        data = sample_data()
+        html = render_email([], [], data["info"], 1342)
+        manifest = inventory(html)
+        proof = {"sha256":hashlib.sha256(html.encode("utf-8")).hexdigest(),
+                 "all_passed":True, "html_bytes":len(html.encode("utf-8")),
+                 "counts":{key:len(values) for key,values in manifest.items()},
+                 "hosts":["standalone","gmail"], "viewports":[900,1024,1280,1600,1920]}
+        with tempfile.TemporaryDirectory() as directory:
+            original = os.getcwd()
+            try:
+                os.chdir(directory)
+                Path("work").mkdir()
+                Path("work/email-body.html").write_text(html, encoding="utf-8")
+                Path("work/report-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+                Path("work/email-subject.txt").write_text("test", encoding="utf-8")
+                Path("work/pending-snapshots.json").write_text("{}", encoding="utf-8")
+                for change in ({"all_passed":False}, {"html_bytes":1}, {"hosts":["standalone"]},
+                               {"viewports":[1024]}, {"counts":{}}, {"sha256":"bad"}):
+                    with self.subTest(change=change):
+                        Path("work/preview-passed.json").write_text(json.dumps(dict(proof, **change)), encoding="utf-8")
+                        with patch("src.main.send_email") as send:
+                            with self.assertRaises(RuntimeError):
+                                send_prepared()
+                            send.assert_not_called()
+                Path("work/preview-passed.json").write_text(json.dumps(proof), encoding="utf-8")
+                with patch("src.main.send_email") as send, patch("src.main.save_snapshots"):
+                    send_prepared()
+                    send.assert_called_once_with(html, "test")
+            finally:
+                os.chdir(original)
 
     def test_subject_uses_country_names_instead_of_flag_letter_glyphs(self):
         subject = build_subject({"us_holiday": False, "kr_holiday": False,

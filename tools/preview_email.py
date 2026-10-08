@@ -287,7 +287,7 @@ def main():
         browser = playwright.chromium.launch(headless=True)
         try:
             for host, document in (("standalone", html_source), ("gmail", gmail_source)):
-                for width in (1024, 1280, 1600, 1920):
+                for width in (900, 1024, 1280, 1600, 1920):
                     page = browser.new_page(
                         viewport={"width": width, "height": 1200}, device_scale_factor=1,
                     )
@@ -314,7 +314,7 @@ def main():
     proof = {
         "sha256": digest, "body_sha256": digest, "html_bytes": size,
         "counts": {key: len(values) for key, values in expected.items()},
-        "viewports": [1024, 1280, 1600, 1920],
+        "viewports": [900, 1024, 1280, 1600, 1920],
         "hosts": ["standalone", "gmail"], "all_passed": True,
     }
     proof_path.write_text(json.dumps(proof, ensure_ascii=False, indent=2), encoding="utf-8")

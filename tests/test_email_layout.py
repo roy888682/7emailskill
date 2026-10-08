@@ -91,7 +91,7 @@ class EmailLayoutTests(unittest.TestCase):
         body = render_email(**self.data)
         self.assertIn("단위: %", body)
         self.assertIn("최근 1·3·5·10년: 연평균수익률(CAGR)", body)
-        self.assertIn('<div class=etf-details>', body)
+        self.assertTrue(BeautifulSoup(body, "html5lib").select_one(".etf-details"))
         self.assertIn("신한자산운용 주식회사", body)
         self.assertNotIn("첨부", body)
 
