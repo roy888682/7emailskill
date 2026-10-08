@@ -4,9 +4,15 @@ on:
   schedule:
     - cron: '0 22 * * 1-5'   # 22:00 UTC = 07:00 KST (화~토)
   workflow_dispatch:
+  # 이번 ETF 변경 반영 시 한 번만 실행하며, 실행 시작 후 이 임시 트리거 제거.
+  push:
+    branches: [main]
+    paths:
+      - src/main.py
 
 jobs:
   send-ath-email:
+    if: github.event_name != 'push' || contains(github.event.head_commit.message, '[run-daily-ath-etf-update]')
     runs-on: ubuntu-latest
     timeout-minutes: 55
 
@@ -64,6 +70,9 @@ jobs:
           else
             echo "ℹ️ 복원된 캐시 없음 (최초 실행이거나 캐시 만료됨) — 오늘자로 새로 시작함"
           fi
+
+      - name: 🧪 ETF 수익률·정렬 검증
+        run: python -m unittest discover -s tests -v
 
       - name: 📧 ATH 이메일 발송
         env:

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import os, smtplib, logging, time, io, re, json, bisect
+import os, smtplib, logging, time, io, re, json, bisect, math
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from datetime import datetime, timedelta, date, timezone
@@ -326,18 +326,26 @@ def get_trading_info():
 # 최초 거래일→설립일)으로 채움.
 
 def _calc_perf(dates, closes):
-    """(최근 3년 연평균수익률%, 5년 연평균수익률%, 최초거래일). 기간이 모자라면 해당 값은 None."""
+    """(최근 1년·5년·10년 연평균수익률%, 최초거래일). 이력이 부족하면 해당 값은 None."""
     if not dates or len(dates) != len(closes) or len(closes) < 2:
-        return None, None, None
+        return None, None, None, None
     last_d, last_p = dates[-1], closes[-1]
-    def price_on_or_before(target):
+
+    def cagr(years):
+        try:
+            target = last_d.replace(year=last_d.year - years)
+        except ValueError:  # 2월 29일의 과거 기준 연도가 평년이면 2월 28일 사용
+            target = last_d.replace(year=last_d.year - years, day=28)
         i = bisect.bisect_right(dates, target) - 1
-        return closes[i] if i >= 0 else None
-    p3 = price_on_or_before(last_d - timedelta(days=1096))
-    p5 = price_on_or_before(last_d - timedelta(days=1826))
-    cagr3 = round(((last_p / p3) ** (1 / 3) - 1) * 100, 1) if p3 else None
-    cagr5 = round(((last_p / p5) ** (1 / 5) - 1) * 100, 1) if p5 else None
-    return cagr3, cagr5, dates[0]
+        if i < 0:
+            return None
+        start_p = closes[i]  # 기준일이 휴장이면 직전 거래일 종가
+        if (not math.isfinite(last_p) or not math.isfinite(start_p)
+                or last_p <= 0 or start_p <= 0):
+            return None
+        return round(((last_p / start_p) ** (1 / years) - 1) * 100, 1)
+
+    return cagr(1), cagr(5), cagr(10), dates[0]
 
 def _flatten(d, prefix="", depth=0):
     flat = {}
@@ -622,6 +630,14 @@ def _etf_aum(v):
         return f"{v * 1e4:,.0f}억"
     return f"{v:,.2f}조" if v < 10 else f"{v:,.1f}조"
 
+def build_etf_info(us, kr):
+    """한국·미국 ETF 중 최근 1년 수익률 내림차순 상위 20개."""
+    pool = [s for s in kr + us if s.get("asset_type") == "ETF"]
+    ranked = sorted([s for s in pool if s.get("cagr1y") is not None],
+                    key=lambda s: s["cagr1y"], reverse=True)
+    return {"rows": ranked[:20], "pool": len(pool), "with_ret": len(ranked)}
+
+
 def etf_section_html(etf_info):
     rows_data = etf_info.get("rows", [])
     pool      = etf_info.get("pool", 0)
@@ -629,9 +645,9 @@ def etf_section_html(etf_info):
     head = f"""
     <div style="background:#fff;padding:20px;border-radius:8px;margin-top:12px;
                 border-left:4px solid #8e44ad;box-shadow:0 1px 4px rgba(0,0,0,.08)">
-      <h2 style="margin:0 0 4px;color:#1a1a2e;font-size:18px">🧺 ETF 전용 — 최근 3년 연평균 수익률 높은 순 {len(rows_data)}개</h2>
+      <h2 style="margin:0 0 4px;color:#1a1a2e;font-size:18px">🧺 ETF 전용 — 최근 1년 연평균수익률 높은 순 {len(rows_data)}개</h2>
       <p style="margin:0 0 10px;color:#888;font-size:12px">
-        ATH -10% 이내 ETF {pool}개 중 3년 연평균 수익률 산출 가능 {with_ret}개 기준 (내림차순, 채권형·상장 3년 미만 제외)
+        ATH -10% 이내 ETF {pool}개 중 1년 연평균수익률 산출 가능 {with_ret}개 기준 (1년 수익률 내림차순, 채권형·상장 1년 미만 제외)
       </p>"""
     if not rows_data:
         return head + "<p style='color:#888;font-size:13px'>해당 ETF 없음</p></div>"
@@ -649,9 +665,10 @@ def etf_section_html(etf_info):
           <td style='padding:6px 8px;color:#333'>{s['name']}</td>
           <td style='padding:6px 8px;color:#666;font-size:11px'>{s.get("etf_index") or "-"}</td>
           <td style='padding:6px 8px;text-align:right;color:#555'>{_etf_aum(aum)}</td>
+          <td style='padding:6px 8px;text-align:right'>{_etf_pct(s.get("cagr1y"))}</td>
           <td style='padding:6px 8px;text-align:right'>{_etf_pct(s.get("cagr5y"))}</td>
+          <td style='padding:6px 8px;text-align:right'>{_etf_pct(s.get("cagr10y"))}</td>
           <td style='padding:6px 8px;color:#666;font-size:11px'>{s.get("etf_kind") or "-"}</td>
-          <td style='padding:6px 8px;text-align:right'>{_etf_pct(s.get("cagr3y"))}</td>
           <td style='padding:6px 8px;color:#666;font-size:11px'>{s.get("issuer") or "-"}</td>
           <td style='padding:6px 8px;color:#666;font-size:11px;white-space:nowrap'>{inception}</td></tr>"""
     th = "padding:8px;font-size:12px"
@@ -664,15 +681,16 @@ def etf_section_html(etf_info):
           <th style="{th};text-align:left">종목명</th>
           <th style="{th};text-align:left">추종지수</th>
           <th style="{th};text-align:right">AUM 시가총액</th>
-          <th style="{th};text-align:right">5년 연평균수익률</th>
+          <th style="{th};text-align:right">최근 1년 연평균수익률 ↓</th>
+          <th style="{th};text-align:right">최근 5년 연평균수익률</th>
+          <th style="{th};text-align:right">최근 10년 연평균수익률</th>
           <th style="{th};text-align:left">ETF 성격</th>
-          <th style="{th};text-align:right">최근 3년 연평균 수익률</th>
           <th style="{th};text-align:left">운용사</th>
           <th style="{th};text-align:left">설립일</th>
         </tr></thead><tbody>{rows}</tbody></table></div>
       <p style="margin:10px 0 0;color:#aaa;font-size:11px">
         ※ 한국 ETF는 분배금 미반영 가격수익률, 미국 ETF는 배당 재투자 반영 수정주가 기준임.
-        상장 3년·5년 미만이면 해당 수익률은 '-' 표시. 설립일은 운용사 공시값을 우선하고 없으면 최초 거래일, 운용사는 미확인 시 브랜드로 추정함.
+        연평균수익률은 CAGR(복리)로 산출하며, 해당 1년·5년·10년 가격 이력이 부족하면 '-' 표시. 설립일은 운용사 공시값을 우선하고 없으면 최초 거래일, 운용사는 미확인 시 브랜드로 추정함.
       </p>
     </div>"""
     return head + table
@@ -865,8 +883,9 @@ def get_us_ath(usd_krw):
                 if is_etf:
                     try:
                         dts=[d.date() for d in s.index]
-                        c3,c5,fd=_calc_perf(dts,[float(x) for x in s.tolist()])
-                        perf={"cagr3y":c3,"cagr5y":c5,"first_date":fd.isoformat() if fd else None}
+                        c1,c5,c10,fd=_calc_perf(dts,[float(x) for x in s.tolist()])
+                        perf={"cagr1y":c1,"cagr5y":c5,"cagr10y":c10,
+                              "first_date":fd.isoformat() if fd else None}
                     except Exception:
                         perf={}
                 out.append({"ticker":tk,"name":sec_name if is_etf else tk,
@@ -1037,7 +1056,7 @@ def _kr_price_history(code: str, count: int = 3000) -> list:
         return []
 
 def _kr_price_history_dated(code: str, count: int = 8000):
-    """네이버 fchart에서 (날짜 리스트, 종가 리스트) 반환 — ETF 5년/1년 수익률·설립일 계산용"""
+    """네이버 fchart에서 (날짜 리스트, 종가 리스트) 반환 — ETF 1년·5년·10년 수익률·설립일 계산용"""
     try:
         url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count={count}&requestType=0"
         r = requests.get(url, headers=UA, timeout=20)
@@ -1085,7 +1104,7 @@ def get_kr_ath(usd_krw, kr_last=None):
         etf_flag = bool(meta.get("is_etf")) or kr_is_etf_name(name)
         dates = None
         if etf_flag:
-            dates, closes = _kr_price_history_dated(code, count=8000)   # 설립일/5년 수익률용 장기 이력
+            dates, closes = _kr_price_history_dated(code, count=8000)   # 설립일/1년·5년·10년 수익률용 장기 이력
         else:
             closes = _kr_price_history(code, count=3000)
         if len(closes) < 30:
@@ -1103,8 +1122,8 @@ def get_kr_ath(usd_krw, kr_last=None):
                    "is_etf":etf_flag,
                    "url":f"https://m.stock.naver.com/domestic/stock/{code}/total"}
             if etf_flag and dates and len(dates) == len(closes):
-                c3, c5, fd = _calc_perf(dates, closes)
-                res.update({"cagr3y": c3, "cagr5y": c5,
+                c1, c5, c10, fd = _calc_perf(dates, closes)
+                res.update({"cagr1y": c1, "cagr5y": c5, "cagr10y": c10,
                             "first_date": fd.isoformat() if fd else None})
             return res
         return None
@@ -1274,7 +1293,7 @@ def send_email(html,subject):
         s.login(user,pwd); s.sendmail(user,to,msg.as_string())
     log.info(f"✅ 발송→{to}")
 
-CODE_VERSION = "2026-10-04-etf-us-cagr3"
+CODE_VERSION = "2026-10-08-etf-cagr1-5-10"
 
 def main():
     log.info(f"=== ATH 리포트 시작 (코드버전: {CODE_VERSION}) ===")
@@ -1301,12 +1320,9 @@ def main():
     for s in us: s["streak"] = us_streak.get(s["ticker"], 1)
     for s in kr: s["streak"] = kr_streak.get(s["ticker"], 1)
 
-    # ETF 전용 섹션: ATH -10% 이내 ETF(한국+미국) 중 최근 3년 연평균 수익률 높은 순 20개
-    etf_pool = [s for s in kr + us if s.get("asset_type") == "ETF"]
-    etf_ranked = sorted([s for s in etf_pool if s.get("cagr3y") is not None],
-                        key=lambda x: x["cagr3y"], reverse=True)
-    etf_info = {"rows": etf_ranked[:20], "pool": len(etf_pool), "with_ret": len(etf_ranked)}
-    log.info(f"ETF 섹션: 풀 {len(etf_pool)}개 / 3년수익률 산출 {len(etf_ranked)}개 / 표시 {len(etf_info['rows'])}개")
+    # ETF 전용 섹션: ATH -10% 이내 ETF(한국+미국) 중 최근 1년 수익률 내림차순 20개
+    etf_info = build_etf_info(us, kr)
+    log.info(f"ETF 섹션: 풀 {etf_info['pool']}개 / 1년수익률 산출 {etf_info['with_ret']}개 / 표시 {len(etf_info['rows'])}개")
 
     diag = {"us_days_before": us_days_before, "kr_days_before": kr_days_before}
     send_email(build_email(us,kr,info,usd_krw,new_us,new_kr,diag,indices,etf_info), build_subject(info))
