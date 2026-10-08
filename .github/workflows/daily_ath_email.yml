@@ -4,9 +4,6 @@ on:
   schedule:
     - cron: '0 22 * * 1-5'   # 22:00 UTC = 07:00 KST (화~토)
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths: ["src/**", "tests/**", "tools/**"]
 
 jobs:
   send-ath-email:
@@ -82,7 +79,6 @@ jobs:
         run: python tools/preview_email.py --html work/email-body.html --manifest work/report-manifest.json
 
       - name: 📧 검증된 전체 본문 발송
-        if: github.event_name != 'push' || contains(github.event.head_commit.message, '[send-noclip]')
         env:
           GMAIL_USER:         ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
@@ -90,7 +86,7 @@ jobs:
         run: python src/main.py --send-prepared
 
       - name: 💾 누적 스냅샷 저장 (다음 실행에서 자동 복원됨)
-        if: success() && (github.event_name != 'push' || contains(github.event.head_commit.message, '[send-noclip]'))
+        if: success()
         uses: actions/cache/save@v4
         with:
           path: data/daily_snapshots.json
