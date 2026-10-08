@@ -118,40 +118,30 @@ class EtfRankingAndHtmlTests(unittest.TestCase):
                          list(map(float, range(24, 4, -1))))
         self.assertEqual((info["pool"], info["with_ret"]), (25, 25))
 
-    def test_html_headers_and_values_match_all_five_return_columns(self):
+    def test_cards_show_all_five_return_metrics_in_order(self):
         row = {"ticker": "ETF", "name": "Example ETF", "market": "US",
                "cagr1y": 12.3, "cagr3y": 9.1, "cagr5y": 8.0, "cagr10y": 6.0,
                "cumulative_return": 159.4}
         html = etf_section_html({"rows": [row], "pool": 1, "with_ret": 1})
-        headers = re.findall(r"<th\b[^>]*>(.*?)</th>", html, re.S)
-        cells = re.findall(r"<td\b[^>]*>(.*?)</td>", html, re.S)
-        self.assertEqual(len(headers), 13)
-        self.assertEqual(len(cells), 13)
-        self.assertEqual(headers[5:10], ["최근 1년 연평균수익률 ↓",
-                                       "최근 3년 연평균수익률",
-                                       "최근 5년 연평균수익률",
-                                       "최근 10년 연평균수익률",
-                                       "설립 이래 누적수익률"])
-        expected_values = ["+12.3%", "+9.1%", "+8.0%", "+6.0%", "+159.4%"]
-        for cell, expected in zip(cells[5:10], expected_values):
-            self.assertIn(expected, cell)
-        self.assertIn("1년 수익률 내림차순", html)
+        periods = re.findall(r'data-period="([^"]+)"', html)
+        self.assertEqual(periods, ["1y", "3y", "5y", "10y", "cumulative"])
+        for expected in ["+12.3%", "+9.1%", "+8.0%", "+6.0%", "+159.4%"]:
+            self.assertIn(expected, html)
+        self.assertIn("1년 연평균수익률 내림차순", html)
 
     def test_missing_long_period_returns_keep_valid_cumulative_return(self):
         row = {"ticker": "NEW", "name": "New ETF", "cagr1y": 20.0,
                "cumulative_return": 30.0}
         html = etf_section_html({"rows": [row], "pool": 1, "with_ret": 1})
-        cells = re.findall(r"<td\b[^>]*>(.*?)</td>", html, re.S)
-        self.assertIn("+20.0%", cells[5])
-        for cell in cells[6:9]:
-            self.assertIn(">-</span>", cell)
-        self.assertIn("+30.0%", cells[9])
+        self.assertIn("+20.0%", html)
+        self.assertIn("+30.0%", html)
+        self.assertEqual(html.count('<span class="flat">-</span>'), 3)
 
     def test_missing_cumulative_return_is_shown_as_dash(self):
         row = {"ticker": "ETF", "name": "Example ETF", "cagr1y": 10.0}
         html = etf_section_html({"rows": [row], "pool": 1, "with_ret": 1})
-        cells = re.findall(r"<td\b[^>]*>(.*?)</td>", html, re.S)
-        self.assertIn(">-</span>", cells[9])
+        self.assertIn('data-period="cumulative"', html)
+        self.assertEqual(html.count('<span class="flat">-</span>'), 4)
 
     def test_footer_explains_cumulative_return_basis(self):
         row = {"ticker": "ETF", "name": "Example ETF", "cagr1y": 10.0}

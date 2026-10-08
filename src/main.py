@@ -2,6 +2,13 @@
 import os, smtplib, logging, time, io, re, json, bisect, math
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.mime.image import MIMEImage
+from pathlib import Path
+
+if __package__:
+    from . import email_layout, email_flags
+else:
+    import email_layout, email_flags
 from datetime import datetime, timedelta, date, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -168,88 +175,7 @@ def compute_streak_counts(snapshots: dict, market_key: str) -> dict:
     return counts
 
 def new_tickers_html(new_us: list, new_kr: list) -> str:
-    """신규 등장 종목 섹션 HTML — 0건이어도 국가별 카운트는 항상 크게 표시"""
-    total = len(new_us) + len(new_kr)
-
-    count_cards = f"""
-    <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px">
-      <div style="background:#fce4ec;border-radius:6px;padding:10px 20px">
-        <div style="font-size:11px;color:#555">🇰🇷 한국 신규</div>
-        <div style="font-size:26px;font-weight:bold;color:#1a1a2e">{len(new_kr)}종목</div>
-      </div>
-      <div style="background:#fff3e0;border-radius:6px;padding:10px 20px">
-        <div style="font-size:11px;color:#555">🇺🇸 미국 신규</div>
-        <div style="font-size:26px;font-weight:bold;color:#1a1a2e">{len(new_us)}종목</div>
-      </div>
-    </div>"""
-
-    if total == 0:
-        return f"""
-        <div style="background:#fff;padding:20px;border-radius:8px;margin-top:12px;
-                    border-left:4px solid #bbb;box-shadow:0 1px 4px rgba(0,0,0,.08)">
-          <h2 style="margin:0 0 12px;color:#1a1a2e;font-size:18px">🆕 신규 등장 종목</h2>
-          {count_cards}
-          <p style="margin:0;color:#888;font-size:12px">오늘 신규 종목 없음</p>
-        </div>"""
-
-    def row(s, flag, currency):
-        lk  = s.get("url","#")
-        gap = s.get("gap",0)
-        gc  = "#e74c3c" if gap<=-5 else "#e67e22" if gap<=-1 else "#27ae60"
-        pr  = f"{s['price']:,.2f}" if currency=="USD" else f"{s['price']:,}"
-        mc  = s.get("mcap")
-        mcap_str = f"{mc:,.1f}조" if mc else "-"
-        ind = s.get("industry") or "-"
-        chg = s.get("change",0)
-        cc  = "#c0392b" if chg>0 else "#2980b9"; cs = "+" if chg>0 else ""
-        streak = s.get("streak",1)
-        streak_note = f"{streak}일째" if streak==1 else f"{streak}일째 (과거 재등장)"
-        atype = s.get("asset_type","주식")
-        badge_bg = "#e8eaf6" if atype=="ETF" else "#e0f2f1"
-        badge_fg = "#3949ab" if atype=="ETF" else "#00695c"
-        return (f"<tr style='border-bottom:1px solid #f0f0f0'>"
-                f"<td style='padding:7px 10px'>{flag}</td>"
-                f"<td style='padding:7px'><a href='{lk}' target='_blank' style='color:#1565c0;font-weight:bold;text-decoration:none'>{s['ticker']}</a></td>"
-                f"<td style='padding:7px;color:#333'>{s['name']}</td>"
-                f"<td style='padding:7px;text-align:center'><span style='background:{badge_bg};color:{badge_fg};padding:2px 8px;border-radius:10px;font-size:11px;font-weight:bold'>{atype}</span></td>"
-                f"<td style='padding:7px;text-align:right;color:#555;font-size:13px'>{mcap_str}</td>"
-                f"<td style='padding:7px;text-align:center;color:{gc};font-weight:bold'>{gap:+.1f}%</td>"
-                f"<td style='padding:7px;font-size:12px;color:#888'>{ind}</td>"
-                f"<td style='padding:7px;text-align:right;color:{cc};font-weight:bold'>{cs}{chg}%</td>"
-                f"<td style='padding:7px;text-align:right;color:#555'>{pr} {currency}</td>"
-                f"<td style='padding:7px;text-align:center;color:#888;font-size:12px'>{streak_note}</td>"
-                f"</tr>")
-
-    rows = ""
-    for s in new_kr: rows += row(s,"🇰🇷","KRW")
-    for s in new_us: rows += row(s,"🇺🇸","USD")
-
-    return f"""
-    <div style="background:#fff;padding:20px;border-radius:8px;margin-top:12px;
-                border-left:4px solid #f39c12;box-shadow:0 1px 4px rgba(0,0,0,.08)">
-      <h2 style="margin:0 0 12px;color:#1a1a2e;font-size:18px">🆕 신규 등장 종목</h2>
-      {count_cards}
-      <p style="margin:0 0 10px;color:#888;font-size:12px">
-        전일 대비 오늘 처음 등장한 종목 (※ "N일째 (과거 재등장)"은 예전에 한 번 등장했다가 빠진 뒤 오늘 다시 들어온 경우)
-      </p>
-      <table style="border-collapse:collapse;width:100%;font-size:14px">
-        <thead>
-          <tr style="background:#f39c12;color:#fff">
-            <th style="padding:8px">국가</th>
-            <th style="padding:8px;text-align:left">티커</th>
-            <th style="padding:8px;text-align:left">종목명</th>
-            <th style="padding:8px;text-align:center">구분</th>
-            <th style="padding:8px;text-align:right">시가총액</th>
-            <th style="padding:8px;text-align:center">ATH 괴리율</th>
-            <th style="padding:8px;text-align:left">업종</th>
-            <th style="padding:8px;text-align:right">전일대비등락률</th>
-            <th style="padding:8px;text-align:right">현재가</th>
-            <th style="padding:8px;text-align:center">누적일수</th>
-          </tr>
-        </thead>
-        <tbody>{rows}</tbody>
-      </table>
-    </div>"""
+    return email_layout.new_summary(new_us, new_kr)
 
 DOW30={"AAPL","MSFT","UNH","GS","HD","AMGN","CAT","CRM","CVX","BA",
        "MCD","HON","V","JPM","AXP","MRK","IBM","MMM","NKE","JNJ",
@@ -645,68 +571,7 @@ def build_etf_info(us, kr):
 
 
 def etf_section_html(etf_info):
-    rows_data = etf_info.get("rows", [])
-    pool      = etf_info.get("pool", 0)
-    with_ret  = etf_info.get("with_ret", 0)
-    head = f"""
-    <div style="background:#fff;padding:20px;border-radius:8px;margin-top:12px;
-                border-left:4px solid #8e44ad;box-shadow:0 1px 4px rgba(0,0,0,.08)">
-      <h2 style="margin:0 0 4px;color:#1a1a2e;font-size:18px">🧺 ETF 전용 — 최근 1년 연평균수익률 높은 순 {len(rows_data)}개</h2>
-      <p style="margin:0 0 10px;color:#888;font-size:12px">
-        ATH -10% 이내 ETF {pool}개 중 1년 연평균수익률 산출 가능 {with_ret}개 기준 (1년 수익률 내림차순, 채권형·상장 1년 미만 제외)
-      </p>"""
-    if not rows_data:
-        return head + "<p style='color:#888;font-size:13px'>해당 ETF 없음</p></div>"
-
-    rows = ""
-    for i, s in enumerate(rows_data):
-        bg   = "#f9f9f9" if i % 2 == 0 else "#fff"
-        flag = "🇺🇸" if s.get("market") == "US" else "🇰🇷"
-        lk   = s.get("url", "#")
-        aum  = s.get("aum") if s.get("aum") else s.get("mcap")
-        inception = s.get("inception") or "-"
-        rows += f"""<tr style='background:{bg}'>
-          <td style='padding:6px 8px'>{flag}</td>
-          <td style='padding:6px 8px'><a href='{lk}' target='_blank' style='color:#1565c0;font-weight:bold;text-decoration:none'>{s['ticker']}</a></td>
-          <td style='padding:6px 8px;color:#333'>{s['name']}</td>
-          <td style='padding:6px 8px;color:#666;font-size:11px'>{s.get("etf_index") or "-"}</td>
-          <td style='padding:6px 8px;text-align:right;color:#555'>{_etf_aum(aum)}</td>
-          <td style='padding:6px 8px;text-align:right'>{_etf_pct(s.get("cagr1y"))}</td>
-          <td style='padding:6px 8px;text-align:right'>{_etf_pct(s.get("cagr3y"))}</td>
-          <td style='padding:6px 8px;text-align:right'>{_etf_pct(s.get("cagr5y"))}</td>
-          <td style='padding:6px 8px;text-align:right'>{_etf_pct(s.get("cagr10y"))}</td>
-          <td style='padding:6px 8px;text-align:right'>{_etf_pct(s.get("cumulative_return"))}</td>
-          <td style='padding:6px 8px;color:#666;font-size:11px'>{s.get("etf_kind") or "-"}</td>
-          <td style='padding:6px 8px;color:#666;font-size:11px'>{s.get("issuer") or "-"}</td>
-          <td style='padding:6px 8px;color:#666;font-size:11px;white-space:nowrap'>{inception}</td></tr>"""
-    th = "padding:8px;font-size:12px"
-    table = f"""
-      <div style="overflow-x:auto">
-      <table style="border-collapse:collapse;width:100%;font-size:12px">
-        <thead><tr style="background:#8e44ad;color:#fff">
-          <th style="{th}">국가</th>
-          <th style="{th};text-align:left">티커</th>
-          <th style="{th};text-align:left">종목명</th>
-          <th style="{th};text-align:left">추종지수</th>
-          <th style="{th};text-align:right">AUM 시가총액</th>
-          <th style="{th};text-align:right">최근 1년 연평균수익률 ↓</th>
-          <th style="{th};text-align:right">최근 3년 연평균수익률</th>
-          <th style="{th};text-align:right">최근 5년 연평균수익률</th>
-          <th style="{th};text-align:right">최근 10년 연평균수익률</th>
-          <th style="{th};text-align:right">설립 이래 누적수익률</th>
-          <th style="{th};text-align:left">ETF 성격</th>
-          <th style="{th};text-align:left">운용사</th>
-          <th style="{th};text-align:left">설립일</th>
-        </tr></thead><tbody>{rows}</tbody></table></div>
-      <p style="margin:10px 0 0;color:#aaa;font-size:11px">
-        ※ 한국 ETF는 분배금 미반영 가격수익률, 미국 ETF는 배당 재투자 반영 수정주가 기준임.
-        연평균수익률은 CAGR(복리)로 산출하며, 해당 1년·3년·5년·10년 가격 이력이 부족하면 '-' 표시.
-        설립 이래 누적수익률은 수집 가능한 최초 거래일 종가 대비 최신 종가의 전체 상승률이며, 연환산하지 않음.
-        설립일은 운용사 공시값을 우선하고 없으면 최초 거래일, 운용사는 미확인 시 브랜드로 추정함.
-      </p>
-    </div>"""
-    return head + table
-
+    return email_layout.etf_section_html(etf_info)
 
 def dl(tickers, period, chunk=80, sleep=1.2):
     out={}; n=len(tickers)
@@ -1197,117 +1062,58 @@ def _badges(labels):
     return f"<div style='margin-top:2px;font-size:11px;color:#888'>{' · '.join(labels)}</div>"
 
 def tbl_html(stocks,title,currency,holiday,date_s,hmsg="",flag=""):
-    banner=f'<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:10px 16px;margin-bottom:12px;font-size:13px;color:#856404">⚠️ {hmsg}</div>' if holiday and hmsg else ""
-    if not stocks:
-        return f"<h2 style='color:#333;margin-top:30px'>{title}</h2><p style='color:#666;font-size:13px'>기준일:{date_s}</p>{banner}<p style='color:#888'>해당 종목 없음</p>"
-    fp=lambda p:f"{p:,.2f}" if currency=="USD" else f"{p:,}"
-    fm=lambda m:f"{m:,.1f}조" if m else "-"
-    rows=""
-    for i,s in enumerate(stocks):
-        bg="#f9f9f9" if i%2==0 else "#fff"
-        gap=s.get("gap",0)
-        gc="#e74c3c" if gap<=-5 else "#e67e22" if gap<=-1 else "#27ae60"
-        lk=s.get("url","#")
-        streak=s.get("streak",1)
-        ind=s.get("industry") or "-"
-        chg=s.get("change",0)
-        cc="#c0392b" if chg>0 else "#2980b9"; cs="+" if chg>0 else ""
-        atype=s.get("asset_type","주식")
-        atype_color="#8e44ad" if atype=="ETF" else "#555"
-        rows+=f"""<tr style='background:{bg}'>
-          <td style='padding:8px 10px'>{flag}</td>
-          <td style='padding:8px'><a href='{lk}' target='_blank' style='color:#1565c0;font-weight:bold;text-decoration:none'>{s['ticker']}</a></td>
-          <td style='padding:8px'><a href='{lk}' target='_blank' style='color:#333;text-decoration:none'>{s['name']}</a></td>
-          <td style='padding:8px;text-align:center;color:{atype_color};font-size:12px;font-weight:bold'>{atype}</td>
-          <td style='padding:8px;text-align:right'>
-            <span style='color:#555;font-size:13px'>{fm(s.get("mcap"))}</span>
-            {_badges(s.get("index",[]))}
-          </td>
-          <td style='padding:8px;text-align:center;color:{gc};font-weight:bold'>{gap:+.1f}%</td>
-          <td style='padding:8px;text-align:left;color:#666;font-size:12px'>{ind}</td>
-          <td style='padding:8px;text-align:right;color:{cc};font-weight:bold'>{cs}{chg}%</td>
-          <td style='padding:8px;text-align:right'>{fp(s['price'])} {currency}</td>
-          <td style='padding:8px;text-align:center;color:#888;font-size:12px'>{streak}일째</td></tr>"""
-    return f"""<h2 style='color:#1a1a2e;margin-top:30px'>{title} — {len(stocks)}종목</h2>
-    <p style='color:#666;font-size:13px;margin:2px 0 8px'>기준일:{date_s} | ATH 괴리율 -10%에 가까운 순</p>{banner}
-    <p style='color:#aaa;font-size:11px;margin:0 0 10px'>🔗 클릭→네이버 증권 | <span style='color:#e74c3c'>●</span>-5~-10% <span style='color:#e67e22'>●</span>-1~-5% <span style='color:#27ae60'>●</span>0~-1%</p>
-    <table style='border-collapse:collapse;width:100%;font-size:14px'>
-      <thead><tr style='background:#1a1a2e;color:#fff'>
-        <th style='padding:10px'>국가</th>
-        <th style='padding:10px;text-align:left'>티커</th>
-        <th style='padding:10px;text-align:left'>종목명</th>
-        <th style='padding:10px;text-align:center'>구분</th>
-        <th style='padding:10px;text-align:right'>시가총액</th>
-        <th style='padding:10px;text-align:center'>ATH 괴리율</th>
-        <th style='padding:10px;text-align:left'>업종</th>
-        <th style='padding:10px;text-align:right'>전일대비등락률</th>
-        <th style='padding:10px;text-align:right'>현재가</th>
-        <th style='padding:10px;text-align:center'>누적일수</th>
-      </tr></thead><tbody>{rows}</tbody></table>"""
+    return email_layout.stocks_table(stocks, title, currency, holiday, date_s, hmsg)
 
-def build_email(us,kr,info,usd_krw,new_us=None,new_kr=None,diag=None,indices=None,etf_info=None):
-    td=datetime.now(KST).strftime("%Y년 %m월 %d일")
-    diag = diag or {}
-    indices = indices or {}
-    us_days = diag.get("us_days_before", "?")
-    kr_days = diag.get("kr_days_before", "?")
-    sp500_str = f"{indices['sp500']:,.1f}" if indices.get("sp500") else "-"
-    kospi_str = f"{indices['kospi']:,.1f}" if indices.get("kospi") else "-"
 
-    def chg_html(v):
-        if v is None: return ""
-        color = "#ff6b6b" if v > 0 else "#6b9fff" if v < 0 else "#ccc"
-        sign  = "+" if v > 0 else ""
-        return f" <span style='color:{color}'>({sign}{v}%)</span>"
-
-    sp500_chg_html = chg_html(indices.get("sp500_chg"))
-    kospi_chg_html = chg_html(indices.get("kospi_chg"))
-    diag_banner = f"""
-    <div style="background:#e8f0fe;border:1px solid #4285f4;border-radius:8px;
-                padding:10px 16px;margin-top:12px;font-size:12px;color:#1a1a2e">
-      🔧 저장 진단: 이번 실행 시작 시점에 불러온 누적 스냅샷 —
-      🇺🇸 미국 {us_days}일치 / 🇰🇷 한국 {kr_days}일치 저장되어 있었음.
-      (이 숫자가 어제 메일과 비교해 +1 안 늘었으면 캐시 저장이 아직도 안 되고 있는 것)
-    </div>"""
-    return f"""<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"></head>
-<body style="font-family:'Apple SD Gothic Neo',sans-serif;max-width:780px;margin:auto;padding:20px;background:#fafafa">
-  <div style="background:#1a1a2e;color:#fff;padding:24px;border-radius:8px">
-    <h1 style="margin:0;font-size:22px">📈 일일 ATH 리포트</h1>
-    <p style="margin:6px 0 0;opacity:0.7;font-size:26px">발송일:{td} | ATH ~ -10% | USD/KRW {usd_krw:,.0f}원 | KOSPI {kospi_str}{kospi_chg_html} | S&P500 {sp500_str}{sp500_chg_html}</p>
-  </div>
-  {diag_banner}
-  {new_tickers_html(new_us or [],new_kr or [])}
-  <div style="background:#fff;padding:16px 20px;border-radius:8px;margin-top:12px;box-shadow:0 1px 4px rgba(0,0,0,.08);display:flex;gap:16px;flex-wrap:wrap">
-    <div style="background:#eaffea;border-radius:6px;padding:10px 20px">
-      <div style="font-size:11px;color:#555">🇰🇷 한국 ({info['kr_last_str']})</div>
-      <div style="font-size:26px;font-weight:bold;color:#1a1a2e">{len(kr)}종목</div></div>
-    <div style="background:#eaf4ff;border-radius:6px;padding:10px 20px">
-      <div style="font-size:11px;color:#555">🇺🇸 미국 ({info['us_last_str']})</div>
-      <div style="font-size:26px;font-weight:bold;color:#1a1a2e">{len(us)}종목</div></div>
-  </div>
-  <div style="background:#fff;padding:20px;border-radius:8px;margin-top:12px;box-shadow:0 1px 4px rgba(0,0,0,.08)">
-    {tbl_html(kr,"🇰🇷 한국 KOSPI/KOSDAQ 전체","KRW",info["kr_holiday"],info["kr_last_str"],info.get("kr_holiday_msg",""),"🇰🇷")}
-    <div style="margin-top:36px"></div>
-    {tbl_html(us,"🇺🇸 미국 전체 상장 보통주","USD",info["us_holiday"],info["us_last_str"],info.get("us_holiday_msg",""),"🇺🇸")}
-  </div>
-  {etf_section_html(etf_info or {})}
-  <p style="font-size:11px;color:#bbb;margin-top:16px;text-align:center">자동 발송 | All Time High 기준 | 투자 권유 아님</p>
-</body></html>"""
+def build_email(us,kr,info,usd_krw,new_us=None,new_kr=None,diag=None,indices=None,
+                etf_info=None,include_all=False):
+    return email_layout.render_email(us, kr, info, usd_krw, new_us, new_kr,
+                                     diag, indices, etf_info, include_all)
 
 def build_subject(info):
     ut=" [휴장]" if info["us_holiday"] else ""; kt=" [휴장]" if info["kr_holiday"] else ""
-    return f"📈 ATH | 🇺🇸{info['us_last_str']}{ut} / 🇰🇷{info['kr_last_str']}{kt}"
+    return f"ATH & ETF | 미국 {info['us_last_str']}{ut} / 한국 {info['kr_last_str']}{kt}"
 
-def send_email(html,subject):
+
+def compose_email_message(html, subject, user, to, report_html=None):
+    """Related CID flags, a text fallback, and a complete report when body is shortened."""
+    if len(html.encode("utf-8")) > email_layout.MAX_BODY_BYTES:
+        raise ValueError("Email body exceeds safe size")
+    msg = MIMEMultipart("mixed")
+    msg["Subject"], msg["From"], msg["To"] = subject, user, to
+    related = MIMEMultipart("related")
+    alternative = MIMEMultipart("alternative")
+    alternative.attach(MIMEText("오늘의 ATH & ETF 리포트입니다. HTML 보기에서 국기와 ETF 수익률 카드를 확인하세요.", "plain", "utf-8"))
+    alternative.attach(MIMEText(html, "html", "utf-8"))
+    related.attach(alternative)
+    for country, png in email_flags.flag_images().items():
+        asset = MIMEImage(png, _subtype="png")
+        asset.add_header("Content-ID", f"<ath-flag-{country}>")
+        asset.add_header("Content-Disposition", "inline", filename=f"flag-{country}.png")
+        related.attach(asset)
+    msg.attach(related)
+    if report_html and report_html != html:
+        report = MIMEText(email_flags.inline_flag_sources(report_html), "html", "utf-8")
+        report.add_header("Content-Disposition", "attachment", filename="ATH-full-report.html")
+        msg.attach(report)
+    return msg
+
+
+def send_email(html, subject, report_html=None):
     user=os.environ["GMAIL_USER"]; pwd=os.environ["GMAIL_APP_PASSWORD"]
     to=os.environ.get("RECIPIENT_EMAIL","ykhan@dacpole.com")
-    msg=MIMEMultipart("alternative"); msg["Subject"]=subject; msg["From"]=user; msg["To"]=to
-    msg.attach(MIMEText(html,"html"))
-    with smtplib.SMTP_SSL("smtp.gmail.com",465) as s:
-        s.login(user,pwd); s.sendmail(user,to,msg.as_string())
+    msg = compose_email_message(html, subject, user, to, report_html)
+    preview_dir = Path("work")
+    preview_dir.mkdir(exist_ok=True)
+    (preview_dir / "email-preview.html").write_text(email_flags.inline_flag_sources(html), encoding="utf-8")
+    if report_html:
+        (preview_dir / "email-full-report.html").write_text(email_flags.inline_flag_sources(report_html), encoding="utf-8")
+    log.info(f"메일 레이아웃: 본문 {len(html.encode('utf-8')):,}바이트 / 전체리포트 {len((report_html or html).encode('utf-8')):,}바이트 / 국기 PNG 2개")
+    with smtplib.SMTP_SSL("smtp.gmail.com",465) as smtp:
+        smtp.login(user,pwd); smtp.sendmail(user,to,msg.as_string())
     log.info(f"✅ 발송→{to}")
 
-CODE_VERSION = "2026-10-08-etf-cagr1-3-5-10-cumulative"
+CODE_VERSION = "2026-10-08-responsive-etf-layout-preview"
 
 def main():
     log.info(f"=== ATH 리포트 시작 (코드버전: {CODE_VERSION}) ===")
@@ -1339,7 +1145,9 @@ def main():
     log.info(f"ETF 섹션: 풀 {etf_info['pool']}개 / 1년수익률 산출 {etf_info['with_ret']}개 / 표시 {len(etf_info['rows'])}개")
 
     diag = {"us_days_before": us_days_before, "kr_days_before": kr_days_before}
-    send_email(build_email(us,kr,info,usd_krw,new_us,new_kr,diag,indices,etf_info), build_subject(info))
+    email_html = build_email(us,kr,info,usd_krw,new_us,new_kr,diag,indices,etf_info)
+    full_report = build_email(us,kr,info,usd_krw,new_us,new_kr,diag,indices,etf_info,include_all=True)
+    send_email(email_html, build_subject(info), full_report)
 
     # 스냅샷 저장 (Actions Cache로 다음 실행에 전달됨)
     save_snapshots(snapshots)
