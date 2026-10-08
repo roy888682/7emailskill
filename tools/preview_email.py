@@ -48,7 +48,7 @@ def sample_data():
                          "cagr3y": round(39.28 - rank * 1.5, 2),
                          "cagr5y": None if rank % 7 == 0 else round(24.46 - rank * .67, 2),
                          "cagr10y": None if rank % 3 == 0 else round(18.33 - rank * .31, 2),
-                         "cumulative_return": 103383.7 if rank == 1 else round(1280.43 - rank * 44.21, 2),
+                         "cumulative_return": (103383.7 if rank == 1 else -103383.7 if rank == 3 else round(1280.43 - rank * 44.21, 2)),
                          "etf_index": "FnGuide 차세대 인공지능 반도체 소부장 산업 지수" if korean else
                                       "Philadelphia Semiconductor Sector Total Return Index",
                          "issuer": "신한자산운용 주식회사" if korean else "Vanguard Group, Inc.",
@@ -98,6 +98,8 @@ LAYOUT_CHECK = """() => {
   if(valueBoxes.some(box=>Math.abs(box.top-valueBoxes[0].top)>tolerance))
     problems.push("ETF "+index+" values do not share a comparison line");
  });
+ if(viewport>=600&&getComputedStyle(document.querySelector(".etf-column-head")).display==="none")
+   problems.push("Desktop comparison headers are hidden");
  const table=document.querySelector(".etf-comparison");
  return {viewport,rows:rows.length,tableHeight:Math.round(table.getBoundingClientRect().height),problems};
 }"""

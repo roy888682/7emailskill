@@ -29,6 +29,7 @@ table{border-collapse:collapse}td{vertical-align:top}a{color:#163b68;text-decora
 .etf-row:first-child{border-top:0}.etf-row:nth-child(even){background:#f7f9fc}
 .etf-outer{width:100%;table-layout:fixed}
 .etf-outer,.etf-outer>tbody,.etf-line,.etf-identity,.etf-numbers{display:block;width:100%;box-sizing:border-box}
+.etf-identity,.etf-numbers{width:auto}
 .etf-identity{padding:7px 2px 3px;font-size:12px;line-height:1.45}
 .etf-identity img{width:22px;height:auto;margin-right:4px!important}
 .rank{display:inline-block;background:#163b68;color:#fff;border-radius:3px;padding:0 4px;font-size:10px;font-weight:bold;margin-right:4px}
@@ -104,8 +105,8 @@ def etf_section_html(etf_info, include_details=False):
               ("5y", "5년", "cagr5y"), ("10y", "10년", "cagr10y"),
               ("cumulative", "누적", "cumulative_return"))
     column_head = ('<div class="etf-column-head"><table role="presentation" class="etf-outer">'
-                   '<tr class="etf-line"><td class="etf-identity">순위 · 국가 · 종목</td>'
-                   '<td class="etf-numbers"><table role="presentation" class="etf-metrics"><tr>' +
+                   '<tr class="etf-line"><td class="etf-identity" width="40%">순위 · 국가 · 종목</td>'
+                   '<td class="etf-numbers" width="60%"><table role="presentation" class="etf-metrics"><tr>' +
                    "".join(f'<td class="{"one-year" if period == "1y" else ""}">{label}</td>'
                            for period, label, _ in labels) +
                    '</tr></table></td></tr></table></div>')
