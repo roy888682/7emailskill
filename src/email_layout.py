@@ -27,7 +27,7 @@ table{border-collapse:collapse}td{vertical-align:top}a{color:#163b68;text-decora
 .etf-feature{width:106px;text-align:right}
 .rank{display:inline-block;background:#163b68;color:#fff;border-radius:5px;padding:1px 6px;font-size:11px;font-weight:bold;margin-right:5px}
 .ticker{font-size:13px;font-weight:bold;letter-spacing:.4px}.etf-name{font-size:17px;font-weight:bold;line-height:1.4;margin:8px 10px 12px 0}
-.metric-label{display:block;color:#60758c;font-size:10px;font-weight:normal;line-height:1.5}
+.metric-label{display:block;color:#60758c;font-size:11px;font-weight:normal;line-height:1.5}
 .metric strong{display:block;font-size:18px;line-height:1.4;letter-spacing:-.4px;word-break:break-word}
 .featured strong{font-size:25px}.featured .metric-label{font-size:11px}
 .returns td{width:33.33%;padding:10px 3px;text-align:center;background:#f3f6fa;border:2px solid #fff}
@@ -91,11 +91,11 @@ def etf_section_html(etf_info):
             f'{flag_html(country)}<span class="rank">{i:02d}</span>'
             f'<a class="ticker" href="{safe_url(s.get("url"))}">{ticker}</a>'
             f'<div class="etf-name">{h(s.get("name"))}</div></td><td class="etf-feature">'
-            f'{metric("1y", "최근 1년 연평균수익률", s.get("cagr1y"), "featured")}'
+            f'{metric("1y", "최근 1년<br>연평균수익률", s.get("cagr1y"), "featured")}'
             '</td></tr></table><table role="presentation" class="layout returns"><tr>'
-            f'<td>{metric("3y", "최근 3년 연평균수익률", s.get("cagr3y"))}</td>'
-            f'<td>{metric("5y", "최근 5년 연평균수익률", s.get("cagr5y"))}</td>'
-            f'<td>{metric("10y", "최근 10년 연평균수익률", s.get("cagr10y"))}</td>'
+            f'<td>{metric("3y", "최근 3년<br>연평균수익률", s.get("cagr3y"))}</td>'
+            f'<td>{metric("5y", "최근 5년<br>연평균수익률", s.get("cagr5y"))}</td>'
+            f'<td>{metric("10y", "최근 10년<br>연평균수익률", s.get("cagr10y"))}</td>'
             '</tr></table>'
             f'{metric("cumulative", "설립 이래 누적수익률", s.get("cumulative_return"), "cumulative")}'
             '<div class="details">'
