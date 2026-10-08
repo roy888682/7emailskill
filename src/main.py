@@ -326,9 +326,9 @@ def get_trading_info():
 # 최초 거래일→설립일)으로 채움.
 
 def _calc_perf(dates, closes):
-    """(최근 1년·5년·10년 연평균수익률%, 최초거래일). 이력이 부족하면 해당 값은 None."""
+    """(1년·3년·5년·10년 CAGR%, 최초 거래일부터의 누적수익률%, 최초거래일)."""
     if not dates or len(dates) != len(closes) or len(closes) < 2:
-        return None, None, None, None
+        return None, None, None, None, None, None
     last_d, last_p = dates[-1], closes[-1]
 
     def cagr(years):
@@ -345,7 +345,13 @@ def _calc_perf(dates, closes):
             return None
         return round(((last_p / start_p) ** (1 / years) - 1) * 100, 1)
 
-    return cagr(1), cagr(5), cagr(10), dates[0]
+    first_p = closes[0]
+    cumulative = None
+    if (math.isfinite(last_p) and math.isfinite(first_p)
+            and last_p > 0 and first_p > 0):
+        cumulative = round((last_p / first_p - 1) * 100, 1)
+
+    return cagr(1), cagr(3), cagr(5), cagr(10), cumulative, dates[0]
 
 def _flatten(d, prefix="", depth=0):
     flat = {}
@@ -666,8 +672,10 @@ def etf_section_html(etf_info):
           <td style='padding:6px 8px;color:#666;font-size:11px'>{s.get("etf_index") or "-"}</td>
           <td style='padding:6px 8px;text-align:right;color:#555'>{_etf_aum(aum)}</td>
           <td style='padding:6px 8px;text-align:right'>{_etf_pct(s.get("cagr1y"))}</td>
+          <td style='padding:6px 8px;text-align:right'>{_etf_pct(s.get("cagr3y"))}</td>
           <td style='padding:6px 8px;text-align:right'>{_etf_pct(s.get("cagr5y"))}</td>
           <td style='padding:6px 8px;text-align:right'>{_etf_pct(s.get("cagr10y"))}</td>
+          <td style='padding:6px 8px;text-align:right'>{_etf_pct(s.get("cumulative_return"))}</td>
           <td style='padding:6px 8px;color:#666;font-size:11px'>{s.get("etf_kind") or "-"}</td>
           <td style='padding:6px 8px;color:#666;font-size:11px'>{s.get("issuer") or "-"}</td>
           <td style='padding:6px 8px;color:#666;font-size:11px;white-space:nowrap'>{inception}</td></tr>"""
@@ -682,15 +690,19 @@ def etf_section_html(etf_info):
           <th style="{th};text-align:left">추종지수</th>
           <th style="{th};text-align:right">AUM 시가총액</th>
           <th style="{th};text-align:right">최근 1년 연평균수익률 ↓</th>
+          <th style="{th};text-align:right">최근 3년 연평균수익률</th>
           <th style="{th};text-align:right">최근 5년 연평균수익률</th>
           <th style="{th};text-align:right">최근 10년 연평균수익률</th>
+          <th style="{th};text-align:right">설립 이래 누적수익률</th>
           <th style="{th};text-align:left">ETF 성격</th>
           <th style="{th};text-align:left">운용사</th>
           <th style="{th};text-align:left">설립일</th>
         </tr></thead><tbody>{rows}</tbody></table></div>
       <p style="margin:10px 0 0;color:#aaa;font-size:11px">
         ※ 한국 ETF는 분배금 미반영 가격수익률, 미국 ETF는 배당 재투자 반영 수정주가 기준임.
-        연평균수익률은 CAGR(복리)로 산출하며, 해당 1년·5년·10년 가격 이력이 부족하면 '-' 표시. 설립일은 운용사 공시값을 우선하고 없으면 최초 거래일, 운용사는 미확인 시 브랜드로 추정함.
+        연평균수익률은 CAGR(복리)로 산출하며, 해당 1년·3년·5년·10년 가격 이력이 부족하면 '-' 표시.
+        설립 이래 누적수익률은 수집 가능한 최초 거래일 종가 대비 최신 종가의 전체 상승률이며, 연환산하지 않음.
+        설립일은 운용사 공시값을 우선하고 없으면 최초 거래일, 운용사는 미확인 시 브랜드로 추정함.
       </p>
     </div>"""
     return head + table
@@ -883,8 +895,9 @@ def get_us_ath(usd_krw):
                 if is_etf:
                     try:
                         dts=[d.date() for d in s.index]
-                        c1,c5,c10,fd=_calc_perf(dts,[float(x) for x in s.tolist()])
-                        perf={"cagr1y":c1,"cagr5y":c5,"cagr10y":c10,
+                        c1,c3,c5,c10,cumulative,fd=_calc_perf(dts,[float(x) for x in s.tolist()])
+                        perf={"cagr1y":c1,"cagr3y":c3,"cagr5y":c5,"cagr10y":c10,
+                              "cumulative_return":cumulative,
                               "first_date":fd.isoformat() if fd else None}
                     except Exception:
                         perf={}
@@ -1056,7 +1069,7 @@ def _kr_price_history(code: str, count: int = 3000) -> list:
         return []
 
 def _kr_price_history_dated(code: str, count: int = 8000):
-    """네이버 fchart에서 (날짜 리스트, 종가 리스트) 반환 — ETF 1년·5년·10년 수익률·설립일 계산용"""
+    """네이버 fchart에서 (날짜 리스트, 종가 리스트) 반환 — ETF 1년·3년·5년·10년 및 누적수익률·설립일 계산용"""
     try:
         url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count={count}&requestType=0"
         r = requests.get(url, headers=UA, timeout=20)
@@ -1104,7 +1117,7 @@ def get_kr_ath(usd_krw, kr_last=None):
         etf_flag = bool(meta.get("is_etf")) or kr_is_etf_name(name)
         dates = None
         if etf_flag:
-            dates, closes = _kr_price_history_dated(code, count=8000)   # 설립일/1년·5년·10년 수익률용 장기 이력
+            dates, closes = _kr_price_history_dated(code, count=8000)   # 설립일/1년·3년·5년·10년 및 누적수익률용 장기 이력
         else:
             closes = _kr_price_history(code, count=3000)
         if len(closes) < 30:
@@ -1122,8 +1135,9 @@ def get_kr_ath(usd_krw, kr_last=None):
                    "is_etf":etf_flag,
                    "url":f"https://m.stock.naver.com/domestic/stock/{code}/total"}
             if etf_flag and dates and len(dates) == len(closes):
-                c1, c5, c10, fd = _calc_perf(dates, closes)
-                res.update({"cagr1y": c1, "cagr5y": c5, "cagr10y": c10,
+                c1, c3, c5, c10, cumulative, fd = _calc_perf(dates, closes)
+                res.update({"cagr1y": c1, "cagr3y": c3, "cagr5y": c5, "cagr10y": c10,
+                            "cumulative_return": cumulative,
                             "first_date": fd.isoformat() if fd else None})
             return res
         return None
@@ -1293,7 +1307,7 @@ def send_email(html,subject):
         s.login(user,pwd); s.sendmail(user,to,msg.as_string())
     log.info(f"✅ 발송→{to}")
 
-CODE_VERSION = "2026-10-08-etf-cagr1-5-10"
+CODE_VERSION = "2026-10-08-etf-cagr1-3-5-10-cumulative"
 
 def main():
     log.info(f"=== ATH 리포트 시작 (코드버전: {CODE_VERSION}) ===")
