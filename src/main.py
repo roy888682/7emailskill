@@ -447,10 +447,8 @@ def get_kr_etf_universe() -> dict:
         name = str(_find_val(flat, [(["itemname"], [], []), (["name"], [], ["index", "theme", "issuer"])]) or "").strip()
         if len(code) != 6 or not name:
             continue
-        aum_raw = _find_val(flat, [(["aum"], [], ["rate", "change"]), (["marketsum"], [], []),
-                                   (["marketcap"], [], []), (["totalnav"], [], []),
-                                   (["netasset"], [], ["rate"])])
-        out[code] = {"name": name, "mcap": None, "market": "KOSPI", "is_etf": True,
+        list_aum = parse_kr_etf_base(row).get("aum")  # Explicit totalNetAssets raw KRW only
+        out[code] = {"name": name, "mcap": None, "aum": list_aum, "market": "KOSPI", "is_etf": True,
                      "investment_area": row.get("etfType"),
                      "investment_area_source": "Naver ETF 목록 분류"}
     log.info(f"한국 ETF 유니버스: {len(out)}종목")
@@ -816,7 +814,9 @@ def get_us_ath(usd_krw):
             s.setdefault("aum", s.get("mcap"))
             s.setdefault("inception", s.get("first_date"))
         log.info(f"미국 ETF 상세 결과: 운용사 {sum(1 for s in etf_items if s.get('issuer'))}/{len(etf_items)}, "
-                 f"추종지수 {sum(1 for s in etf_items if s.get('etf_index'))}/{len(etf_items)}")
+                 f"추종지수 {sum(1 for s in etf_items if s.get('etf_index'))}/{len(etf_items)}, "
+                 f"원화 AUM {sum(1 for s in etf_items if s.get('aum'))}/{len(etf_items)}, "
+                 f"투자분야 {sum(1 for s in etf_items if s.get('investment_area'))}/{len(etf_items)}")
     out.sort(key=lambda x:x["gap"])
     log.info(f"미국 최종:{len(out)}"); return out
 
@@ -989,6 +989,7 @@ def get_kr_ath(usd_krw, kr_last=None):
     for _code, _meta in etf_universe.items():
         if _code in universe:
             universe[_code]["is_etf"] = True
+            universe[_code]["aum"] = _meta.get("aum")
             universe[_code]["investment_area"] = _meta.get("investment_area")
             universe[_code]["investment_area_source"] = _meta.get("investment_area_source")
             if not universe[_code].get("mcap") and _meta.get("mcap"):
@@ -1016,7 +1017,7 @@ def get_kr_ath(usd_krw, kr_last=None):
             res = {"ticker":code, "name":name, "price":int(last),
                    "change":round((last-prev)/prev*100,2),
                    "gap":round((last-ath)/ath*100,2),
-                   "mcap":meta.get("mcap"),
+                   "mcap":meta.get("mcap"), "aum":meta.get("aum"),
                    "index":[meta.get("market","KR")], "industry":None,
                    "market":meta.get("market","KR"),
                    "is_etf":etf_flag,
@@ -1078,7 +1079,7 @@ def get_kr_ath(usd_krw, kr_last=None):
             s["etf_index"] = parsed.get("etf_index")
             s["issuer"] = parsed.get("issuer") or kr_issuer_from_brand(s["name"])
             s["inception"] = parsed.get("inception") or s.get("first_date")
-            s["aum"] = parsed.get("aum") or s.get("mcap")
+            s["aum"] = parsed.get("aum") or s.get("aum") or s.get("mcap")
             if parsed.get("investment_area"):
                 s["investment_area"] = parsed["investment_area"]
                 s["investment_area_source"] = parsed["investment_area_source"]
@@ -1086,7 +1087,9 @@ def get_kr_ath(usd_krw, kr_last=None):
         with ThreadPoolExecutor(max_workers=8) as ex:
             list(ex.map(enrich_kr, etf_items))
         log.info(f"한국 ETF 상세 결과: 추종지수 {sum(1 for s in etf_items if s.get('etf_index'))}/{len(etf_items)}, "
-                 f"운용사 {sum(1 for s in etf_items if s.get('issuer'))}/{len(etf_items)}")
+                 f"운용사 {sum(1 for s in etf_items if s.get('issuer'))}/{len(etf_items)}, "
+                 f"원화 AUM {sum(1 for s in etf_items if s.get('aum'))}/{len(etf_items)}, "
+                 f"투자분야 {sum(1 for s in etf_items if s.get('investment_area'))}/{len(etf_items)}")
 
     out.sort(key=lambda x:x["gap"])
     log.info(f"한국 최종:{len(out)}")
@@ -1151,7 +1154,7 @@ def send_email(html, subject, report_html=None, preview_name="email-preview"):
         smtp.login(user,pwd); smtp.sendmail(user,to,msg.as_string())
     log.info(f"✅ 발송→{to}")
 
-CODE_VERSION = "2026-10-09-new-list-aum-preview"
+CODE_VERSION = "2026-10-09-new-list-aum"
 
 def main():
     log.info(f"=== ATH 리포트 시작 (코드버전: {CODE_VERSION}) ===")
