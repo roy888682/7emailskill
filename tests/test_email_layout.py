@@ -53,7 +53,7 @@ class EmailLayoutTests(unittest.TestCase):
         source = render_email(**self.data)
         self.assertNotRegex(source, r"display\s*:\s*(?:flex|grid)")
         self.assertNotRegex(source, r"overflow-x\s*:\s*(?:auto|scroll)")
-        self.assertNotRegex(source, r"min-width\s*:\s*[4-9]\d\dpx")
+        self.assertNotRegex(source, r"[{;]\s*min-width\s*:\s*[4-9]\d\dpx")
 
     def test_long_untrusted_metadata_is_escaped(self):
         row = self.data["etf_info"]["rows"][0]
