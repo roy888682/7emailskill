@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
-"""Render desktop emails and verify one visible line per security."""
+"""Verify all email rows in both standalone and Gmail-style desktop hosts."""
 import argparse
 import base64
+import hashlib
+import json
+import re
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+MAX_HTML_BYTES = 90000
 
 def make_stock(ticker, market="US", number=0, asset_type="주식"):
     korean = market != "US"
@@ -63,132 +67,258 @@ def sample_data():
             "indices": {"sp500": 7801.77, "kospi": 6625.93, "sp500_chg": -.22, "kospi_chg": -2.62},
             "etf_info": {"rows": etfs, "pool": 126, "with_ret": 124}}
 
-def build_preview_html():
-    from src.email_layout import render_email
+
+def preview_data():
     data = sample_data()
     data["new_us"] = data["new_us"][:10]
-    return render_email(**data)
+    return data
 
-LAYOUT_CHECK = """() => {
- const tolerance=1.5,viewport=window.innerWidth,problems=[];
+def build_preview_html():
+    from src.email_layout import render_email
+    return render_email(**preview_data())
+
+def manifest_for(data):
+    return {
+        "us": [str(row["ticker"]) for row in data["us"]],
+        "kr": [str(row["ticker"]) for row in data["kr"]],
+        "new": [
+            country + ":" + str(row["ticker"])
+            for country, rows in (("KR", data["new_kr"]), ("US", data["new_us"]))
+            for row in rows
+        ],
+        "etf": [str(row["ticker"]) for row in data["etf_info"]["rows"]],
+    }
+
+def normalize_manifest(raw):
+    result = {}
+    for key in ("us", "kr", "new", "etf"):
+        items = raw.get(key)
+        if items is None:
+            raise ValueError("Manifest is missing %r" % key)
+        if key == "new" and isinstance(items, dict):
+            items = [
+                country + ":" + str(item["ticker"] if isinstance(item, dict) else item)
+                for country, values in (("KR", items.get("kr", [])), ("US", items.get("us", [])))
+                for item in values
+            ]
+        if not isinstance(items, list):
+            raise ValueError("Manifest %r must be a list" % key)
+        result[key] = [
+            str(item["ticker"]) if isinstance(item, dict) else str(item)
+            for item in items
+        ]
+    return result
+
+def gmail_host_html(html_source):
+    """Keep message CSS but remove its body rule to model Gmail's 16px host."""
+    html_source = re.sub(
+        r"(?<![\w.#-])body\s*\{[^}]*\}", "", html_source,
+        flags=re.IGNORECASE,
+    )
+    return re.sub(
+        r"<body\b[^>]*>",
+        '<body style="margin:0;font:16px Arial,sans-serif;line-height:normal;'
+        'background:white;color:black">',
+        html_source, count=1, flags=re.IGNORECASE,
+    )
+
+LAYOUT_CHECK = r"""expected => {
+ const viewport=window.innerWidth,tolerance=1.5,problems=[];
+ const specs=[
+   ["us","us",1,10],["kr","kr",1,10],
+   ["new","new",1,9],["etf","returns",2,11]
+ ];
+ const getRows=id=>{
+   const table=document.getElementById(id);
+   return table?Array.from(table.tBodies).flatMap(body=>Array.from(body.rows)):[];
+ };
+ const all=[],counts={};
  if(document.documentElement.scrollWidth>viewport+tolerance)
-   problems.push("document overflow: "+document.documentElement.scrollWidth+" > "+viewport);
- const periods=["1y","3y","5y","10y","cumulative"];
- const etfs=Array.from(document.querySelectorAll(".etf-row[data-ticker]"));
- const stocks=Array.from(document.querySelectorAll(".stock-row[data-key]"));
- const newRows=Array.from(document.querySelectorAll(".new-row[data-key]"));
- const newSection=document.querySelector("#new-stocks");
- if(!newSection||newRows.length!==Number(newSection.dataset.shown))problems.push("New securities missing from visible list");
- if(document.querySelector("thead")?.textContent.includes("현재가"))problems.push("Current-price column is still displayed");
- if(!etfs.length)problems.push("ETF rows were not rendered");
- const counts={};
- document.querySelectorAll(".stock-table").forEach(table=>{
-   const rows=Array.from(table.querySelectorAll("tbody .stock-row"));
-   const expected=Number(table.dataset.count),country=table.dataset.country;
-   counts[country]={expected,visible:rows.length};
-   if(rows.length!==expected)problems.push(country+" candidate count differs from rendered list");
-   const keys=rows.map(row=>row.dataset.key);
-   if(keys.some(key=>!key.startsWith(country+":")))problems.push(country+" table contains wrong-country rows");
-   if(new Set(keys).size!==keys.length)problems.push(country+" table contains duplicate candidates");
-   const section=table.closest(".stock-section");
-   if(!section.querySelector(".intro").textContent.includes(expected+"종목"))problems.push(country+" heading count differs from rows");
- });
+   problems.push("Document overflow: "+document.documentElement.scrollWidth+" > "+viewport);
+ for(const [key,id,tickerColumn,cellCount] of specs){
+   const rows=getRows(id),wanted=expected[key];
+   const tickers=rows.map(row=>{
+     const cell=row.cells[tickerColumn],link=cell&&cell.querySelector("a");
+     if(!link){problems.push(id+" is missing a ticker link");return "";}
+     const ticker=Array.from(link.childNodes)
+       .filter(node=>node.nodeType===Node.TEXT_NODE)
+       .map(node=>node.textContent).join("").trim();
+     if(key==="new"){
+       const label=row.cells[0]?.querySelector("img")?.alt||"";
+       if(!["성조기","태극기"].includes(label))
+         problems.push("New-security flag lacks a recognizable country label");
+       return (label==="성조기"?"US":"KR")+":"+ticker;
+     }
+     return ticker;
+   });
+   counts[key]={expected:wanted.length,visible:rows.length};
+   if(JSON.stringify(tickers)!==JSON.stringify(wanted)){
+     const missing=wanted.filter(ticker=>!tickers.includes(ticker));
+     const extra=tickers.filter(ticker=>!wanted.includes(ticker));
+     problems.push(id+" ticker/order mismatch; missing="+missing.join(",")+" extra="+extra.join(","));
+   }
+   if(new Set(tickers).size!==tickers.length)
+     problems.push(id+" contains duplicate securities");
+   rows.forEach((row,index)=>{
+     if(row.cells.length!==cellCount)
+       problems.push(id+" row "+index+" has "+row.cells.length+" cells, expected "+cellCount);
+     const flag=row.cells[key==="etf"?1:0]?.querySelector("img");
+     if(!flag||!flag.complete||!flag.naturalWidth)
+       problems.push(id+" row "+index+" has a missing/broken country flag");
+   });
+   all.push(...rows);
+ }
+ const returns=document.getElementById("returns"),newTable=document.getElementById("new");
+ if(newTable&&returns&&!(newTable.compareDocumentPosition(returns)&Node.DOCUMENT_POSITION_FOLLOWING))
+   problems.push("The new-security list must precede ETF returns");
+ const allHeaders=Array.from(document.querySelectorAll("th")).map(cell=>cell.textContent).join(" ");
+ if(allHeaders.includes("현재가"))problems.push("Current-price column remains");
  if(document.body.textContent.includes("첨부"))problems.push("Attachment-related copy remains");
- if(etfs.length&&document.querySelector("#new-stocks").compareDocumentPosition(document.querySelector("#etf"))&Node.DOCUMENT_POSITION_PRECEDING)
-   problems.push("New list must precede ETF comparison");
- etfs.forEach((row,index)=>{
-   const metrics=periods.map(period=>row.querySelector('[data-period="'+period+'"]'));
-   if(metrics.some(metric=>!metric)){problems.push("ETF "+index+" missing a return metric");return;}
-   const date=row.querySelector('[data-field="inception"]');
-   const cumulative=metrics[4].closest("td");
-   const size=row.querySelector('[data-field="aum"]');
-   if(!date||!size||cumulative.nextElementSibling!==size||size.nextElementSibling!==date)
-     problems.push("ETF "+index+" requires cumulative → KRW AUM → inception");
-   const colors=metrics.slice(0,4).map(metric=>getComputedStyle(metric).color);
+ if(returns){
+   const headings=Array.from(returns.querySelectorAll("thead th")).map(cell=>cell.textContent.trim());
+   if(headings.length!==11||!headings[8].includes("누적")||
+      !/AUM|시총/.test(headings[9])||!headings[10].includes("설립"))
+     problems.push("ETF columns must end with cumulative → KRW AUM → inception");
+ }
+ getRows("returns").forEach((row,index)=>{
+   const colors=[];
+   for(const [column,cls] of [[4,"p1"],[5,"p3"],[6,"p5"],[7,"p10"]]){
+     const cell=row.cells[column];
+     if(!cell||!cell.classList.contains(cls))
+       problems.push("ETF "+index+" is missing "+cls+" on the correct return column");
+     if(cell)colors.push(getComputedStyle(cell).color);
+   }
    if(new Set(colors).size!==4)problems.push("ETF "+index+" return colors are not distinct");
  });
- [...stocks,...newRows].forEach(row=>{
+ [...getRows("us"),...getRows("kr"),...getRows("new")].forEach(row=>{
    for(const column of [5,7]){
      const cell=row.cells[column];
-     if(!cell||getComputedStyle(cell).color!=="rgb(194, 57, 50)")problems.push("ATH/day change must be red");
+     if(!cell||getComputedStyle(cell).color!=="rgb(194, 57, 50)")
+       problems.push("ATH/day-change values must be red");
    }
  });
- const stockBadge=document.querySelector(".asset-stock"),etfBadge=document.querySelector(".asset-etf");
- if(stockBadge&&etfBadge&&getComputedStyle(stockBadge).backgroundColor===getComputedStyle(etfBadge).backgroundColor)
-   problems.push("Stock and ETF badge colors are identical");
- [...etfs,...stocks,...newRows].forEach((row,index)=>{
+ const stockBadge=document.querySelector("b.s"),etfBadge=document.querySelector("b.e");
+ if(stockBadge&&etfBadge){
+   const signature=el=>{
+     const style=getComputedStyle(el);
+     return style.color+"|"+style.backgroundColor;
+   };
+   if(signature(stockBadge)===signature(etfBadge))
+     problems.push("Stock and ETF badges have identical colors");
+ }
+ all.forEach((row,index)=>{
    const box=row.getBoundingClientRect();
-   if(box.height>32)problems.push("Row "+index+" is taller than a single line: "+box.height);
-   if(box.left< -tolerance||box.right>viewport+tolerance)problems.push("Row "+index+" exceeds viewport");
+   if(box.height>32)problems.push("Row "+index+" is taller than one line: "+box.height);
+   if(box.left< -tolerance||box.right>viewport+tolerance)
+     problems.push("Row "+index+" exceeds the viewport");
    for(const cell of row.cells){
-     const bounds=cell.getBoundingClientRect();
-     if(getComputedStyle(cell).whiteSpace!=="nowrap")problems.push("Row "+index+" permits wrapping");
+     const style=getComputedStyle(cell),bounds=cell.getBoundingClientRect();
+     if(style.whiteSpace!=="nowrap")problems.push("Row "+index+" permits wrapping");
+     if(parseFloat(style.fontSize)>12)problems.push("Row "+index+" inherits a large host font");
      const walker=document.createTreeWalker(cell,NodeFilter.SHOW_TEXT);let node;
      while((node=walker.nextNode())){
        if(!node.textContent.trim())continue;
        const range=document.createRange();range.selectNodeContents(node);
        const rects=Array.from(range.getClientRects()).filter(rect=>rect.width);
-       if(rects.length>1)problems.push("Row "+index+" wraps text: "+node.textContent.trim());
+       if(rects.length>1)problems.push("Row "+index+" wraps: "+node.textContent.trim());
        for(const rect of rects)
          if(rect.left<bounds.left-tolerance||rect.right>bounds.right+tolerance)
-           problems.push("Row "+index+" text exceeds cell: "+node.textContent.trim());
+           problems.push("Row "+index+" clips text: "+node.textContent.trim());
      }
    }
  });
- return {viewport,etfs:etfs.length,stocks:stocks.length,newRows:newRows.length,counts,
-         etfHeight:Math.round(document.querySelector(".etf-table")?.getBoundingClientRect().height||0),problems};
+ const broken=Array.from(document.images).filter(image=>!image.complete||!image.naturalWidth);
+ if(broken.length)problems.push("Broken images: "+broken.map(image=>image.alt).join(","));
+ return {
+   viewport,counts,
+   etfHeight:Math.round(returns?.getBoundingClientRect().height||0),
+   shellFont:document.querySelector(".shell")?getComputedStyle(document.querySelector(".shell")).fontSize:null,
+   problems
+ };
 }"""
+
+def cropped_table_image(page, table_id, output, marker):
+    if not page.locator("#" + table_id).count():
+        return
+    page.evaluate("(id)=>document.getElementById(id).scrollIntoView({block:'start'})", table_id)
+    box = page.locator("#" + table_id).bounding_box()
+    if not box:
+        return
+    viewport = page.viewport_size
+    clip = {
+        "x": max(0, box["x"]),
+        "y": max(0, box["y"]),
+        "width": min(box["width"], viewport["width"] - max(0, box["x"])),
+        "height": min(box["height"], 480, viewport["height"] - max(0, box["y"])),
+    }
+    if clip["width"] <= 0 or clip["height"] <= 0:
+        raise AssertionError("Screenshot target lies outside the viewport")
+    png = page.screenshot(path=str(output), clip=clip)
+    print(marker + ":" + base64.b64encode(png).decode("ascii"), flush=True)
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--html", type=Path)
+    parser.add_argument("--manifest", type=Path)
     parser.add_argument("--output", type=Path, default=ROOT / "work")
     args = parser.parse_args()
+    if args.html and not args.manifest:
+        parser.error("--manifest is required with --html to verify every candidate")
     from src.email_flags import inline_flag_sources
     from playwright.sync_api import sync_playwright
-    source = args.html.read_text(encoding="utf-8") if args.html else build_preview_html()
-    html_source = inline_flag_sources(source)
     args.output.mkdir(parents=True, exist_ok=True)
+    proof_path = args.output / "preview-passed.json"
+    proof_path.unlink(missing_ok=True)
+    if args.html:
+        source = args.html.read_text(encoding="utf-8")
+        expected = normalize_manifest(json.loads(args.manifest.read_text(encoding="utf-8")))
+    else:
+        source = build_preview_html()
+        expected = manifest_for(preview_data())
+    size = len(source.encode("utf-8"))
+    print("PREVIEW_HTML_BYTES:%d" % size, flush=True)
+    if args.html and size > MAX_HTML_BYTES:
+        raise AssertionError("HTML body %d bytes exceeds %d-byte budget" % (size, MAX_HTML_BYTES))
+    html_source = inline_flag_sources(source)
+    gmail_source = gmail_host_html(html_source)
     (args.output / "email-preview.html").write_text(html_source, encoding="utf-8")
-    print("PREVIEW_HTML_BYTES:%d" % len(source.encode("utf-8")), flush=True)
+    (args.output / "email-preview-gmail.html").write_text(gmail_source, encoding="utf-8")
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
         try:
-            for width in (1024, 1280, 1600, 1920):
-                page = browser.new_page(viewport={"width": width, "height": 1200}, device_scale_factor=1)
-                page.set_content(html_source, wait_until="load")
-                page.evaluate("document.fonts.ready")
-                result = page.evaluate(LAYOUT_CHECK)
-                print("LAYOUT_QA:%s" % result, flush=True)
-                if result["problems"]:
-                    raise AssertionError("; ".join(result["problems"]))
-                broken = page.locator("img").evaluate_all(
-                    "imgs => imgs.filter(i=>!i.complete||!i.naturalWidth).map(i=>i.alt)")
-                if broken:
-                    raise AssertionError("Flag images did not load: %s" % broken)
-                if width in (1024, 1600):
-                    name = "compact" if width == 1024 else "desktop"
-                    png = page.screenshot(path=str(args.output / ("email-" + name + ".png")), full_page=False)
-                    print("PREVIEW_IMAGE_" + name.upper() + ":" + base64.b64encode(png).decode("ascii"), flush=True)
-                    new_section = page.locator("#new-stocks")
-                    if new_section.count():
-                        new_section.scroll_into_view_if_needed()
-                        new_png = page.screenshot(path=str(args.output / ("email-" + name + "-new.png")), full_page=False)
-                        print("PREVIEW_IMAGE_" + name.upper() + "_NEW:" + base64.b64encode(new_png).decode("ascii"), flush=True)
-                    stock_section = page.locator(".stock-section").first
-                    if stock_section.count():
-                        stock_section.scroll_into_view_if_needed()
-                        stock_png = page.screenshot(path=str(args.output / ("email-" + name + "-stocks.png")), full_page=False)
-                        print("PREVIEW_IMAGE_" + name.upper() + "_STOCKS:" + base64.b64encode(stock_png).decode("ascii"), flush=True)
-                if width == 1600:
-                    last_row = page.locator(".stock-row").last
-                    if last_row.count():
-                        last_row.scroll_into_view_if_needed()
-                        last_png = page.screenshot(path=str(args.output / "email-desktop-last.png"), full_page=False)
-                        print("PREVIEW_IMAGE_DESKTOP_LAST:" + base64.b64encode(last_png).decode("ascii"), flush=True)
-                page.close()
+            for host, document in (("standalone", html_source), ("gmail", gmail_source)):
+                for width in (1024, 1280, 1600, 1920):
+                    page = browser.new_page(
+                        viewport={"width": width, "height": 1200}, device_scale_factor=1,
+                    )
+                    try:
+                        page.set_content(document, wait_until="load")
+                        page.evaluate("document.fonts.ready")
+                        result = page.evaluate(LAYOUT_CHECK, expected)
+                        result["host"] = host
+                        print("LAYOUT_QA:%s" % json.dumps(result, ensure_ascii=False), flush=True)
+                        if result["problems"]:
+                            raise AssertionError("; ".join(result["problems"]))
+                        if host == "gmail" and width == 1600:
+                            for table_id, filename, marker in (
+                                ("returns", "email-desktop-etf.png", "PREVIEW_IMAGE_DESKTOP_ETF"),
+                                ("new", "email-desktop-new.png", "PREVIEW_IMAGE_DESKTOP_NEW"),
+                                ("us", "email-desktop-stocks.png", "PREVIEW_IMAGE_DESKTOP_STOCKS"),
+                            ):
+                                cropped_table_image(page, table_id, args.output / filename, marker)
+                    finally:
+                        page.close()
         finally:
             browser.close()
+    digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
+    proof = {
+        "sha256": digest, "body_sha256": digest, "html_bytes": size,
+        "counts": {key: len(values) for key, values in expected.items()},
+        "viewports": [1024, 1280, 1600, 1920],
+        "hosts": ["standalone", "gmail"], "all_passed": True,
+    }
+    proof_path.write_text(json.dumps(proof, ensure_ascii=False, indent=2), encoding="utf-8")
+    print("PREVIEW_PASSED:%s" % json.dumps(proof, ensure_ascii=False), flush=True)
 
 if __name__ == "__main__":
     main()

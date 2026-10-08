@@ -3,6 +3,7 @@ import os, smtplib, logging, time, io, re, json, bisect, math
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.image import MIMEImage
+from email.utils import formatdate, make_msgid
 from pathlib import Path
 
 if __package__:
@@ -1118,8 +1119,10 @@ def build_subject(info):
 
 def compose_email_message(html, subject, user, to):
     """One complete HTML body with inline flags and zero attachment parts."""
+    email_layout.validate_size(html)
     msg = MIMEMultipart("related")
     msg["Subject"], msg["From"], msg["To"] = subject, user, to
+    msg["Date"], msg["Message-ID"] = formatdate(localtime=True), make_msgid()
     alternative = MIMEMultipart("alternative")
     alternative.attach(MIMEText("오늘의 ATH & ETF 전체 리포트입니다. HTML 보기에서 모든 후보와 ETF 수익률을 확인하세요.", "plain", "utf-8"))
     alternative.attach(MIMEText(html, "html", "utf-8"))
@@ -1139,18 +1142,21 @@ def send_email(html, subject):
     preview_dir = Path("work")
     preview_dir.mkdir(exist_ok=True)
     (preview_dir / "email-preview.html").write_text(email_flags.inline_flag_sources(html), encoding="utf-8")
-    us_rows = html.count('data-key="US:') - html.count('class="new-row" data-key="US:')
-    kr_rows = html.count('data-key="KR:') - html.count('class="new-row" data-key="KR:')
+    tables = email_layout.inventory(html)
+    us_rows, kr_rows = len(tables["us"]), len(tables["kr"])
     attachment_count = sum(part.get_content_disposition() == "attachment" for part in msg.walk())
     log.info(f"메일 전체 본문: 미국 {us_rows}종목 / 한국 {kr_rows}종목 / "
              f"{len(html.encode('utf-8')):,}바이트 / 첨부 {attachment_count}개 / 국기 PNG 2개")
+    bodies = [part for part in msg.walk() if part.get_content_type() == "text/html"]
+    if attachment_count or len(bodies) != 1 or bodies[0].get_payload(decode=True) != html.encode("utf-8"):
+        raise RuntimeError("MIME body failed delivery validation")
     with smtplib.SMTP_SSL("smtp.gmail.com",465) as smtp:
         smtp.login(user,pwd); smtp.sendmail(user,to,msg.as_string())
     log.info(f"✅ 발송→{to}")
 
-CODE_VERSION = "2026-10-09-all-candidates-body"
+CODE_VERSION = "2026-10-09-compact-gmail-body"
 
-def main():
+def main(prepare_only=False):
     log.info(f"=== ATH 리포트 시작 (코드버전: {CODE_VERSION}) ===")
     info=get_trading_info(); usd_krw=get_usd_krw(); indices=get_market_indices()
     us=get_us_ath(usd_krw)
@@ -1181,17 +1187,51 @@ def main():
 
     diag = {"us_days_before": us_days_before, "kr_days_before": kr_days_before}
     email_html = build_email(us,kr,info,usd_krw,new_us,new_kr,diag,indices,etf_info)
-    # Enforce exact full-list membership before delivery, independent of HTML length.
-    actual_keys = re.findall(r'class="stock-row" data-key="([^"]+)"', email_html)
-    expected_keys = ["KR:" + s["ticker"] for s in kr] + ["US:" + s["ticker"] for s in us]
-    if actual_keys != expected_keys:
-        raise RuntimeError("Email candidate list does not match collected data")
+    expected = {"us": [s["ticker"] for s in us], "kr": [s["ticker"] for s in kr],
+                "new": ["KR:" + s["ticker"] for s in new_kr] + ["US:" + s["ticker"] for s in new_us],
+                "etf": [s["ticker"] for s in etf_info["rows"]]}
+    email_layout.validate_inventory(email_html, expected)
     log.info(f"본문 전체 목록 검증: 미국 {len(us)}/{len(us)} · 한국 {len(kr)}/{len(kr)} · "
              f"신규 {len(new_us) + len(new_kr)}개 / 단일 메일")
-    send_email(email_html, build_subject(info))
+    subject = build_subject(info) + " · 전체 본문 " + datetime.now(KST).strftime("%H:%M:%S")
+    if prepare_only:
+        size = email_layout.validate_size(email_html)
+        directory = Path("work")
+        directory.mkdir(exist_ok=True)
+        (directory / "email-body.html").write_text(email_html, encoding="utf-8")
+        (directory / "email-preview.html").write_text(email_flags.inline_flag_sources(email_html), encoding="utf-8")
+        (directory / "report-manifest.json").write_text(json.dumps(expected), encoding="utf-8")
+        (directory / "email-subject.txt").write_text(subject, encoding="utf-8")
+        (directory / "pending-snapshots.json").write_text(json.dumps(snapshots, default=str), encoding="utf-8")
+        log.info(f"발송 전 본문 준비 완료: {size:,}바이트 · 아직 발송하지 않음")
+        return
+    send_email(email_html, subject)
 
     # 스냅샷 저장 (Actions Cache로 다음 실행에 전달됨)
     save_snapshots(snapshots)
     log.info(f"=== 완료: US{len(us)} KR{len(kr)} / 신규 US{len(new_us)} KR{len(new_kr)} ===")
 
-if __name__=="__main__": main()
+def send_prepared():
+    directory = Path("work")
+    html = (directory / "email-body.html").read_text(encoding="utf-8")
+    manifest = json.loads((directory / "report-manifest.json").read_text(encoding="utf-8"))
+    email_layout.validate_inventory(html, manifest)
+    email_layout.validate_size(html)
+    proof = json.loads((directory / "preview-passed.json").read_text(encoding="utf-8"))
+    import hashlib
+    if proof.get("sha256") != hashlib.sha256(html.encode("utf-8")).hexdigest():
+        raise RuntimeError("Email changed after browser validation")
+    send_email(html, (directory / "email-subject.txt").read_text(encoding="utf-8"))
+    save_snapshots(json.loads((directory / "pending-snapshots.json").read_text(encoding="utf-8")))
+
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--prepare-only", action="store_true")
+    parser.add_argument("--send-prepared", action="store_true")
+    args = parser.parse_args()
+    if args.send_prepared:
+        send_prepared()
+    else:
+        main(prepare_only=args.prepare_only)

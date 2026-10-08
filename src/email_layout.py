@@ -10,33 +10,27 @@ else:
     from email_flags import flag_html
 
 CSS = """
-body{margin:0;background:#f2f5f8;color:#17263d;font-family:Arial,'Malgun Gothic','Apple SD Gothic Neo',sans-serif;font-size:12px;line-height:1.4}
-table{border-collapse:collapse}a{color:#1260ad;text-decoration:none}
-.shell{max-width:1360px;margin:0 auto;padding:12px}.layout{width:100%;table-layout:fixed}
-.hero{background:#11243c;color:#fff;border-radius:9px;padding:12px 16px}.hero .eyebrow{display:none}
-.hero h1{font-size:19px;line-height:1.2;margin:0 0 5px}.date{font-size:11px;color:#c5d5e4}
-.hero .foot{font-size:10px;color:#9eb5cc;border-top:1px solid #30465f;padding-top:6px;margin-top:7px}
-.summary{margin-top:8px;background:#fff;border:1px solid #dfe7ef;border-radius:8px;padding:8px 10px}
-.summary td{width:50%;padding:0 6px;vertical-align:top}.count{font-size:17px;font-weight:bold}
-.market{font-weight:bold;font-size:11px;margin-bottom:2px}.muted{font-size:10px;color:#667a90}
+body{margin:0;background:#f2f5f8}
+.shell{max-width:1360px;margin:0 auto;padding:12px;color:#17263d;background:#f2f5f8;font-size:12px;line-height:1.4;font-family:Arial,'Malgun Gothic','Apple SD Gothic Neo',sans-serif}
+.shell table{border-collapse:collapse}.shell a{color:#1260ad;text-decoration:none}
+.layout{width:100%;table-layout:fixed}.hero{background:#11243c;color:white;border-radius:8px;padding:12px 16px}
+.hero h1{font-size:19px;margin:0 0 5px}.date{font-size:11px;color:#c5d5e4}.foot{font-size:10px;color:#c5d5e4;margin-top:6px}
+.summary{margin-top:8px;background:white;border:1px solid #dfe7ef;border-radius:8px;padding:8px 10px}
+.summary td{width:50%;padding:0 6px;vertical-align:top}.count{font-size:17px;font-weight:bold}.market{font-weight:bold;font-size:11px}.muted{font-size:10px;color:#667a90}
 .section{margin-top:14px}.section h2{margin:0;font-size:16px;line-height:1.25}
 .intro,.etf-caption{font-size:10px;color:#64778b;margin:4px 0 7px}
-.data-table{width:100%;table-layout:auto;background:#fff;border:1px solid #dce5ee;font-size:9.5px;line-height:1.25}
-.data-table th,.data-table td{white-space:nowrap;padding:3px 3px;text-align:left;vertical-align:middle}
-.data-table th{background:#163b68;color:#fff;font-weight:bold;font-size:10px}
-.stock-table th{background:#ee990b;color:#fff}
-.asset{display:inline-block;border-radius:3px;padding:1px 4px;font-size:9px;font-weight:bold}.asset-stock{background:#dff3ee;color:#087569}.asset-etf{background:#eee5fa;color:#753caf}
-.data-table td{border-bottom:1px solid #e7edf3}.data-table tbody tr:nth-child(even){background:#f6f8fb}
-.data-table .number,.data-table .n{text-align:right;font-variant-numeric:tabular-nums}
-.data-table .flag-cell,.data-table .f{text-align:center;padding-left:3px;padding-right:3px}.flag-cell img,.f img{width:20px;height:auto;vertical-align:middle}
-.data-table .ticker-cell,.t{font-weight:bold}.data-table .one-year{background:#eaf1fb;font-weight:bold}
-.data-table th.one-year{background:#2b4665;color:#fff}.data-table .date-cell{font-size:9.5px}
-.etf-comparison .data-table{font-size:10px}.metric{font-size:10px;font-weight:bold;line-height:1.25}
-.etf-details{margin-top:12px}.etf-details h3{font-size:13px;margin:0 0 6px}.etf-details .data-table{table-layout:fixed}.etf-details td{white-space:normal;overflow-wrap:anywhere}
-.up{color:#c04840}.down{color:#2862a6}.flat{color:#52677d}.p1{color:#c23932}.p3{color:#245ba6}.p5{color:#087d67}.p10{color:#7944b0}
-.new-section{border-top:3px solid #ee990b;padding-top:8px}.new-table th{background:#ee990b}.red{color:#c23932}
-.new{background:#e6f3ed;color:#237353;border-radius:3px;padding:0 3px;margin-left:3px;font-size:8px;font-weight:bold}
-.notice{background:#fff4dc;color:#796438;border-radius:6px;padding:8px 10px;font-size:10px;margin:8px 0}
+.tbl{width:100%;background:white;border:1px solid #dce5ee;font-size:9.5px;line-height:1.25;font-family:Arial,'Malgun Gothic',sans-serif}
+.tbl th,.tbl td{white-space:nowrap;padding:3px;text-align:right;vertical-align:middle}
+.tbl td{border-bottom:1px solid #e7edf3;font-variant-numeric:tabular-nums}
+.tbl th{background:#163b68;color:white;font-size:10px}.stocks th,.news th{background:#ee990b}
+.tbl .l{text-align:left}.tbl a{display:block;text-align:left;font-weight:bold}.tbl img{width:20px;height:auto;vertical-align:middle}
+.tbl .z{background:#f6f8fb}.tbl .r,.tbl .p1{color:#c23932}.tbl .p3{color:#245ba6}.tbl .p5{color:#087d67}.tbl .p10{color:#7944b0}
+.tbl .p1,.tbl .p3,.tbl .p5,.tbl .p10{font-weight:bold}.tbl .p1{background:#eaf1fb}
+.e,.s{display:inline-block;border-radius:3px;padding:1px 4px;font-size:9px}.e{background:#eee5fa;color:#753caf}.s{background:#dff3ee;color:#087569}
+.etf-details{margin-top:12px}.etf-details h3{font-size:13px;margin:0 0 6px}#details{table-layout:fixed}#details td{white-space:normal;overflow-wrap:anywhere}
+.up{color:#c04840}.down{color:#2862a6}.flat{color:#52677d}
+.new-section{border-top:3px solid #ee990b;padding-top:8px}.new{background:#e6f3ed;color:#237353;border-radius:3px;padding:0 3px;margin-left:3px;font-size:8px}
+.notice{background:#fff4dc;color:#796438;padding:8px;font-size:10px;margin:8px 0}
 .notes{font-size:9px;line-height:1.5;color:#75869a;margin:8px 0}.footer{text-align:center;color:#8a9aab;font-size:9px;padding:16px 0 8px}
 """
 
@@ -237,4 +231,106 @@ def render_email(us, kr, info, usd_krw, new_us=None, new_kr=None, diag=None,
                            info.get("us_last_str", "-"), info.get("us_holiday_msg", ""),
                            [s.get("ticker") for s in new_us])
             + '<div class="footer">일일 ATH 리포트 · 가격 이력 기준 · 투자 권유 아님</div></div></body></html>')
-    return re.sub(r">\s+<", "><", html).strip()
+    return compact_html(html)
+
+
+def compact_html(source):
+    """Compact only markup, preserving every visible cell and link.
+
+    td/tr end tags are optional at a subsequent cell/row or table-section end
+    in HTML5. Semantic table IDs replace repeated row-level debug attributes.
+    """
+    from bs4 import BeautifulSoup
+    doc = BeautifulSoup(source, "html5lib")
+    for table in doc.select("table.data-table"):
+        classes = table.get("class", [])
+        country = table.get("data-country")
+        kind = ("returns" if "etf-table" in classes else
+                "new" if "new-table" in classes else
+                country.lower() if country else "details")
+        table.attrs = {"class": "tbl " + ("stocks" if country else "news" if kind == "new" else ""), "id": kind}
+        for rank, row in enumerate(table.select("tbody tr")):
+            row.attrs = {"class": "z"} if rank % 2 else {}
+            cells = row.find_all("td", recursive=False)
+            for index, cell in enumerate(cells):
+                cell.attrs = {}
+                cls = ""
+                if kind == "returns":
+                    cls = {3: "l", 4: "p1", 5: "p3", 6: "p5", 7: "p10"}.get(index, "")
+                    if index == 8:
+                        metric = cell.find("span")
+                        cls = ("r" if "up" in metric.get("class", []) else
+                               "down" if "down" in metric.get("class", []) else "flat") if metric else ""
+                    for metric in cell.select("span.metric"):
+                        metric.unwrap()
+                elif kind == "details":
+                    cls = "" if index == 5 else "l"
+                else:
+                    cls = "l" if index in (2, 6, 9) else "r" if index in (5, 7) else ""
+                    for badge in cell.select("span.asset"):
+                        badge.name = "b"
+                        badge.attrs = {"class": "e" if badge.get_text() == "ETF" else "s"}
+                    if index == 1:
+                        anchor, badge = cell.find("a"), cell.find("span", class_="new")
+                        if anchor and badge:
+                            anchor.append(badge.extract())
+                if cls:
+                    cell["class"] = cls
+            for cell in row.select("th"):
+                cell.attrs = {}
+        for head in table.select("th"):
+            head.attrs = {}
+        for picture in table.select("img"):
+            picture.attrs = {"src": picture.get("src", ""), "alt": picture.get("alt", "")}
+    for tag in doc.find_all():
+        for key in list(tag.attrs):
+            if key.startswith("data-"):
+                del tag.attrs[key]
+    result = str(doc)
+    result = re.sub(r"</td>(?=<(?:td|/tr))", "", result)
+    result = re.sub(r"</tr>(?=<(?:tr|/tbody|/thead))", "", result)
+    result = re.sub(r' class="([a-z][a-z0-9]*)"', r" class=\1", result)
+    result = re.sub(r">\s+<", "><", result)
+    return result.strip()
+
+
+def inventory(source):
+    """Read real table contents with the HTML5 parser, not debug attributes."""
+    from bs4 import BeautifulSoup
+    doc = BeautifulSoup(source, "html5lib")
+    def tickers(table_id, column):
+        table = doc.find("table", id=table_id)
+        result = []
+        if table:
+            for row in table.select("tbody tr"):
+                cells = row.find_all("td", recursive=False)
+                if len(cells) <= column:
+                    raise RuntimeError("Malformed report row: " + table_id)
+                anchor = cells[column].find("a")
+                result.append(str(anchor.contents[0]) if anchor else cells[column].get_text(strip=True))
+        return result
+    result = {"us": tickers("us", 1), "kr": tickers("kr", 1),
+              "etf": tickers("returns", 2), "new": []}
+    table = doc.find("table", id="new")
+    if table:
+        for row in table.select("tbody tr"):
+            cells = row.find_all("td", recursive=False)
+            country = "US" if "ath-flag-us" in cells[0].find("img")["src"] else "KR"
+            result["new"].append(country + ":" + str(cells[1].find("a").contents[0]))
+    return result
+
+
+def validate_inventory(source, expected):
+    actual = inventory(source)
+    if actual != expected:
+        raise RuntimeError("Email tables do not exactly match collected candidates")
+    return actual
+
+
+MAX_EMAIL_BYTES = 90000
+
+def validate_size(source):
+    size = len(source.encode("utf-8"))
+    if size > MAX_EMAIL_BYTES:
+        raise RuntimeError(f"Email HTML {size:,} bytes exceeds {MAX_EMAIL_BYTES:,}; compact markup before sending, never remove candidates")
+    return size

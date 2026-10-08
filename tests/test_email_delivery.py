@@ -10,6 +10,7 @@ from src.main import compose_email_message, send_email, build_subject, main
 from tools.preview_email import sample_data, make_stock
 from datetime import date
 import re
+from src.email_layout import inventory, render_email, validate_size
 
 
 class EmailDeliveryTests(unittest.TestCase):
@@ -27,15 +28,18 @@ class EmailDeliveryTests(unittest.TestCase):
         body = [part for part in parts if part.get_content_type() == "text/html"][0]
         self.assertEqual(body.get_payload(decode=True).decode("utf-8"), html)
         self.assertTrue(any(part.get_content_type() == "text/plain" for part in parts))
+        self.assertTrue(message["Date"])
+        self.assertTrue(message["Message-ID"])
 
-    def test_complete_large_html_is_allowed_with_no_attachment(self):
+    def test_oversized_html_is_rejected_before_smtp_without_dropping_rows(self):
         html = '<img src="cid:ath-flag-us">' + "가" * 85000
-        message = compose_email_message(html, "test", "a@example.test", "b@example.test")
-        self.assertEqual(message.get_content_type(), "multipart/related")
-        self.assertFalse(any(part.get_content_disposition() == "attachment" for part in message.walk()))
-        bodies = [part for part in message.walk() if part.get_content_type() == "text/html"]
-        self.assertEqual(len(bodies), 1)
-        self.assertEqual(bodies[0].get_payload(decode=True).decode("utf-8"), html)
+        with self.assertRaisesRegex(RuntimeError, "never remove candidates"):
+            compose_email_message(html, "test", "a@example.test", "b@example.test")
+        with patch.dict(os.environ, {"GMAIL_USER":"a", "GMAIL_APP_PASSWORD":"b"}):
+            with patch("src.main.smtplib.SMTP_SSL") as smtp:
+                with self.assertRaises(RuntimeError):
+                    send_email(html, "test")
+                smtp.assert_not_called()
 
     def test_main_sends_all_218_us_and_17_kr_candidates_once(self):
         data = sample_data()
@@ -55,7 +59,7 @@ class EmailDeliveryTests(unittest.TestCase):
         send.assert_called_once()
         self.assertEqual(len(send.call_args.args), 2)
         html = send.call_args.args[0]
-        keys = re.findall(r'class="stock-row" data-key="([^"]+)"', html)
+        keys = ["KR:" + x for x in inventory(html)["kr"]] + ["US:" + x for x in inventory(html)["us"]]
         self.assertEqual(keys, ["KR:" + r["ticker"] for r in data["kr"]] + ["US:" + r["ticker"] for r in data["us"]])
         self.assertEqual(sum(key.startswith("US:") for key in keys), 218)
         self.assertEqual(sum(key.startswith("KR:") for key in keys), 17)

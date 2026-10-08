@@ -5,3 +5,5 @@ beautifulsoup4>=4.12.0
 lxml>=5.0.0
 pytz
 Pillow>=10.4.0
+
+html5lib>=1.1

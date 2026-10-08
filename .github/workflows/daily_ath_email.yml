@@ -4,6 +4,9 @@ on:
   schedule:
     - cron: '0 22 * * 1-5'   # 22:00 UTC = 07:00 KST (화~토)
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["src/**", "tests/**", "tools/**"]
 
 jobs:
   send-ath-email:
@@ -45,8 +48,12 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: 📦 의존성 설치
-        run: pip install -r requirements.txt
+      - name: 📦 의존성 및 화면 검증 도구 설치
+        run: |
+          pip install -r requirements.txt playwright
+          python -m playwright install --with-deps chromium
+          sudo apt-get update -qq
+          sudo apt-get install -y fonts-noto-cjk
 
       - name: 📥 이전 누적 스냅샷 복원 (git push 대신 Actions Cache 사용)
         uses: actions/cache/restore@v4
@@ -68,15 +75,22 @@ jobs:
       - name: 🧪 수익률·메일 레이아웃 검증
         run: python -m unittest discover -s tests -v
 
-      - name: 📧 ATH 이메일 발송
+      - name: 📄 전체 본문 준비 (아직 발송하지 않음)
+        run: python src/main.py --prepare-only
+
+      - name: 🖥️ 실제 본문 및 Gmail 데스크톱 화면 검증
+        run: python tools/preview_email.py --html work/email-body.html --manifest work/report-manifest.json
+
+      - name: 📧 검증된 전체 본문 발송
+        if: github.event_name != 'push' || contains(github.event.head_commit.message, '[send-noclip]')
         env:
           GMAIL_USER:         ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           RECIPIENT_EMAIL:    ${{ secrets.RECIPIENT_EMAIL }}
-        run: python src/main.py
+        run: python src/main.py --send-prepared
 
       - name: 💾 누적 스냅샷 저장 (다음 실행에서 자동 복원됨)
-        if: always()
+        if: success() && (github.event_name != 'push' || contains(github.event.head_commit.message, '[send-noclip]'))
         uses: actions/cache/save@v4
         with:
           path: data/daily_snapshots.json
