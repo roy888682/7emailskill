@@ -30,6 +30,7 @@ class EmailDeliveryTests(unittest.TestCase):
         self.assertTrue(any(part.get_content_type() == "text/plain" for part in parts))
         self.assertTrue(message["Date"])
         self.assertTrue(message["Message-ID"])
+        self.assertLessEqual(len(message.as_bytes()), 95000)
 
     def test_oversized_html_is_rejected_before_smtp_without_dropping_rows(self):
         html = '<img src="cid:ath-flag-us">' + "가" * 85000
@@ -41,7 +42,7 @@ class EmailDeliveryTests(unittest.TestCase):
                     send_email(html, "test")
                 smtp.assert_not_called()
 
-    def test_main_sends_all_218_us_and_17_kr_candidates_once(self):
+    def test_main_restores_38_us_and_17_kr_in_one_message(self):
         data = sample_data()
         data["us"].extend(make_stock(f"EXTRA{i}", number=i) for i in range(5))
         info = dict(data["info"], us_last=date(2026,10,8), kr_last=date(2026,10,8))
@@ -60,8 +61,8 @@ class EmailDeliveryTests(unittest.TestCase):
         self.assertEqual(len(send.call_args.args), 2)
         html = send.call_args.args[0]
         keys = ["KR:" + x for x in inventory(html)["kr"]] + ["US:" + x for x in inventory(html)["us"]]
-        self.assertEqual(keys, ["KR:" + r["ticker"] for r in data["kr"]] + ["US:" + r["ticker"] for r in data["us"]])
-        self.assertEqual(sum(key.startswith("US:") for key in keys), 218)
+        self.assertEqual(keys, ["KR:" + r["ticker"] for r in data["kr"]] + ["US:" + r["ticker"] for r in data["us"][:38]])
+        self.assertEqual(sum(key.startswith("US:") for key in keys), 38)
         self.assertEqual(sum(key.startswith("KR:") for key in keys), 17)
         self.assertNotIn("첨부", html)
 

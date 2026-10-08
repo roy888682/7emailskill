@@ -10,7 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-MAX_HTML_BYTES = 90000
+MAX_HTML_BYTES = 65000
 
 def make_stock(ticker, market="US", number=0, asset_type="주식"):
     korean = market != "US"
@@ -265,6 +265,7 @@ def main():
     if args.html and not args.manifest:
         parser.error("--manifest is required with --html to verify every candidate")
     from src.email_flags import inline_flag_sources
+    from src.main import compose_email_message
     from playwright.sync_api import sync_playwright
     args.output.mkdir(parents=True, exist_ok=True)
     proof_path = args.output / "preview-passed.json"
@@ -272,13 +273,19 @@ def main():
     if args.html:
         source = args.html.read_text(encoding="utf-8")
         expected = normalize_manifest(json.loads(args.manifest.read_text(encoding="utf-8")))
+        if len(expected["us"]) > 38:
+            raise AssertionError("Restored US table exceeds 38 securities")
     else:
         source = build_preview_html()
-        expected = manifest_for(preview_data())
+        data = preview_data()
+        data["us"] = data["us"][:38]
+        expected = manifest_for(data)
     size = len(source.encode("utf-8"))
     print("PREVIEW_HTML_BYTES:%d" % size, flush=True)
     if args.html and size > MAX_HTML_BYTES:
         raise AssertionError("HTML body %d bytes exceeds %d-byte budget" % (size, MAX_HTML_BYTES))
+    wire = compose_email_message(source, "ATH 기본표", "sender@example.test", "reader@example.test")
+    print("PREVIEW_WIRE_BYTES:%d" % len(wire.as_bytes()), flush=True)
     html_source = inline_flag_sources(source)
     gmail_source = gmail_host_html(html_source)
     (args.output / "email-preview.html").write_text(html_source, encoding="utf-8")
