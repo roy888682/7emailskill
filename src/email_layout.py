@@ -14,12 +14,13 @@ CSS = """
 body{margin:0;background:#eef2f6;color:#17263d;font-family:Arial,'Malgun Gothic','Apple SD Gothic Neo',sans-serif;font-size:14px;line-height:1.55}
 table{border-collapse:collapse}td{vertical-align:top}a{color:#163b68;text-decoration:none}
 .shell{max-width:860px;margin:0 auto;padding:18px 12px}.layout{width:100%;table-layout:fixed}
-.hero{background:#11243c;color:#fff;border-radius:12px;padding:16px 20px}
+.hero{background:#11243c;color:#fff;border-radius:12px;padding:12px 16px}
 .eyebrow{font-size:10px;font-weight:bold;letter-spacing:2px;color:#8fb6c8;margin:0 0 8px}
-.hero h1{font-size:24px;line-height:1.25;letter-spacing:-1px;margin:0 0 8px}
+.hero .eyebrow{display:none}
+.hero h1{font-size:22px;line-height:1.25;letter-spacing:-1px;margin:0 0 8px}
 .date{font-size:13px;color:#c5d5e4}.hero .foot{font-size:11px;color:#9eb5cc;border-top:1px solid #30465f;padding-top:8px;margin-top:10px}
 .summary{margin-top:10px;background:#fff;border:1px solid #dfe7ef;border-radius:10px;padding:10px 12px}
-.summary td{width:50%;padding:0 8px}.count{font-size:23px;font-weight:bold;letter-spacing:-1px}
+.summary td{width:50%;padding:0 8px}.count{font-size:20px;font-weight:bold;letter-spacing:-1px}
 .market{font-weight:bold;font-size:13px;margin-bottom:3px}.muted{font-size:11px;color:#667a90}
 .section{margin-top:18px}.section h2{margin:0;font-size:19px;line-height:1.3;letter-spacing:-.6px}
 .intro{font-size:11px;color:#667a90;margin:4px 0 8px}
@@ -45,10 +46,10 @@ table{border-collapse:collapse}td{vertical-align:top}a{color:#163b68;text-decora
 .etf-detail b{color:#40566e}.up{color:#c04840}.down{color:#2862a6}.flat{color:#52677d}
 @media screen and (min-width:600px){
 .etf-outer{display:table}.etf-outer>tbody{display:table-row-group}.etf-line{display:table-row}
-.etf-identity,.etf-numbers{display:table-cell;vertical-align:middle;padding:7px 2px}
+.etf-identity,.etf-numbers{display:table-cell;vertical-align:middle;padding:4px 2px}
 .etf-identity{width:40%;padding-right:10px}.etf-numbers{width:60%}
 .etf-metrics .metric-label{display:none}.etf-metrics strong{font-size:13px}
-.etf-metrics td{padding:6px 2px}
+.etf-metrics td{padding:2px 2px}
 .etf-column-head{display:block;background:#11243c;color:#fff;padding:0 8px;border-radius:9px 9px 0 0}
 .etf-column-head .etf-identity{font-size:11px;color:#d4e1ee}
 .etf-column-head .etf-metrics td{font-size:11px;color:#d4e1ee}
@@ -182,10 +183,10 @@ def _summary(us, kr, info, indices):
         v = indices.get(key)
         return f"{v:,.1f}" if v else "-"
     return ('<div class="summary"><table role="presentation" class="layout"><tr><td>'
-            f'<div class="market">{flag_html("KR")}한국</div><div class="count">{len(kr)}<span style="font-size:12px"> 종목</span></div>'
+            f'<div class="market">{flag_html("KR")}한국 <span class="count">{len(kr)}<span style="font-size:12px"> 종목</span></span></div>'
             f'<div class="muted">KOSPI {value("kospi")} {pct(indices.get("kospi_chg"))}<br>{h(info.get("kr_last_str"))}</div>'
             '</td><td>'
-            f'<div class="market">{flag_html("US")}미국</div><div class="count">{len(us)}<span style="font-size:12px"> 종목</span></div>'
+            f'<div class="market">{flag_html("US")}미국 <span class="count">{len(us)}<span style="font-size:12px"> 종목</span></span></div>'
             f'<div class="muted">S&amp;P 500 {value("sp500")} {pct(indices.get("sp500_chg"))}<br>{h(info.get("us_last_str"))}</div>'
             '</td></tr></table></div>')
 
