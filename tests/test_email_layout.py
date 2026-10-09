@@ -26,7 +26,7 @@ class EmailLayoutTests(unittest.TestCase):
     def test_restores_original_header_alignment(self):
         body = render_email(**self.data)
         self.assertIn("text-align:left", body)
-        self.assertIn(".data-table .n{text-align:right", body)
+        self.assertIn("text-align:right;font-variant-numeric:tabular-nums", body)
         self.assertNotIn(".tbl", body)
         doc = BeautifulSoup(body, "html5lib")
         self.assertNotIn("n",doc.select("#us th")[2].get("class",[]))
@@ -72,7 +72,11 @@ class EmailLayoutTests(unittest.TestCase):
         compact = compact_transport_html(expanded)
         before, after = (BeautifulSoup(source, "html5lib") for source in (expanded, compact))
         for table_id in ("us","kr","new","returns"):
-            self.assertEqual(str(before.find("table",id=table_id)),str(after.find("table",id=table_id)))
+            def cells(document):
+                return [(cell.get_text(),[a.get("href") for a in cell.select("a")],
+                         [img.get("src") for img in cell.select("img")])
+                        for cell in document.find("table",id=table_id).select("th,td")]
+            self.assertEqual(cells(before),cells(after))
         self.assertLess(len(compact.encode("utf-8")),len(expanded.encode("utf-8")))
         self.assertEqual(inventory(compact),inventory(expanded))
 

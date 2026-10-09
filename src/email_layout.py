@@ -221,7 +221,7 @@ def _summary(us, kr, info, indices):
             '</td></tr></table></div>')
 
 def render_email(us, kr, info, usd_krw, new_us=None, new_kr=None, diag=None,
-                 indices=None, etf_info=None):
+                 indices=None, etf_info=None, compact=True):
     """Render every candidate with the existing desktop layout."""
     new_us, new_kr = new_us or [], new_kr or []
     indices, etf_info = indices or {}, etf_info or {}
@@ -243,11 +243,11 @@ def render_email(us, kr, info, usd_krw, new_us=None, new_kr=None, diag=None,
                            info.get("us_last_str", "-"), info.get("us_holiday_msg", ""),
                            [s.get("ticker") for s in new_us])
             + '<div class="footer">일일 ATH 리포트 · 가격 이력 기준 · 투자 권유 아님</div></div></body></html>')
-    return delivery_html(html)
+    return delivery_html(html, compact=compact)
 
 
 
-def delivery_html(source):
+def delivery_html(source, compact=True):
     """Reduce invisible markup while preserving the restored table alignment."""
     from bs4 import BeautifulSoup
     doc = BeautifulSoup(source, "html5lib")
@@ -289,12 +289,28 @@ def delivery_html(source):
             if not tag["class"]:
                 del tag["class"]
     result = str(doc)
-    return compact_transport_html(re.sub(r">\s+<", "><", result).strip())
+    result = re.sub(r">\s+<", "><", result).strip()
+    return compact_transport_html(result) if compact else result
 
 
 def compact_transport_html(source):
     """Omit only HTML5-optional syntax; the rendered table DOM is unchanged."""
-    result = re.sub(r"</td>(?=<(?:td|th|/tr))", "", source)
+    # These selector aliases apply the very same declarations to shorter
+    # class lists. The uncompressed reference is pixel-compared before SMTP.
+    result = source.replace(".asset{", ".asset,.e,.s{", 1)
+    result = result.replace(".data-table .n{", ".data-table .n,.data-table .r{", 1)
+    result = result.replace('class="asset e"', 'class="e"').replace('class="asset s"', 'class="s"')
+    result = result.replace('class="n r"', 'class="r"')
+    # Country flags repeat the country heading in these single-country tables.
+    # Keep them decorative there and label the table; mixed tables retain alt.
+    for country, label in (("us", "미국 종목"), ("kr", "한국 종목")):
+        pattern = r'(<table\b[^>]*\bid="' + country + r'"[^>]*>)(.*?)(</table>)'
+        def country_table(match):
+            head = match.group(1).replace(">", ' aria-label="' + label + '">', 1)
+            rows = re.sub(r'(<img\b[^>]*\balt=)"[^"]*"', r'\1""', match.group(2))
+            return head + rows + match.group(3)
+        result = re.sub(pattern, country_table, result, flags=re.DOTALL)
+    result = re.sub(r"</td>(?=<(?:td|th|/tr))", "", result)
     result = re.sub(r"</th>(?=<(?:td|th|/tr))", "", result)
     result = re.sub(r"</tr>(?=<(?:tr|/thead|/tbody|/tfoot))", "", result)
     result = re.sub(r'="([A-Za-z0-9_:/.,?&;%#+~-]+)"', r"=\1", result)

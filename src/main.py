@@ -1204,6 +1204,8 @@ def main(prepare_only=False):
         directory = Path("work")
         directory.mkdir(exist_ok=True)
         (directory / "email-body.html").write_text(email_html, encoding="utf-8")
+        reference = email_layout.render_email(us,kr,info,usd_krw,new_us,new_kr,diag,indices,etf_info,compact=False)
+        (directory / "email-reference.html").write_text(reference, encoding="utf-8")
         (directory / "email-preview.html").write_text(email_flags.inline_flag_sources(email_html), encoding="utf-8")
         (directory / "report-manifest.json").write_text(json.dumps(expected), encoding="utf-8")
         (directory / "email-subject.txt").write_text(subject, encoding="utf-8")
@@ -1227,6 +1229,7 @@ def send_prepared():
     if (
         proof.get("sha256") != hashlib.sha256(html.encode("utf-8")).hexdigest()
         or proof.get("all_passed") is not True
+        or proof.get("layout_unchanged") is not True
         or proof.get("html_bytes") != html_bytes
         or proof.get("counts") != {key: len(values) for key, values in manifest.items()}
         or set(proof.get("hosts", [])) != {"standalone", "gmail"}

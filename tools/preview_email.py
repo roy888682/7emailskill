@@ -4,6 +4,8 @@ import argparse
 import base64
 import hashlib
 import json
+import io
+from PIL import Image
 import re
 import sys
 from pathlib import Path
@@ -260,6 +262,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--html", type=Path)
     parser.add_argument("--manifest", type=Path)
+    parser.add_argument("--reference", type=Path)
     parser.add_argument("--output", type=Path, default=ROOT / "work")
     args = parser.parse_args()
     if args.html and not args.manifest:
@@ -285,6 +288,14 @@ def main():
     print("PREVIEW_WIRE_BYTES:%d" % len(wire.as_bytes()), flush=True)
     html_source = inline_flag_sources(source)
     gmail_source = gmail_host_html(html_source)
+    if args.reference:
+        reference = inline_flag_sources(args.reference.read_text(encoding="utf-8"))
+    elif not args.html:
+        from src.email_layout import render_email
+        reference = inline_flag_sources(render_email(**preview_data(), compact=False))
+    else:
+        parser.error("--reference is required to verify the unchanged layout")
+    reference_gmail = gmail_host_html(reference)
     (args.output / "email-preview.html").write_text(html_source, encoding="utf-8")
     (args.output / "email-preview-gmail.html").write_text(gmail_source, encoding="utf-8")
     with sync_playwright() as playwright:
@@ -303,6 +314,17 @@ def main():
                         print("LAYOUT_QA:%s" % json.dumps(result, ensure_ascii=False), flush=True)
                         if result["problems"]:
                             raise AssertionError("; ".join(result["problems"]))
+                        reference_page = browser.new_page(viewport={"width":width,"height":1200},device_scale_factor=1)
+                        try:
+                            reference_page.set_content(reference_gmail if host=="gmail" else reference,wait_until="load")
+                            reference_page.evaluate("document.fonts.ready")
+                            actual_pixels = Image.open(io.BytesIO(page.screenshot(full_page=True))).convert("RGB")
+                            original_pixels = Image.open(io.BytesIO(reference_page.screenshot(full_page=True))).convert("RGB")
+                            if actual_pixels.size != original_pixels.size or actual_pixels.tobytes() != original_pixels.tobytes():
+                                raise AssertionError("Rendered layout differs from the accepted style at %dpx (%s)" % (width,host))
+                            print("LAYOUT_IDENTICAL:%s:%d" % (host,width),flush=True)
+                        finally:
+                            reference_page.close()
                         if host == "gmail" and width == 1600:
                             for table_id, filename, marker in (
                                 ("returns", "email-desktop-etf.png", "PREVIEW_IMAGE_DESKTOP_ETF"),
@@ -319,7 +341,7 @@ def main():
         "sha256": digest, "body_sha256": digest, "html_bytes": size,
         "counts": {key: len(values) for key, values in expected.items()},
         "viewports": [900, 1024, 1280, 1600, 1920],
-        "hosts": ["standalone", "gmail"], "all_passed": True,
+        "hosts": ["standalone", "gmail"], "all_passed": True, "layout_unchanged": True,
     }
     proof_path.write_text(json.dumps(proof, ensure_ascii=False, indent=2), encoding="utf-8")
     print("PREVIEW_PASSED:%s" % json.dumps(proof, ensure_ascii=False), flush=True)

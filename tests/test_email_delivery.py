@@ -72,7 +72,7 @@ class EmailDeliveryTests(unittest.TestCase):
         html = render_email([], [], data["info"], 1342)
         manifest = inventory(html)
         proof = {"sha256":hashlib.sha256(html.encode("utf-8")).hexdigest(),
-                 "all_passed":True, "html_bytes":len(html.encode("utf-8")),
+                 "all_passed":True, "layout_unchanged":True, "html_bytes":len(html.encode("utf-8")),
                  "counts":{key:len(values) for key,values in manifest.items()},
                  "hosts":["standalone","gmail"], "viewports":[900,1024,1280,1600,1920]}
         with tempfile.TemporaryDirectory() as directory:
@@ -84,7 +84,7 @@ class EmailDeliveryTests(unittest.TestCase):
                 Path("work/report-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
                 Path("work/email-subject.txt").write_text("test", encoding="utf-8")
                 Path("work/pending-snapshots.json").write_text("{}", encoding="utf-8")
-                for change in ({"all_passed":False}, {"html_bytes":1}, {"hosts":["standalone"]},
+                for change in ({"all_passed":False}, {"layout_unchanged":False}, {"html_bytes":1}, {"hosts":["standalone"]},
                                {"viewports":[1024]}, {"counts":{}}, {"sha256":"bad"}):
                     with self.subTest(change=change):
                         Path("work/preview-passed.json").write_text(json.dumps(dict(proof, **change)), encoding="utf-8")

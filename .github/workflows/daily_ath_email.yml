@@ -79,7 +79,7 @@ jobs:
         run: python src/main.py --prepare-only
 
       - name: 🖥️ 실제 본문 및 Gmail 데스크톱 화면 검증
-        run: python tools/preview_email.py --html work/email-body.html --manifest work/report-manifest.json
+        run: python tools/preview_email.py --html work/email-body.html --manifest work/report-manifest.json --reference work/email-reference.html
 
       - name: 📧 검증된 전체 본문 발송
         env:
