@@ -4,9 +4,6 @@ on:
   schedule:
     - cron: '0 22 * * 1-5'   # 22:00 UTC = 07:00 KST (화~토)
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths: ['src/**', 'tests/**', 'tools/preview_email.py']
 
 jobs:
   send-ath-email:
@@ -78,7 +75,7 @@ jobs:
       - name: 📄 전체 본문 준비 (아직 발송하지 않음)
         run: python src/main.py --prepare-only
 
-      - name: 🖥️ 실제 본문 및 Gmail 데스크톱 화면 검증
+      - name: 🖥️ 전체 종목·본문 이미지·데스크톱 배치 검증
         run: python tools/preview_email.py --html work/email-body.html --manifest work/report-manifest.json --reference work/email-reference.html
 
       - name: 📧 검증된 전체 본문 발송
