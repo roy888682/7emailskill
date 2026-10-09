@@ -67,7 +67,15 @@ def _flag_png(country):
     image = image.resize((width, height), Image.Resampling.LANCZOS)
     output = io.BytesIO()
     image.save(output, format="PNG", optimize=True)
-    return output.getvalue()
+    original = output.getvalue()
+    # Lossless PNG filtering/compression changes no drawn flag pixels.
+    from zopfli.png import optimize
+    packed = optimize(original, lossy_transparent=False, lossy_8bit=False,
+                      filter_strategies="01234mepb", num_iterations=15,
+                      num_iterations_large=5)
+    if Image.open(io.BytesIO(packed)).convert("RGB").tobytes() != image.tobytes():
+        raise RuntimeError("Lossless flag compression changed pixels")
+    return packed if len(packed) < len(original) else original
 
 def flag_images():
     return {"us": _flag_png("us"), "kr": _flag_png("kr")}

@@ -199,7 +199,7 @@ LAYOUT_CHECK = r"""expected => {
        problems.push("ATH/day-change values must be red");
    }
  });
- const stockBadge=document.querySelector("b.s"),etfBadge=document.querySelector("b.e");
+ const stockBadge=document.querySelector(".stock-table b,.new-table b"),etfBadge=document.querySelector(".stock-table i,.new-table i");
  if(stockBadge&&etfBadge){
    const signature=el=>{
      const style=getComputedStyle(el);

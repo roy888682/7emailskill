@@ -2,7 +2,7 @@
 import os
 import tempfile
 import unittest
-from email import message_from_string
+from email import message_from_bytes
 from pathlib import Path
 from unittest.mock import patch
 
@@ -31,6 +31,20 @@ class EmailDeliveryTests(unittest.TestCase):
         self.assertTrue(message["Date"])
         self.assertTrue(message["Message-ID"])
         self.assertLessEqual(len(message.as_bytes()), 95000)
+
+    def test_actual_serialized_size_and_smtp_lines_are_bounded(self):
+        # UTF-8 content is transported directly rather than inflated with Base64.
+        html = "<p>한글 표</p>\n" * 1000
+        message = compose_email_message(html,"test","a@example.test","b@example.test")
+        wire = message.as_bytes()
+        parsed = message_from_bytes(wire)
+        body = next(part for part in parsed.walk() if part.get_content_type()=="text/html")
+        self.assertEqual(body["Content-Transfer-Encoding"],"8bit")
+        self.assertEqual(body.get_payload(decode=True).decode("utf-8").replace("\r\n","\n"),html)
+        self.assertLessEqual(len(wire),95000)
+        self.assertLessEqual(max(map(len,wire.split(b"\r\n"))),998)
+        with self.assertRaisesRegex(RuntimeError,"SMTP line limit"):
+            compose_email_message("x"*999,"test","a@example.test","b@example.test")
 
     def test_oversized_html_is_rejected_before_smtp_without_dropping_rows(self):
         html = '<img src="cid:u">' + "가" * 85000
@@ -119,8 +133,14 @@ class EmailDeliveryTests(unittest.TestCase):
                     with patch("src.main.smtplib.SMTP_SSL") as smtp:
                         send_email(html, "test")
                         sent = smtp.return_value.__enter__.return_value.sendmail.call_args.args[2]
-                        message = message_from_string(sent)
+                        message = message_from_bytes(sent)
                         self.assertEqual(sum(p.get_content_type() == "image/png" for p in message.walk()), 2)
+                        body = next(p for p in message.walk() if p.get_content_type()=="text/html")
+                        self.assertEqual(body["Content-Transfer-Encoding"],"8bit")
+                        self.assertEqual(body.get_payload(decode=True).decode("utf-8"),html)
+                        self.assertEqual(smtp.return_value.__enter__.return_value.sendmail.call_args.kwargs["mail_options"],("BODY=8BITMIME",))
+                        self.assertLessEqual(len(sent),95000)
+                        self.assertLessEqual(max(map(len,sent.split(b"\r\n"))),998)
                         smtp.return_value.__enter__.return_value.sendmail.assert_called_once()
                         self.assertFalse(any(p.get_content_disposition() == "attachment" for p in message.walk()))
                         self.assertFalse(Path("work/email-full-report.html").exists())

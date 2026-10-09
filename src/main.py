@@ -3,6 +3,7 @@ import os, smtplib, logging, time, io, re, json, bisect, math
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.image import MIMEImage
+from email.policy import SMTP
 from email.utils import formatdate, make_msgid
 from pathlib import Path
 
@@ -1120,12 +1121,16 @@ def build_subject(info):
 def compose_email_message(html, subject, user, to):
     """One complete HTML body with inline flags and zero attachment parts."""
     email_layout.validate_size(html)
-    msg = MIMEMultipart("related")
+    msg = MIMEMultipart("related", policy=SMTP)
     msg["Subject"], msg["From"], msg["To"] = subject, user, to
     msg["Date"], msg["Message-ID"] = formatdate(localtime=True), make_msgid()
     alternative = MIMEMultipart("alternative")
     alternative.attach(MIMEText("오늘의 ATH & ETF 전체 리포트입니다. HTML 보기에서 모든 후보와 ETF 수익률을 확인하세요.", "plain", "utf-8"))
-    alternative.attach(MIMEText(html, "html", "utf-8"))
+    body = MIMEText("", "html", "utf-8")
+    del body["Content-Transfer-Encoding"]
+    body.set_payload(html.replace("\r\n", "\n").replace("\n", "\r\n").encode("utf-8"))
+    body["Content-Transfer-Encoding"] = "8bit"
+    alternative.attach(body)
     msg.attach(alternative)
     for country, png in email_flags.flag_images().items():
         asset = MIMEImage(png, _subtype="png")
@@ -1137,6 +1142,11 @@ def compose_email_message(html, subject, user, to):
     decoded_bytes = sum(len(part.get_payload(decode=True) or b"") for part in msg.walk() if not part.is_multipart())
     if decoded_bytes > 100000:
         raise RuntimeError(f"Decoded email {decoded_bytes:,} bytes exceeds the delivery budget")
+    wire = msg.as_bytes()
+    if len(wire) > 95000:
+        raise RuntimeError(f"Serialized email {len(wire):,} bytes exceeds 95,000; compact markup, never remove candidates")
+    if max((len(line) for line in wire.split(b"\r\n")), default=0) > 998:
+        raise RuntimeError("Serialized email exceeds the SMTP line limit")
     return msg
 
 
@@ -1153,13 +1163,17 @@ def send_email(html, subject):
     log.info(f"메일 전체 본문: 미국 {us_rows}종목 / 한국 {kr_rows}종목 / "
              f"{len(html.encode('utf-8')):,}바이트 / 전송 {len(msg.as_bytes()):,}바이트 / 첨부 {attachment_count}개 / 국기 PNG 2개")
     bodies = [part for part in msg.walk() if part.get_content_type() == "text/html"]
-    if attachment_count or len(bodies) != 1 or bodies[0].get_payload(decode=True) != html.encode("utf-8"):
+    if attachment_count or len(bodies) != 1 or bodies[0].get_payload(decode=True).decode("utf-8").replace("\r\n", "\n") != html.replace("\r\n", "\n"):
         raise RuntimeError("MIME body failed delivery validation")
     with smtplib.SMTP_SSL("smtp.gmail.com",465) as smtp:
-        smtp.login(user,pwd); smtp.sendmail(user,to,msg.as_string())
+        smtp.ehlo()
+        if not smtp.has_extn("8bitmime"):
+            raise RuntimeError("SMTP server does not advertise 8BITMIME")
+        smtp.login(user,pwd)
+        smtp.sendmail(user,to,msg.as_bytes(),mail_options=("BODY=8BITMIME",))
     log.info(f"✅ 발송→{to}")
 
-CODE_VERSION = "2026-10-09-same-layout-all-candidates"
+CODE_VERSION = "2026-10-09-complete-message-under-95kb"
 
 def main(prepare_only=False):
     log.info(f"=== ATH 리포트 시작 (코드버전: {CODE_VERSION}) ===")

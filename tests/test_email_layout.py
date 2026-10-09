@@ -59,8 +59,8 @@ class EmailLayoutTests(unittest.TestCase):
     def test_signed_values_and_different_asset_badges_are_preserved(self):
         body = render_email(**self.data)
         doc=BeautifulSoup(body,"html5lib")
-        self.assertTrue(doc.select("b.e"))
-        self.assertTrue(doc.select("b.s"))
+        self.assertTrue(doc.select(".stock-table i, .new-table i"))
+        self.assertTrue(doc.select(".stock-table b, .new-table b"))
         for row in doc.select("#us tbody tr, #kr tbody tr, #new tbody tr"):
             cells=row.find_all("td",recursive=False)
             self.assertIn("r",cells[5].get("class",[]))

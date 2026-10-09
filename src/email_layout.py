@@ -301,13 +301,23 @@ def compact_transport_html(source):
     result = result.replace(".data-table .n{", ".data-table .n,.data-table .r{", 1)
     result = result.replace('class="asset e"', 'class="e"').replace('class="asset s"', 'class="s"')
     result = result.replace('class="n r"', 'class="r"')
+    # Every table link is a ticker; inherit the identical bold style directly.
+    result = result.replace(".data-table .t{", ".data-table .t,.data-table a{", 1)
+    result = result.replace(' class="t"', "")
+    # The two badge elements carry the same visual rules without per-row classes.
+    result = result.replace(".asset,.e,.s{", ".asset,.e,.s,.stock-table b,.stock-table i,.new-table b,.new-table i{", 1)
+    result = result.replace(".s{", ".s,.stock-table b,.new-table b{", 1)
+    result = result.replace(".e{", ".e,.stock-table i,.new-table i{", 1)
+    result = result.replace("</style>", ".stock-table i,.new-table i{font-style:normal}</style>", 1)
+    result = re.sub(r'<b class="s">(.*?)</b>', r'<b>\1</b>', result)
+    result = re.sub(r'<b class="e">(.*?)</b>', r'<i>\1</i>', result)
     # Country flags repeat the country heading in these single-country tables.
     # Keep them decorative there and label the table; mixed tables retain alt.
     for country, label in (("us", "미국 종목"), ("kr", "한국 종목")):
         pattern = r'(<table\b[^>]*\bid="' + country + r'"[^>]*>)(.*?)(</table>)'
         def country_table(match):
             head = match.group(1).replace(">", ' aria-label="' + label + '">', 1)
-            rows = re.sub(r'(<img\b[^>]*\balt=)"[^"]*"', r'\1""', match.group(2))
+            rows = re.sub(r'\s+alt="[^"]*"', "", match.group(2))
             return head + rows + match.group(3)
         result = re.sub(pattern, country_table, result, flags=re.DOTALL)
     result = re.sub(r"</td>(?=<(?:td|th|/tr))", "", result)
@@ -315,6 +325,15 @@ def compact_transport_html(source):
     result = re.sub(r"</tr>(?=<(?:tr|/thead|/tbody|/tfoot))", "", result)
     result = re.sub(r'="([A-Za-z0-9_:/.,?&;%#+~-]+)"', r"=\1", result)
     result = re.sub(r"(<(?:img|meta|br)\b[^>]*?)/>", r"\1>", result)
+    # 8BITMIME preserves UTF-8 without Base64 expansion. Keep SMTP lines
+    # below 998 octets using whitespace at block boundaries only.
+    result = re.sub(r"(<style[^>]*>)(.*?)(</style>)",
+                    lambda match: match.group(1) + match.group(2).replace("}", "}\n") + match.group(3),
+                    result, flags=re.DOTALL)
+    # Whitespace inside opening tags is invisible even when td end tags are omitted.
+    result = re.sub(r"<(tr|table|thead|tbody|div|p|h1|h2|style|br)(?=[\s>])", r"<\1\n", result)
+    if max((len(line.encode("utf-8")) for line in result.splitlines()), default=0) > 998:
+        raise RuntimeError("HTML exceeds the SMTP line limit; compact markup without removing candidates")
     return result
 
 def inventory(source):

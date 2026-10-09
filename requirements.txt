@@ -7,3 +7,4 @@ pytz
 Pillow>=10.4.0
 
 html5lib>=1.1
+zopfli>=0.2.3
