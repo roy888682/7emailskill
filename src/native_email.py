@@ -99,10 +99,24 @@ def _trim_css(css, doc):
               ".data-table .p1", ".data-table .p3", ".data-table .p5", ".data-table .p10")
     if not doc.select(".notice"):
         unused += (".notice",)
+    if not doc.select(".flat"):
+        unused += (".flat",)
+    # Explicit z classes preserve stripes even in clients that ignore nth-child.
+    if all("z" in row.get("class", []) for table in doc.select("table.data-table")
+           for index, row in enumerate(table.select("tbody tr")) if index % 2):
+        unused += (".data-table tbody tr:nth-child(even)",)
+    unused += (".new-table th",)
     css = re.sub(r"([^{}]+)\{([^{}]*)\}",
                  lambda match: "" if match[1].strip() in unused else match[0], css)
     css = css.replace(".f img{", ".data-table img{")
-    css = css.replace(".m{", ".etf-comparison b{")
+    css = css.replace(".stock-table b,.stock-table i,.new-table b,.new-table i", ".c b,.c i")
+    css = css.replace(".stock-table b,.new-table b", ".c b")
+    css = css.replace(".stock-table i,.new-table i", ".c i")
+    css = css.replace(".stock-table th{", ".c th{")
+    css = css.replace("padding-left:3px;padding-right:3px", "")
+    css = css.replace("padding:3px 3px", "padding:3px")
+    css = css.replace(".etf-comparison .data-table{", ".v{")
+    css = css.replace(".m{", ".v b{")
     css = css.replace(".data-table .t,.data-table a{", ".data-table a{")
     css = css.replace(".data-table .n,.data-table .r{", ".data-table .n{")
     css = css.replace(".asset,.e,.s,", "")
