@@ -51,9 +51,9 @@ class FlagTests(unittest.TestCase):
 
     def test_country_cids_are_images_without_emoji(self):
         for country in ("US","USD"):
-            self.assertIn('cid:ath-flag-us',flag_html(country))
+            self.assertIn('cid:u',flag_html(country))
         for country in ("KR","KRW","KOSPI","KOSDAQ"):
-            self.assertIn('cid:ath-flag-kr',flag_html(country))
+            self.assertIn('cid:k',flag_html(country))
         source=flag_html("US")+flag_html("KR")
         self.assertNotIn("🇺🇸",source)
         self.assertNotIn("🇰🇷",source)
@@ -67,7 +67,14 @@ class FlagTests(unittest.TestCase):
         self.assertEqual([base64.b64decode(x) for x in encoded],[self.pngs["us"],self.pngs["kr"]])
         self.assertNotIn("cid:",preview)
         self.assertEqual(inline_flag_sources(preview),preview)
-        self.assertIn("data:image/png;base64,",inline_flag_sources("<img src='cid:ath-flag-kr'>"))
+        self.assertIn("data:image/png;base64,",inline_flag_sources("<img src='cid:k'>"))
+
+    def test_unquoted_compact_cids_preserve_exact_pngs(self):
+        source = '<img src=cid:u><img src=cid:k>'
+        preview = inline_flag_sources(source)
+        encoded = re.findall(r'src="data:image/png;base64,([^"]+)"',preview)
+        self.assertEqual([base64.b64decode(x) for x in encoded],[self.pngs["us"],self.pngs["kr"]])
+        self.assertNotIn("cid:", preview)
 
     def test_cached_assets(self):
         self.assertIs(flag_images()["us"],self.pngs["us"])

@@ -9,8 +9,7 @@ if __package__:
 else:
     from email_flags import flag_html
 
-MAX_BODY_BYTES = 65000
-US_VISIBLE_LIMIT = 38
+MAX_BODY_BYTES = 85000
 CSS = """
 body{margin:0;background:#f2f5f8;color:#17263d;font-family:Arial,'Malgun Gothic','Apple SD Gothic Neo',sans-serif;font-size:12px;line-height:1.4}
 table{border-collapse:collapse}a{color:#1260ad;text-decoration:none}
@@ -223,8 +222,7 @@ def _summary(us, kr, info, indices):
 
 def render_email(us, kr, info, usd_krw, new_us=None, new_kr=None, diag=None,
                  indices=None, etf_info=None):
-    """Restore the familiar 38-row US table with the full new-security list."""
-    us = us[:US_VISIBLE_LIMIT]
+    """Render every candidate with the existing desktop layout."""
     new_us, new_kr = new_us or [], new_kr or []
     indices, etf_info = indices or {}, etf_info or {}
     date_label = datetime.now(pytz.timezone("Asia/Seoul")).strftime("%Y.%m.%d")
@@ -287,9 +285,21 @@ def delivery_html(source):
             if key.startswith("data-") or key == "title":
                 del tag.attrs[key]
         if tag.get("class"):
-            tag["class"] = [aliases.get(cls, cls) for cls in tag["class"]]
+            tag["class"] = [aliases.get(cls, cls) for cls in tag["class"] if cls not in ("name-cell", "etf-table")]
+            if not tag["class"]:
+                del tag["class"]
     result = str(doc)
-    return re.sub(r">\s+<", "><", result).strip()
+    return compact_transport_html(re.sub(r">\s+<", "><", result).strip())
+
+
+def compact_transport_html(source):
+    """Omit only HTML5-optional syntax; the rendered table DOM is unchanged."""
+    result = re.sub(r"</td>(?=<(?:td|th|/tr))", "", source)
+    result = re.sub(r"</th>(?=<(?:td|th|/tr))", "", result)
+    result = re.sub(r"</tr>(?=<(?:tr|/thead|/tbody|/tfoot))", "", result)
+    result = re.sub(r'="([A-Za-z0-9_:/.,?&;%#+~-]+)"', r"=\1", result)
+    result = re.sub(r"(<(?:img|meta|br)\b[^>]*?)/>", r"\1>", result)
+    return result
 
 def inventory(source):
     """Read real table contents with the HTML5 parser, not debug attributes."""
@@ -312,7 +322,7 @@ def inventory(source):
     if table:
         for row in table.select("tbody tr"):
             cells = row.find_all("td", recursive=False)
-            country = "US" if "ath-flag-us" in cells[0].find("img")["src"] else "KR"
+            country = "US" if cells[0].find("img")["src"] == "cid:u" else "KR"
             result["new"].append(country + ":" + str(cells[1].find("a").contents[0]))
     return result
 

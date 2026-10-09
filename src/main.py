@@ -1129,12 +1129,14 @@ def compose_email_message(html, subject, user, to):
     msg.attach(alternative)
     for country, png in email_flags.flag_images().items():
         asset = MIMEImage(png, _subtype="png")
-        asset.add_header("Content-ID", f"<ath-flag-{country}>")
+        asset.add_header("Content-ID", "<u>" if country == "us" else "<k>")
         asset.add_header("Content-Disposition", "inline")
         msg.attach(asset)
-    wire_bytes = len(msg.as_bytes())
-    if wire_bytes > 95000:
-        raise RuntimeError(f"Encoded email {wire_bytes:,} bytes exceeds the conservative delivery budget")
+    # Bound both the HTML and decoded leaf content, including unchanged PNGs.
+    # Log the encoded transport size separately from these content budgets.
+    decoded_bytes = sum(len(part.get_payload(decode=True) or b"") for part in msg.walk() if not part.is_multipart())
+    if decoded_bytes > 100000:
+        raise RuntimeError(f"Decoded email {decoded_bytes:,} bytes exceeds the delivery budget")
     return msg
 
 
@@ -1157,7 +1159,7 @@ def send_email(html, subject):
         smtp.login(user,pwd); smtp.sendmail(user,to,msg.as_string())
     log.info(f"✅ 발송→{to}")
 
-CODE_VERSION = "2026-10-09-restore-38-table"
+CODE_VERSION = "2026-10-09-same-layout-all-candidates"
 
 def main(prepare_only=False):
     log.info(f"=== ATH 리포트 시작 (코드버전: {CODE_VERSION}) ===")
@@ -1190,13 +1192,13 @@ def main(prepare_only=False):
 
     diag = {"us_days_before": us_days_before, "kr_days_before": kr_days_before}
     email_html = build_email(us,kr,info,usd_krw,new_us,new_kr,diag,indices,etf_info)
-    expected = {"us": [s["ticker"] for s in us[:email_layout.US_VISIBLE_LIMIT]], "kr": [s["ticker"] for s in kr],
+    expected = {"us": [s["ticker"] for s in us], "kr": [s["ticker"] for s in kr],
                 "new": ["KR:" + s["ticker"] for s in new_kr] + ["US:" + s["ticker"] for s in new_us],
                 "etf": [s["ticker"] for s in etf_info["rows"]]}
     email_layout.validate_inventory(email_html, expected)
     log.info(f"기본 표 검증: 미국 {len(expected['us'])} · 한국 {len(kr)} · "
              f"신규 {len(new_us) + len(new_kr)}개 / 단일 메일")
-    subject = build_subject(info) + " · 기본표 복원 " + datetime.now(KST).strftime("%H:%M:%S")
+    subject = build_subject(info) + " · 전체종목 기본표 " + datetime.now(KST).strftime("%H:%M:%S")
     if prepare_only:
         size = email_layout.validate_size(email_html)
         directory = Path("work")

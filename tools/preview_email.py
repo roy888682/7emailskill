@@ -10,7 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-MAX_HTML_BYTES = 65000
+MAX_HTML_BYTES = 85000
 
 def make_stock(ticker, market="US", number=0, asset_type="주식"):
     korean = market != "US"
@@ -273,12 +273,9 @@ def main():
     if args.html:
         source = args.html.read_text(encoding="utf-8")
         expected = normalize_manifest(json.loads(args.manifest.read_text(encoding="utf-8")))
-        if len(expected["us"]) > 38:
-            raise AssertionError("Restored US table exceeds 38 securities")
     else:
         source = build_preview_html()
         data = preview_data()
-        data["us"] = data["us"][:38]
         expected = manifest_for(data)
     size = len(source.encode("utf-8"))
     print("PREVIEW_HTML_BYTES:%d" % size, flush=True)

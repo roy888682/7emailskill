@@ -74,11 +74,16 @@ def flag_images():
 
 def flag_html(market):
     country = "us" if str(market).upper() in ("US", "USD") else "kr"
+    cid = "u" if country == "us" else "k"
     height, label = (16, "성조기") if country == "us" else (20, "태극기")
-    return (f'<img src="cid:ath-flag-{country}" width="30" height="{height}" alt="{label}" '
+    return (f'<img src="cid:{cid}" width="30" height="{height}" alt="{label}" '
             'style="vertical-align:middle;margin-right:6px;border:1px solid #e2e8f0">')
 
 def inline_flag_sources(html):
     encoded = {country: base64.b64encode(png).decode("ascii") for country,png in flag_images().items()}
-    return re.sub(r"(\bsrc\s*=\s*['\"])cid:ath-flag-(us|kr)(['\"])",
-                  lambda m: m.group(1) + "data:image/png;base64," + encoded[m.group(2)] + m.group(3), html)
+    pattern = r"""\bsrc\s*=\s*(?:["']cid:(u|k|ath-flag-us|ath-flag-kr)["']|cid:(u|k)(?=[\s/>]))"""
+    def replace(match):
+        cid = match.group(1) or match.group(2)
+        country = "us" if cid in ("u", "ath-flag-us") else "kr"
+        return 'src="data:image/png;base64,' + encoded[country] + '"'
+    return re.sub(pattern, replace, html)

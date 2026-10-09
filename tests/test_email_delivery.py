@@ -15,11 +15,11 @@ from src.email_layout import inventory, render_email, validate_size
 
 class EmailDeliveryTests(unittest.TestCase):
     def test_inline_cid_flags_have_matching_png_parts(self):
-        html = '<img src="cid:ath-flag-us"><img src="cid:ath-flag-kr"><h1>ETF</h1>'
+        html = '<img src="cid:u"><img src="cid:k"><h1>ETF</h1>'
         message = compose_email_message(html, "test", "sender@example.test", "reader@example.test")
         parts = list(message.walk())
         images = [part for part in parts if part.get_content_type() == "image/png"]
-        self.assertEqual({part["Content-ID"] for part in images}, {"<ath-flag-us>", "<ath-flag-kr>"})
+        self.assertEqual({part["Content-ID"] for part in images}, {"<u>", "<k>"})
         self.assertEqual(len(images), 2)
         self.assertTrue(any(part.get_content_type() == "multipart/related" for part in parts))
         for part in images:
@@ -33,7 +33,7 @@ class EmailDeliveryTests(unittest.TestCase):
         self.assertLessEqual(len(message.as_bytes()), 95000)
 
     def test_oversized_html_is_rejected_before_smtp_without_dropping_rows(self):
-        html = '<img src="cid:ath-flag-us">' + "가" * 85000
+        html = '<img src="cid:u">' + "가" * 85000
         with self.assertRaisesRegex(RuntimeError, "never remove candidates"):
             compose_email_message(html, "test", "a@example.test", "b@example.test")
         with patch.dict(os.environ, {"GMAIL_USER":"a", "GMAIL_APP_PASSWORD":"b"}):
@@ -42,7 +42,7 @@ class EmailDeliveryTests(unittest.TestCase):
                     send_email(html, "test")
                 smtp.assert_not_called()
 
-    def test_main_restores_38_us_and_17_kr_in_one_message(self):
+    def test_main_sends_all_218_us_and_17_kr_in_one_message(self):
         data = sample_data()
         data["us"].extend(make_stock(f"EXTRA{i}", number=i) for i in range(5))
         info = dict(data["info"], us_last=date(2026,10,8), kr_last=date(2026,10,8))
@@ -61,8 +61,8 @@ class EmailDeliveryTests(unittest.TestCase):
         self.assertEqual(len(send.call_args.args), 2)
         html = send.call_args.args[0]
         keys = ["KR:" + x for x in inventory(html)["kr"]] + ["US:" + x for x in inventory(html)["us"]]
-        self.assertEqual(keys, ["KR:" + r["ticker"] for r in data["kr"]] + ["US:" + r["ticker"] for r in data["us"][:38]])
-        self.assertEqual(sum(key.startswith("US:") for key in keys), 38)
+        self.assertEqual(keys, ["KR:" + r["ticker"] for r in data["kr"]] + ["US:" + r["ticker"] for r in data["us"]])
+        self.assertEqual(sum(key.startswith("US:") for key in keys), 218)
         self.assertEqual(sum(key.startswith("KR:") for key in keys), 17)
         self.assertNotIn("첨부", html)
 
@@ -108,7 +108,7 @@ class EmailDeliveryTests(unittest.TestCase):
         self.assertNotIn("🇰🇷", subject)
 
     def test_send_uses_related_images_and_saves_actual_preview(self):
-        html = '<img src="cid:ath-flag-us">ETF'
+        html = '<img src="cid:u">ETF'
         with tempfile.TemporaryDirectory() as directory:
             original = os.getcwd()
             try:
