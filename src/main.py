@@ -8,9 +8,9 @@ from email.utils import formatdate, make_msgid
 from pathlib import Path
 
 if __package__:
-    from . import email_layout, email_flags, report_inline, us_naver_links
+    from . import email_layout, email_flags, report_inline, native_email, us_naver_links
 else:
-    import email_layout, email_flags, report_inline, us_naver_links
+    import email_layout, email_flags, report_inline, native_email, us_naver_links
 from datetime import datetime, timedelta, date, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -1122,7 +1122,7 @@ def build_subject(info):
 def compose_email_message(html, subject, user, to, inline_images=None, plain_text=None):
     """One complete HTML body with inline flags and zero attachment parts."""
     email_layout.validate_size(html)
-    report_inline.validate_delivery_size(html)
+    native_email.validate_delivery_size(html)
     inline_images=inline_images or {}
     msg = MIMEMultipart("related", policy=SMTP)
     msg["Subject"], msg["From"], msg["To"] = subject, user, to
@@ -1172,7 +1172,7 @@ def send_email(html, subject, inline_images=None, source_html=None):
     us_rows, kr_rows = len(tables["us"]), len(tables["kr"])
     attachment_count = sum(part.get_content_disposition() == "attachment" for part in msg.walk())
     log.info(f"메일 전체 본문: 미국 {us_rows}종목 / 한국 {kr_rows}종목 / "
-             f"{len(html.encode('utf-8')):,}바이트 / 전송 {len(msg.as_bytes()):,}바이트 / 첨부 {attachment_count}개 / 미국 표 본문 PNG {len(inline_images or {})}개")
+             f"{len(html.encode('utf-8')):,}바이트 / 전송 {len(msg.as_bytes()):,}바이트 / 첨부 {attachment_count}개 / 추가 본문 이미지 {len(inline_images or {})}개")
     bodies = [part for part in msg.walk() if part.get_content_type() == "text/html"]
     if attachment_count or len(bodies) != 1 or bodies[0].get_payload(decode=True).decode("utf-8").replace("\r\n", "\n") != html.replace("\r\n", "\n"):
         raise RuntimeError("MIME body failed delivery validation")
@@ -1184,7 +1184,7 @@ def send_email(html, subject, inline_images=None, source_html=None):
         smtp.sendmail(user,to,msg.as_bytes(),mail_options=("BODY=8BITMIME",))
     log.info(f"✅ 발송→{to}")
 
-CODE_VERSION = "2026-10-09-matching-us-kr-font-size"
+CODE_VERSION = "2026-10-10-native-us-kr-table-font"
 
 def main(prepare_only=False):
     log.info(f"=== ATH 리포트 시작 (코드버전: {CODE_VERSION}) ===")
@@ -1225,7 +1225,7 @@ def main(prepare_only=False):
              f"신규 {len(new_us) + len(new_kr)}개 / 단일 메일")
     subject = build_subject(info) + " · 전체종목 기본표 " + datetime.now(KST).strftime("%H:%M:%S")
     if prepare_only:
-        size = email_layout.validate_size(email_html)
+        size = native_email.validate_source_size(email_html)
         directory = Path("work")
         directory.mkdir(exist_ok=True)
         (directory / "email-body.html").write_text(email_html, encoding="utf-8")
@@ -1248,7 +1248,7 @@ def send_prepared():
     html = (directory / "email-body.html").read_text(encoding="utf-8")
     manifest = json.loads((directory / "report-manifest.json").read_text(encoding="utf-8"))
     email_layout.validate_inventory(html, manifest)
-    html_bytes = email_layout.validate_size(html)
+    html_bytes = native_email.validate_source_size(html)
     proof = json.loads((directory / "preview-passed.json").read_text(encoding="utf-8"))
     import hashlib
     if (
@@ -1262,19 +1262,23 @@ def send_prepared():
     ):
         raise RuntimeError("Email changed or browser validation proof is incomplete")
     delivery=(directory/"email-delivery.html").read_text(encoding="utf-8")
-    package_bytes=(directory/"inline-report.json").read_bytes()
+    package_bytes=(directory/"native-report.json").read_bytes()
     package=json.loads(package_bytes)
-    if (proof.get("delivery_sha256")!=report_inline.digest(delivery.encode("utf-8"))
-        or proof.get("package_sha256")!=report_inline.digest(package_bytes)
+    if (proof.get("delivery_sha256")!=hashlib.sha256(delivery.encode("utf-8")).hexdigest()
+        or proof.get("native_package_sha256")!=hashlib.sha256(package_bytes).hexdigest()
         or proof.get("delivery_checked") is not True
+        or proof.get("native_checked") is not True
         or proof.get("numbering_checked") is not True
         or proof.get("us_link_clicks")!=len(manifest["us"])
         or proof.get("us_font_matches_kr") is not True
+        or proof.get("high_font_matches_kr") is not True
         or set(proof.get("delivery_viewports",[]))!={900,1024,1280,1600,1920}):
-        raise RuntimeError("Actual delivery body or image proof is incomplete")
-    assets=report_inline.verify_package(html,delivery,manifest,package,directory)
+        raise RuntimeError("Actual native delivery body or font proof is incomplete")
+    assets=native_email.verify_package(html,delivery,manifest,package,directory)
+    if assets != {} or re.search(r"cid:us-report-|id=['\"]us-display",delivery):
+        raise RuntimeError("Production delivery must contain native US table text")
     send_email(delivery,(directory/"email-subject.txt").read_text(encoding="utf-8"),
-               inline_images=assets,source_html=html)
+               inline_images={},source_html=html)
     save_snapshots(json.loads((directory / "pending-snapshots.json").read_text(encoding="utf-8")))
 
 

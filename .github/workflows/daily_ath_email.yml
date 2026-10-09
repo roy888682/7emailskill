@@ -1,6 +1,11 @@
 name: 📈 Daily ATH Stock Email
 
 on:
+  push:
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'tools/preview_email.py'
   workflow_dispatch:
 
 jobs:
@@ -70,10 +75,23 @@ jobs:
       - name: 🧪 수익률·메일 레이아웃 검증
         run: python -m unittest discover -s tests -v
 
-      - name: 📄 전체 본문 준비 (아직 발송하지 않음)
-        run: python src/main.py --prepare-only
+      - name: 📄 오늘 검증용으로 수집한 전체 본문 복원
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            work/email-body.html
+            work/email-reference.html
+            work/report-manifest.json
+            work/email-subject.txt
+            work/pending-snapshots.json
+          key: ath-native-source-37996722840
+          fail-on-cache-miss: true
 
-      - name: 🖥️ 전체 종목·한미 글자 크기·데스크톱 배치 검증
+      - name: 📄 최신 본문·한국 기준 서식 확인
+        run: |
+          python -c "from pathlib import Path; import json; p=Path('work'); print({k:len(v) for k,v in json.loads((p/'report-manifest.json').read_text()).items()}); assert (p/'email-body.html').is_file(); assert (p/'email-reference.html').is_file()"
+
+      - name: 🖥️ 한미 HTML 글자·양식·전체 종목·확대 글꼴 검증
         run: python tools/preview_email.py --html work/email-body.html --manifest work/report-manifest.json --reference work/email-reference.html
 
       - name: 📧 검증된 전체 본문 발송

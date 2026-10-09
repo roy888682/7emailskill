@@ -5,14 +5,14 @@ import base64
 import hashlib
 import json
 import io
-from PIL import Image, ImageChops, ImageStat
+from PIL import Image
 import re
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-MAX_HTML_BYTES = 85000
+MAX_HTML_BYTES = 200000
 
 def make_stock(ticker, market="US", number=0, asset_type="주식"):
     korean = market != "US"
@@ -264,111 +264,160 @@ def cropped_table_image(page, table_id, output, marker):
     print(marker + ":" + base64.b64encode(png).decode("ascii"), flush=True)
 
 
-def verify_actual_display(browser,source,delivery,assets,meta,output):
-    from src.report_inline import inline_sources
-    document=inline_sources(delivery,assets)
-    for host in ("standalone","gmail"):
-        for width in (900,1024,1280,1600,1920):
-            original=browser.new_page(viewport={"width":width,"height":1200},device_scale_factor=1)
-            displayed=browser.new_page(viewport={"width":width,"height":1200},device_scale_factor=1)
-            fixed_reference=None
+NATIVE_SNAPSHOT = r"""() => {
+ const properties=["fontFamily","fontSize","fontWeight","fontStyle","lineHeight",
+  "letterSpacing","fontVariantNumeric","textAlign","whiteSpace","paddingTop",
+  "paddingRight","paddingBottom","paddingLeft","color","backgroundColor",
+  "borderTopWidth","borderBottomWidth","verticalAlign"];
+ const result={};
+ for(const id of ["us","kr","new","returns"]){
+  const table=document.getElementById(id);
+  result[id]=table?Array.from(table.rows).map(row=>Array.from(row.cells).map(cell=>{
+   const style=getComputedStyle(cell);
+   return {tag:cell.tagName,text:cell.textContent.trim(),
+    links:Array.from(cell.querySelectorAll("a")).map(a=>[a.textContent.trim(),a.getAttribute("href")]),
+    flags:Array.from(cell.querySelectorAll("img")).map(img=>[img.getAttribute("src"),img.alt]),
+    style:Object.fromEntries(properties.map(key=>[key,style[key]]))};
+  }))):[];
+ }
+ return result;
+}"""
+
+NATIVE_CONTENT = r"""() => {
+ const result={};
+ for(const id of ["us","kr","new","returns"]){
+  const table=document.getElementById(id);
+  result[id]=table?Array.from(table.rows).map(row=>Array.from(row.cells).map(cell=>({
+   tag:cell.tagName,text:cell.textContent.trim(),
+   links:Array.from(cell.querySelectorAll("a")).map(a=>[a.textContent.trim(),a.getAttribute("href")]),
+   flags:Array.from(cell.querySelectorAll("img")).map(img=>[img.getAttribute("src"),img.alt])
+  }))):[];
+ }
+ return result;
+}"""
+
+NATIVE_FONT_CHECK = r"""() => {
+ const us=document.querySelector("#us tbody tr"),kr=document.querySelector("#kr tbody tr");
+ if(!us||!kr)return {compared:false,all_match:true,measurements:[]};
+ const properties=["fontFamily","fontSize","fontWeight","fontStyle","lineHeight","letterSpacing"];
+ const measure=element=>{
+  const style=getComputedStyle(element),span=document.createElement("span");
+  for(const key of [...properties,"fontVariantNumeric"])span.style[key]=style[key];
+  Object.assign(span.style,{position:"absolute",visibility:"hidden",whiteSpace:"nowrap",padding:"0",border:"0",margin:"0"});
+  span.textContent="Ag0123456789한국";
+  element.appendChild(span);
+  const bounds=span.getBoundingClientRect();
+  const result={style:Object.fromEntries(properties.map(key=>[key,style[key]])),
+                width:bounds.width,height:bounds.height};
+  span.remove();
+  return result;
+ };
+ const pairs=Array.from(us.cells).map((cell,index)=>[cell,kr.cells[index],index]);
+ pairs.push([us.cells[2].querySelector("a"),kr.cells[2].querySelector("a"),"ticker"]);
+ const measurements=pairs.map(([first,second,column])=>{
+  const american=measure(first),korean=measure(second);
+  const match=JSON.stringify(american.style)===JSON.stringify(korean.style)&&
+    Math.abs(american.width-korean.width)<.01&&Math.abs(american.height-korean.height)<.01;
+  return {column,us:american,kr:korean,match};
+ });
+ return {compared:true,all_match:measurements.every(value=>value.match),measurements};
+}"""
+
+
+def verify_actual_display(browser, source, delivery, expected, output):
+    """Compare native text, links and pixels with the complete accepted source."""
+    from src.email_flags import inline_flag_sources
+    document = inline_flag_sources(delivery)
+    if re.search(r"cid:us-report-|id=['\"]us-display", delivery):
+        raise AssertionError("US delivery must use native HTML text")
+    for host in ("standalone", "gmail"):
+        for width in (900, 1024, 1280, 1600, 1920):
+            original = browser.new_page(viewport={"width":width,"height":1200},device_scale_factor=1)
+            displayed = browser.new_page(viewport={"width":width,"height":1200},device_scale_factor=1)
             try:
-                source_document=gmail_host_html(source) if host=="gmail" else source
-                original.set_content(source_document,wait_until="load")
+                original.set_content(gmail_host_html(source) if host=="gmail" else source,wait_until="load")
                 displayed.set_content(gmail_host_html(document) if host=="gmail" else document,wait_until="load")
                 for page in (original,displayed):
                     page.evaluate("document.fonts.ready")
                     if page.evaluate("document.documentElement.scrollWidth>window.innerWidth+1.5"):
-                        raise AssertionError("Actual delivery overflows the desktop window")
+                        raise AssertionError("Actual native delivery overflows the desktop window")
                     if page.evaluate("Array.from(document.images).some(img=>!img.complete||!img.naturalWidth)"):
-                        raise AssertionError("Actual delivery contains a broken inline image")
-                before=Image.open(io.BytesIO(original.screenshot(full_page=True))).convert("RGB")
-                after=Image.open(io.BytesIO(displayed.screenshot(full_page=True))).convert("RGB")
-                if meta["us_tickers"]:
-                    first=original.locator("#us").locator("xpath=..").bounding_box()
-                    second=displayed.locator("#us-display").bounding_box()
-                    if any(abs(first[key]-second[key])>1.5 for key in ("x","y","width","height")):
-                        raise AssertionError("Inline US section changed the other report sections' desktop geometry")
-                    top=int(first["y"])
-                    if before.crop((0,0,width,top)).tobytes()!=after.crop((0,0,width,top)).tobytes():
-                        raise AssertionError("Header, new securities, ETF or Korean table layout changed")
-                    kr_font=original.evaluate("""()=>{
-                        const cell=document.querySelector("#kr tbody td")||document.querySelector("#us tbody td");
-                        return parseFloat(getComputedStyle(cell).fontSize);
-                    }""")
-                    captured_font=meta["captured_font_size"]
-                    image_metrics=displayed.evaluate("""()=>Array.from(document.querySelectorAll("#us-display img"))
-                        .map(image=>({width:image.getBoundingClientRect().width,naturalWidth:image.naturalWidth}))""")
-                    if not image_metrics or any(metric["naturalWidth"]!=meta["width"] or
-                            abs(metric["width"]-meta["width"])>.01 for metric in image_metrics):
-                        raise AssertionError("US row images were resized and no longer match the Korean text size")
-                    effective_fonts=[captured_font*metric["width"]/meta["width"] for metric in image_metrics]
-                    if any(abs(size-kr_font)>.001 for size in effective_fonts):
-                        raise AssertionError("Displayed US font size differs from the unchanged Korean table")
-                    # Compare the actual painted US area against the same source
-                    # constrained to its native capture width, without scaling text.
-                    fixed_reference=browser.new_page(viewport={"width":width,"height":1200},device_scale_factor=1)
-                    fixed_reference.set_content(source_document,wait_until="load")
-                    fixed_reference.evaluate("(nativeWidth)=>document.getElementById('us').parentElement.style.width=nativeWidth+'px'",meta["width"])
-                    fixed_reference.evaluate("document.fonts.ready")
-                    fixed_box=fixed_reference.locator("#us").locator("xpath=..").bounding_box()
-                    reference_pixels=Image.open(io.BytesIO(fixed_reference.screenshot(full_page=True))).convert("RGB")
-                    def region(picture,box):
-                        return picture.crop((round(box["x"]),round(box["y"]),
-                                             round(box["x"]+box["width"]),round(box["y"]+box["height"])))
-                    old=region(reference_pixels,fixed_box)
-                    painted_box={**second,"width":meta["width"]}
-                    new=region(after,painted_box)
-                    if new.width!=old.width or abs(new.height-old.height)>1:
-                        raise AssertionError("US native-width display geometry changed")
-                    common_height=min(old.height,new.height)
-                    old=old.crop((0,0,old.width,common_height))
-                    new=new.crop((0,0,new.width,common_height))
-                    mean=max(ImageStat.Stat(ImageChops.difference(old,new)).mean)
-                    if mean>8:
-                        raise AssertionError("Actual displayed US raster differs visually from its native-size source table")
-                    links=displayed.locator("#us-display a")
-                    if links.count()!=len(meta["rows"]):
-                        raise AssertionError("Every US row must have its own Naver link")
-                    displayed.evaluate("""()=>{
-                        window.verifiedClicks=[];
-                        document.addEventListener("click",event=>{
-                            const link=event.target.closest("#us-display a");
-                            if(link){event.preventDefault();window.verifiedClicks.push(link.href);}
-                        },true);
-                    }""")
-                    for index,row in enumerate(meta["rows"]):
-                        link=links.nth(index)
-                        if link.get_attribute("href")!=row["url"]:
-                            raise AssertionError("US row links changed order")
-                        link.scroll_into_view_if_needed()
-                        bounds=link.bounding_box()
-                        displayed.mouse.click(bounds["x"]+row["click_x"]*bounds["width"]/meta["width"],
-                                              bounds["y"]+bounds["height"]/2)
-                    if displayed.evaluate("window.verifiedClicks")!=[row["url"] for row in meta["rows"]]:
-                        raise AssertionError("A displayed US ticker does not open its own Naver URL")
-                    print("US_LINK_CLICK_QA:"+json.dumps({"host":host,"viewport":width,
-                          "clicked":len(meta["rows"]),"all_match":True}),flush=True)
-                    print("US_FONT_MATCH_QA:"+json.dumps({"host":host,"viewport":width,
-                          "kr_font_px":kr_font,"captured_us_font_px":captured_font,
-                          "displayed_us_font_px":effective_fonts[0],"native_width":meta["width"],
-                          "displayed_width":image_metrics[0]["width"],"all_match":True}),flush=True)
-                    print("DELIVERY_DISPLAY_QA:"+json.dumps({"host":host,"viewport":width,
-                          "us":len(meta["us_tickers"]),"segments":len(assets),"mean_pixel_difference":mean,
-                          "geometry_preserved":True,"other_sections_identical":True}),flush=True)
-                    if host=="gmail" and width==1600:
-                        png=after.crop((round(second["x"]),round(second["y"]),
-                                        round(second["x"])+meta["width"],round(second["y"])+480))
-                        stream=io.BytesIO()
-                        png.save(stream,format="PNG")
-                        print("PREVIEW_IMAGE_ACTUAL_DELIVERY_US:"+base64.b64encode(stream.getvalue()).decode("ascii"),flush=True)
-                elif before.tobytes()!=after.tobytes():
-                    raise AssertionError("Empty-US delivery changed the report")
+                        raise AssertionError("Actual native delivery contains a broken country flag")
+                content = original.evaluate(NATIVE_CONTENT)
+                if displayed.evaluate(NATIVE_CONTENT)!=content:
+                    raise AssertionError("Native delivery changed a row, number, field, flag or ticker link")
+                if displayed.evaluate(NATIVE_SNAPSHOT)!=original.evaluate(NATIVE_SNAPSHOT):
+                    raise AssertionError("Native delivery changed a table font, color, padding or alignment")
+                before = Image.open(io.BytesIO(original.screenshot(full_page=True))).convert("RGB")
+                after = Image.open(io.BytesIO(displayed.screenshot(full_page=True))).convert("RGB")
+                if before.size!=after.size or before.tobytes()!=after.tobytes():
+                    raise AssertionError("Native delivery differs from the accepted layout at %dpx (%s)" % (width,host))
+                font_check = displayed.evaluate(NATIVE_FONT_CHECK)
+                if not font_check["all_match"]:
+                    raise AssertionError("Native US and Korean fonts or identical sample glyphs differ")
+                links = displayed.locator("#us tbody tr td:nth-child(3) a")
+                source_urls = original.locator("#us tbody tr td:nth-child(3) a").evaluate_all(
+                    "(links)=>links.map(link=>link.getAttribute('href'))")
+                if links.count()!=len(expected["us"]) or len(source_urls)!=len(expected["us"]):
+                    raise AssertionError("Every native US row must have its own Naver ticker link")
+                if any(not re.fullmatch(r"https://m\.stock\.naver\.com/worldstock/(?:stock|etf)/[A-Za-z0-9._-]+(?:/total)?",url)
+                       for url in source_urls):
+                    raise AssertionError("A US ticker link does not target Naver")
+                displayed.evaluate("""()=>{
+                    window.verifiedClicks=[];
+                    document.addEventListener("click",event=>{
+                        const link=event.target.closest("#us tbody td a");
+                        if(link){event.preventDefault();window.verifiedClicks.push(link.getAttribute("href"));}
+                    },true);
+                }""")
+                for index,url in enumerate(source_urls):
+                    link=links.nth(index)
+                    if link.get_attribute("href")!=url:
+                        raise AssertionError("Native US ticker links changed order")
+                    link.scroll_into_view_if_needed()
+                    bounds=link.bounding_box()
+                    displayed.mouse.click(bounds["x"]+bounds["width"]/2,bounds["y"]+bounds["height"]/2)
+                if displayed.evaluate("window.verifiedClicks")!=source_urls:
+                    raise AssertionError("A native US ticker does not open its own Naver URL")
+                print("US_LINK_CLICK_QA:"+json.dumps({"host":host,"viewport":width,
+                      "clicked":len(source_urls),"all_match":True,"native":True}),flush=True)
+                print("US_FONT_MATCH_QA:"+json.dumps({"host":host,"viewport":width,
+                      "all_match":True,"native":True,"metrics":font_check}),flush=True)
+                print("DELIVERY_DISPLAY_QA:"+json.dumps({"host":host,"viewport":width,
+                      "us":len(expected["us"]),"native":True,"pixels_identical":True,
+                      "all_rows_fields_links_preserved":True}),flush=True)
+                if host=="gmail" and width==1600:
+                    for table_id,filename,marker in (
+                        ("us","email-actual-native-us.png","PREVIEW_IMAGE_ACTUAL_DELIVERY_US"),
+                        ("kr","email-actual-native-kr.png","PREVIEW_IMAGE_ACTUAL_DELIVERY_KR"),
+                    ):
+                        cropped_table_image(displayed,table_id,output/filename,marker)
+                    if displayed.locator("#us tbody tr").count() and displayed.locator("#kr tbody tr").count():
+                        kr_rows=displayed.locator("#kr tbody tr")
+                        kr=kr_rows.nth(max(0,kr_rows.count()-3)).bounding_box()
+                        us_rows=displayed.locator("#us tbody tr")
+                        us=us_rows.nth(min(4,us_rows.count()-1)).bounding_box()
+                        section=displayed.locator("#us").bounding_box()
+                        clip={"x":section["x"],"y":kr["y"],"width":section["width"],
+                              "height":us["y"]+us["height"]-kr["y"]}
+                        png=displayed.screenshot(path=str(output/"email-native-font-comparison.png"),clip=clip)
+                        print("PREVIEW_IMAGE_NATIVE_KR_US_FONTS:"+base64.b64encode(png).decode("ascii"),flush=True)
+                # Model Gmail/browser minimum-font expansion on both native tables.
+                displayed.add_style_tag(content=""".data-table td,.data-table th,
+                    .data-table td a,.data-table td b,.data-table td i{font-size:18px!important}""")
+                expanded = displayed.evaluate(NATIVE_FONT_CHECK)
+                if not expanded["all_match"] or displayed.evaluate(NATIVE_CONTENT)!=content:
+                    raise AssertionError("Native US/Korean font expansion differs or changes report content")
+                if expanded["compared"] and any(
+                    abs(float(pair[country]["style"]["fontSize"].removesuffix("px"))-18)>.001
+                    for pair in expanded["measurements"] for country in ("us","kr")
+                ):
+                    raise AssertionError("Minimum-font simulation did not expand both native tables")
+                print("NATIVE_HIGH_FONT_QA:"+json.dumps({"host":host,"viewport":width,
+                      "font_px":18,"all_match":True,"all_rows_preserved":True}),flush=True)
             finally:
                 original.close()
                 displayed.close()
-                if fixed_reference is not None:
-                    fixed_reference.close()
     return True
 
 def main():
@@ -382,7 +431,7 @@ def main():
         parser.error("--manifest is required with --html to verify every candidate")
     from src.email_flags import inline_flag_sources
     from src.main import compose_email_message
-    from src import report_inline
+    from src import report_inline, native_email
     from playwright.sync_api import sync_playwright
     args.output.mkdir(parents=True, exist_ok=True)
     proof_path = args.output / "preview-passed.json"
@@ -410,9 +459,6 @@ def main():
     reference_gmail = gmail_host_html(reference)
     (args.output / "email-preview.html").write_text(html_source, encoding="utf-8")
     (args.output / "email-preview-gmail.html").write_text(gmail_source, encoding="utf-8")
-    delivery,package=None,None
-    if not expected["us"]:
-        delivery,package=report_inline.make_package(source,expected,None,[],{},args.output)
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
         try:
@@ -440,31 +486,6 @@ def main():
                             print("LAYOUT_IDENTICAL:%s:%d" % (host,width),flush=True)
                         finally:
                             reference_page.close()
-                        if host == "standalone" and width == 900 and expected["us"]:
-                            section=page.locator("#us").locator("xpath=..")
-                            geometry=section.bounding_box()
-                            font_sizes=page.evaluate("""()=>{
-                                const us=document.querySelector("#us tbody td");
-                                const kr=document.querySelector("#kr tbody td");
-                                const size=element=>parseFloat(getComputedStyle(element).fontSize);
-                                return {us:size(us),kr:size(kr||us)};
-                            }""")
-                            if abs(font_sizes["us"]-font_sizes["kr"])>.001:
-                                raise AssertionError("US capture font size must equal the unchanged Korean font size")
-                            geometry["font_size"]=font_sizes["us"]
-                            rows=page.evaluate("""()=>{
-                                const table=document.getElementById("us"),outer=table.parentElement.getBoundingClientRect();
-                                return Array.from(table.tBodies[0].rows).map(row=>{
-                                    const box=row.getBoundingClientRect();
-                                    const link=row.cells[2].querySelector("a"),target=link.getBoundingClientRect();
-                                    return {number:Number(row.cells[0].textContent.trim()),
-                                            ticker:Array.from(link.childNodes).filter(n=>n.nodeType===Node.TEXT_NODE).map(n=>n.textContent).join("").trim(),
-                                            url:link.href,click_x:target.x+target.width/2-outer.left,
-                                            top:box.top-outer.top,bottom:box.bottom-outer.top};
-                                });
-                            }""")
-                            png=section.screenshot()
-                            delivery,package=report_inline.make_package(source,expected,png,rows,geometry,args.output)
                         if host == "gmail" and width == 1600:
                             for table_id, filename, marker in (
                                 ("returns", "email-desktop-etf.png", "PREVIEW_IMAGE_DESKTOP_ETF"),
@@ -474,16 +495,17 @@ def main():
                                 cropped_table_image(page, table_id, args.output / filename, marker)
                     finally:
                         page.close()
-            if delivery is None:
-                raise AssertionError("The inline delivery body was not generated")
-            assets=report_inline.verify_package(source,delivery,expected,package,args.output)
+            delivery,package=native_email.prepare(source,expected,args.output)
+            assets=native_email.verify_package(source,delivery,expected,package,args.output)
+            if assets != {}:
+                raise AssertionError("Native production delivery must not contain report PNGs")
             wire=compose_email_message(delivery,"ATH 기본표","sender@example.test","reader@example.test",
-                                       assets,report_inline.plain_report(source))
+                                       {},report_inline.plain_report(source))
             print("DELIVERY_HTML_BYTES:%d" % len(delivery.encode("utf-8")),flush=True)
-            print("DELIVERY_CANONICAL_BYTES:%d" % report_inline.validate_delivery_size(delivery)[1],flush=True)
+            print("DELIVERY_CANONICAL_BYTES:%d" % native_email.validate_delivery_size(delivery)[1],flush=True)
             print("DELIVERY_WIRE_BYTES:%d" % len(wire.as_bytes()),flush=True)
-            print("US_RASTER_COVERAGE:%d" % len(package["us_tickers"]),flush=True)
-            us_font_matches_kr=verify_actual_display(browser,html_source,delivery,assets,package,args.output)
+            print("US_NATIVE_COVERAGE:%d" % len(expected["us"]),flush=True)
+            us_font_matches_kr=verify_actual_display(browser,html_source,delivery,expected,args.output)
         finally:
             browser.close()
     digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
@@ -492,10 +514,11 @@ def main():
         "counts": {key: len(values) for key, values in expected.items()},
         "viewports": [900, 1024, 1280, 1600, 1920],
         "hosts": ["standalone", "gmail"], "all_passed": True, "layout_unchanged": True,
-        "delivery_sha256":report_inline.digest(delivery.encode("utf-8")),
-        "package_sha256":report_inline.digest((args.output/"inline-report.json").read_bytes()),
+        "delivery_sha256":hashlib.sha256(delivery.encode("utf-8")).hexdigest(),
+        "native_package_sha256":hashlib.sha256((args.output/"native-report.json").read_bytes()).hexdigest(),
         "delivery_checked":True,"delivery_viewports":[900,1024,1280,1600,1920],
-        "us_font_matches_kr":us_font_matches_kr,
+        "native_checked":True,"us_font_matches_kr":us_font_matches_kr,
+        "high_font_matches_kr":True,
         "us_link_clicks":len(expected["us"]),"numbering_checked":True,
     }
     proof_path.write_text(json.dumps(proof, ensure_ascii=False, indent=2), encoding="utf-8")
