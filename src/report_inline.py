@@ -28,7 +28,7 @@ def validate_delivery_size(html):
 def safe_lines(html):
     html=re.sub(r"(<style[^>]*>)(.*?)(</style>)",
                 lambda m:m[1]+m[2].replace("}","}\n")+m[3],html,flags=re.DOTALL)
-    html=re.sub(r"<(tr|table|thead|tbody|div|p|h1|h2|style|br)(?=[\s>])",r"<\1\n",html)
+    html=re.sub(r"<([A-Za-z][A-Za-z0-9]*)(?=[\s/>])",r"<\1\n",html)
     return html
 
 def make_package(source, expected, png, rows, geometry, directory):
