@@ -278,7 +278,7 @@ NATIVE_SNAPSHOT = r"""() => {
     links:Array.from(cell.querySelectorAll("a")).map(a=>[a.textContent.trim(),a.getAttribute("href")]),
     flags:Array.from(cell.querySelectorAll("img")).map(img=>[img.getAttribute("src"),img.alt]),
     style:Object.fromEntries(properties.map(key=>[key,style[key]]))};
-  }))):[];
+  })):[];
  }
  return result;
 }"""
@@ -346,7 +346,18 @@ def verify_actual_display(browser, source, delivery, expected, output):
                 content = original.evaluate(NATIVE_CONTENT)
                 if displayed.evaluate(NATIVE_CONTENT)!=content:
                     raise AssertionError("Native delivery changed a row, number, field, flag or ticker link")
-                if displayed.evaluate(NATIVE_SNAPSHOT)!=original.evaluate(NATIVE_SNAPSHOT):
+                actual_styles=displayed.evaluate(NATIVE_SNAPSHOT)
+                original_styles=original.evaluate(NATIVE_SNAPSHOT)
+                if actual_styles!=original_styles:
+                    mismatches=[]
+                    for table_id,rows in original_styles.items():
+                        for row_index,row in enumerate(rows):
+                            for cell_index,cell in enumerate(row):
+                                actual=actual_styles[table_id][row_index][cell_index]
+                                if actual!=cell:
+                                    mismatches.append({"table":table_id,"row":row_index,"column":cell_index,
+                                        "expected":cell,"actual":actual})
+                    print("NATIVE_STYLE_MISMATCH:"+json.dumps(mismatches[:3],ensure_ascii=False),flush=True)
                     raise AssertionError("Native delivery changed a table font, color, padding or alignment")
                 before = Image.open(io.BytesIO(original.screenshot(full_page=True))).convert("RGB")
                 after = Image.open(io.BytesIO(displayed.screenshot(full_page=True))).convert("RGB")
