@@ -11,6 +11,7 @@ from tools.preview_email import sample_data, make_stock
 from datetime import date
 import re
 from src.email_layout import inventory, render_email, validate_size
+from src import report_inline
 
 
 class EmailDeliveryTests(unittest.TestCase):
@@ -98,7 +99,11 @@ class EmailDeliveryTests(unittest.TestCase):
                 Path("work/report-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
                 Path("work/email-subject.txt").write_text("test", encoding="utf-8")
                 Path("work/pending-snapshots.json").write_text("{}", encoding="utf-8")
-                for change in ({"all_passed":False}, {"layout_unchanged":False}, {"html_bytes":1}, {"hosts":["standalone"]},
+                delivery,package=report_inline.make_package(html,manifest,None,[],{},Path("work"))
+                proof.update(delivery_sha256=report_inline.digest(delivery.encode("utf-8")),
+                             package_sha256=report_inline.digest(Path("work/inline-report.json").read_bytes()),
+                             delivery_checked=True,delivery_viewports=[1600,1920])
+                for change in ({"delivery_checked":False}, {"delivery_sha256":"bad"}, {"package_sha256":"bad"}, {"delivery_viewports":[]}, {"all_passed":False}, {"layout_unchanged":False}, {"html_bytes":1}, {"hosts":["standalone"]},
                                {"viewports":[1024]}, {"counts":{}}, {"sha256":"bad"}):
                     with self.subTest(change=change):
                         Path("work/preview-passed.json").write_text(json.dumps(dict(proof, **change)), encoding="utf-8")
@@ -109,7 +114,7 @@ class EmailDeliveryTests(unittest.TestCase):
                 Path("work/preview-passed.json").write_text(json.dumps(proof), encoding="utf-8")
                 with patch("src.main.send_email") as send, patch("src.main.save_snapshots"):
                     send_prepared()
-                    send.assert_called_once_with(html, "test")
+                    send.assert_called_once_with(html, "test",inline_images={},source_html=html)
             finally:
                 os.chdir(original)
 

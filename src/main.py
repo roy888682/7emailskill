@@ -8,9 +8,9 @@ from email.utils import formatdate, make_msgid
 from pathlib import Path
 
 if __package__:
-    from . import email_layout, email_flags
+    from . import email_layout, email_flags, report_inline
 else:
-    import email_layout, email_flags
+    import email_layout, email_flags, report_inline
 from datetime import datetime, timedelta, date, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -1118,14 +1118,16 @@ def build_subject(info):
     return f"ATH & ETF | 미국 {info['us_last_str']}{ut} / 한국 {info['kr_last_str']}{kt}"
 
 
-def compose_email_message(html, subject, user, to):
+def compose_email_message(html, subject, user, to, inline_images=None, plain_text=None):
     """One complete HTML body with inline flags and zero attachment parts."""
     email_layout.validate_size(html)
+    report_inline.validate_delivery_size(html)
+    inline_images=inline_images or {}
     msg = MIMEMultipart("related", policy=SMTP)
     msg["Subject"], msg["From"], msg["To"] = subject, user, to
     msg["Date"], msg["Message-ID"] = formatdate(localtime=True), make_msgid()
     alternative = MIMEMultipart("alternative")
-    alternative.attach(MIMEText("오늘의 ATH & ETF 전체 리포트입니다. HTML 보기에서 모든 후보와 ETF 수익률을 확인하세요.", "plain", "utf-8"))
+    alternative.attach(MIMEText(plain_text or "오늘의 ATH & ETF 전체 리포트입니다. HTML 보기에서 모든 후보와 ETF 수익률을 확인하세요.", "plain", "utf-8"))
     body = MIMEText("", "html", "utf-8")
     del body["Content-Transfer-Encoding"]
     body.set_payload(html.replace("\r\n", "\n").replace("\n", "\r\n").encode("utf-8"))
@@ -1137,31 +1139,39 @@ def compose_email_message(html, subject, user, to):
         asset.add_header("Content-ID", "<u>" if country == "us" else "<k>")
         asset.add_header("Content-Disposition", "inline")
         msg.attach(asset)
-    # Bound both the HTML and decoded leaf content, including unchanged PNGs.
+    for cid,png in inline_images.items():
+        if not re.fullmatch(r"us-report-\d{2}",cid) or "cid:"+cid not in html:
+            raise RuntimeError("Invalid or unreferenced inline report image")
+        asset=MIMEImage(png,_subtype="png")
+        asset.add_header("Content-ID","<"+cid+">")
+        asset.add_header("Content-Disposition","inline")
+        msg.attach(asset)
+    # Images are inline display content. Bound the small HTML and total SMTP message separately.
     # Log the encoded transport size separately from these content budgets.
     decoded_bytes = sum(len(part.get_payload(decode=True) or b"") for part in msg.walk() if not part.is_multipart())
-    if decoded_bytes > 100000:
-        raise RuntimeError(f"Decoded email {decoded_bytes:,} bytes exceeds the delivery budget")
+    if decoded_bytes > 12000000:
+        raise RuntimeError(f"Decoded email {decoded_bytes:,} bytes exceeds the inline image budget")
     wire = msg.as_bytes()
-    if len(wire) > 95000:
-        raise RuntimeError(f"Serialized email {len(wire):,} bytes exceeds 95,000; compact markup, never remove candidates")
+    if len(wire) > 20000000:
+        raise RuntimeError("Serialized inline report exceeds the SMTP delivery budget")
     if max((len(line) for line in wire.split(b"\r\n")), default=0) > 998:
         raise RuntimeError("Serialized email exceeds the SMTP line limit")
     return msg
 
 
-def send_email(html, subject):
+def send_email(html, subject, inline_images=None, source_html=None):
     user=os.environ["GMAIL_USER"]; pwd=os.environ["GMAIL_APP_PASSWORD"]
     to=os.environ.get("RECIPIENT_EMAIL","ykhan@dacpole.com")
-    msg = compose_email_message(html, subject, user, to)
+    msg = compose_email_message(html, subject, user, to, inline_images,
+                                report_inline.plain_report(source_html) if source_html else None)
     preview_dir = Path("work")
     preview_dir.mkdir(exist_ok=True)
-    (preview_dir / "email-preview.html").write_text(email_flags.inline_flag_sources(html), encoding="utf-8")
-    tables = email_layout.inventory(html)
+    (preview_dir / "email-preview.html").write_text(report_inline.inline_sources(html, inline_images or {}), encoding="utf-8")
+    tables = email_layout.inventory(source_html or html)
     us_rows, kr_rows = len(tables["us"]), len(tables["kr"])
     attachment_count = sum(part.get_content_disposition() == "attachment" for part in msg.walk())
     log.info(f"메일 전체 본문: 미국 {us_rows}종목 / 한국 {kr_rows}종목 / "
-             f"{len(html.encode('utf-8')):,}바이트 / 전송 {len(msg.as_bytes()):,}바이트 / 첨부 {attachment_count}개 / 국기 PNG 2개")
+             f"{len(html.encode('utf-8')):,}바이트 / 전송 {len(msg.as_bytes()):,}바이트 / 첨부 {attachment_count}개 / 미국 표 본문 PNG {len(inline_images or {})}개")
     bodies = [part for part in msg.walk() if part.get_content_type() == "text/html"]
     if attachment_count or len(bodies) != 1 or bodies[0].get_payload(decode=True).decode("utf-8").replace("\r\n", "\n") != html.replace("\r\n", "\n"):
         raise RuntimeError("MIME body failed delivery validation")
@@ -1173,7 +1183,7 @@ def send_email(html, subject):
         smtp.sendmail(user,to,msg.as_bytes(),mail_options=("BODY=8BITMIME",))
     log.info(f"✅ 발송→{to}")
 
-CODE_VERSION = "2026-10-09-complete-message-under-95kb"
+CODE_VERSION = "2026-10-09-small-inline-body-complete-us-table"
 
 def main(prepare_only=False):
     log.info(f"=== ATH 리포트 시작 (코드버전: {CODE_VERSION}) ===")
@@ -1250,7 +1260,17 @@ def send_prepared():
         or set(proof.get("viewports", [])) != {900, 1024, 1280, 1600, 1920}
     ):
         raise RuntimeError("Email changed or browser validation proof is incomplete")
-    send_email(html, (directory / "email-subject.txt").read_text(encoding="utf-8"))
+    delivery=(directory/"email-delivery.html").read_text(encoding="utf-8")
+    package_bytes=(directory/"inline-report.json").read_bytes()
+    package=json.loads(package_bytes)
+    if (proof.get("delivery_sha256")!=report_inline.digest(delivery.encode("utf-8"))
+        or proof.get("package_sha256")!=report_inline.digest(package_bytes)
+        or proof.get("delivery_checked") is not True
+        or set(proof.get("delivery_viewports",[]))!={1600,1920}):
+        raise RuntimeError("Actual delivery body or image proof is incomplete")
+    assets=report_inline.verify_package(html,delivery,manifest,package,directory)
+    send_email(delivery,(directory/"email-subject.txt").read_text(encoding="utf-8"),
+               inline_images=assets,source_html=html)
     save_snapshots(json.loads((directory / "pending-snapshots.json").read_text(encoding="utf-8")))
 
 

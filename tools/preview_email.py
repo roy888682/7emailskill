@@ -5,7 +5,7 @@ import base64
 import hashlib
 import json
 import io
-from PIL import Image
+from PIL import Image, ImageChops, ImageStat
 import re
 import sys
 from pathlib import Path
@@ -258,6 +258,58 @@ def cropped_table_image(page, table_id, output, marker):
     png = page.screenshot(path=str(output), clip=clip)
     print(marker + ":" + base64.b64encode(png).decode("ascii"), flush=True)
 
+
+def verify_actual_display(browser,source,delivery,assets,meta,output):
+    from src.report_inline import inline_sources
+    document=inline_sources(delivery,assets)
+    for host in ("standalone","gmail"):
+        for width in (1600,1920):
+            original=browser.new_page(viewport={"width":width,"height":1200},device_scale_factor=1)
+            displayed=browser.new_page(viewport={"width":width,"height":1200},device_scale_factor=1)
+            try:
+                original.set_content(gmail_host_html(source) if host=="gmail" else source,wait_until="load")
+                displayed.set_content(gmail_host_html(document) if host=="gmail" else document,wait_until="load")
+                for page in (original,displayed):
+                    page.evaluate("document.fonts.ready")
+                    if page.evaluate("document.documentElement.scrollWidth>window.innerWidth+1.5"):
+                        raise AssertionError("Actual delivery overflows the desktop window")
+                    if page.evaluate("Array.from(document.images).some(img=>!img.complete||!img.naturalWidth)"):
+                        raise AssertionError("Actual delivery contains a broken inline image")
+                before=Image.open(io.BytesIO(original.screenshot(full_page=True))).convert("RGB")
+                after=Image.open(io.BytesIO(displayed.screenshot(full_page=True))).convert("RGB")
+                if meta["us_tickers"]:
+                    first=original.locator("#us").locator("xpath=..").bounding_box()
+                    second=displayed.locator("#us-display").bounding_box()
+                    if any(abs(first[key]-second[key])>1.5 for key in ("x","y","width","height")):
+                        raise AssertionError("Inline US section changed the accepted desktop geometry")
+                    top=int(first["y"])
+                    if before.crop((0,0,width,top)).tobytes()!=after.crop((0,0,width,top)).tobytes():
+                        raise AssertionError("Header, new securities, ETF or Korean table layout changed")
+                    def region(picture,box):
+                        return picture.crop((round(box["x"]),round(box["y"]),
+                                             round(box["x"]+box["width"]),round(box["y"]+box["height"])))
+                    old=region(before,first)
+                    new=region(after,second)
+                    if new.size!=old.size:
+                        new=new.resize(old.size)
+                    mean=max(ImageStat.Stat(ImageChops.difference(old,new)).mean)
+                    if mean>8:
+                        raise AssertionError("Actual displayed US raster differs visually from the original table")
+                    print("DELIVERY_DISPLAY_QA:"+json.dumps({"host":host,"viewport":width,
+                          "us":len(meta["us_tickers"]),"segments":len(assets),"mean_pixel_difference":mean,
+                          "geometry_preserved":True,"other_sections_identical":True}),flush=True)
+                    if host=="gmail" and width==1600:
+                        png=after.crop((round(second["x"]),round(second["y"]),
+                                        round(second["x"]+second["width"]),round(second["y"])+480))
+                        stream=io.BytesIO()
+                        png.save(stream,format="PNG")
+                        print("PREVIEW_IMAGE_ACTUAL_DELIVERY_US:"+base64.b64encode(stream.getvalue()).decode("ascii"),flush=True)
+                elif before.tobytes()!=after.tobytes():
+                    raise AssertionError("Empty-US delivery changed the report")
+            finally:
+                original.close()
+                displayed.close()
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--html", type=Path)
@@ -269,6 +321,7 @@ def main():
         parser.error("--manifest is required with --html to verify every candidate")
     from src.email_flags import inline_flag_sources
     from src.main import compose_email_message
+    from src import report_inline
     from playwright.sync_api import sync_playwright
     args.output.mkdir(parents=True, exist_ok=True)
     proof_path = args.output / "preview-passed.json"
@@ -284,8 +337,6 @@ def main():
     print("PREVIEW_HTML_BYTES:%d" % size, flush=True)
     if args.html and size > MAX_HTML_BYTES:
         raise AssertionError("HTML body %d bytes exceeds %d-byte budget" % (size, MAX_HTML_BYTES))
-    wire = compose_email_message(source, "ATH 기본표", "sender@example.test", "reader@example.test")
-    print("PREVIEW_WIRE_BYTES:%d" % len(wire.as_bytes()), flush=True)
     html_source = inline_flag_sources(source)
     gmail_source = gmail_host_html(html_source)
     if args.reference:
@@ -298,6 +349,9 @@ def main():
     reference_gmail = gmail_host_html(reference)
     (args.output / "email-preview.html").write_text(html_source, encoding="utf-8")
     (args.output / "email-preview-gmail.html").write_text(gmail_source, encoding="utf-8")
+    delivery,package=None,None
+    if not expected["us"]:
+        delivery,package=report_inline.make_package(source,expected,None,[],{},args.output)
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
         try:
@@ -325,6 +379,19 @@ def main():
                             print("LAYOUT_IDENTICAL:%s:%d" % (host,width),flush=True)
                         finally:
                             reference_page.close()
+                        if host == "standalone" and width == 1600 and expected["us"]:
+                            section=page.locator("#us").locator("xpath=..")
+                            geometry=section.bounding_box()
+                            rows=page.evaluate("""()=>{
+                                const table=document.getElementById("us"),outer=table.parentElement.getBoundingClientRect();
+                                return Array.from(table.tBodies[0].rows).map(row=>{
+                                    const box=row.getBoundingClientRect();
+                                    return {ticker:row.cells[1].querySelector("a").textContent.trim(),
+                                            top:box.top-outer.top,bottom:box.bottom-outer.top};
+                                });
+                            }""")
+                            png=section.screenshot()
+                            delivery,package=report_inline.make_package(source,expected,png,rows,geometry,args.output)
                         if host == "gmail" and width == 1600:
                             for table_id, filename, marker in (
                                 ("returns", "email-desktop-etf.png", "PREVIEW_IMAGE_DESKTOP_ETF"),
@@ -334,6 +401,16 @@ def main():
                                 cropped_table_image(page, table_id, args.output / filename, marker)
                     finally:
                         page.close()
+            if delivery is None:
+                raise AssertionError("The inline delivery body was not generated")
+            assets=report_inline.verify_package(source,delivery,expected,package,args.output)
+            wire=compose_email_message(delivery,"ATH 기본표","sender@example.test","reader@example.test",
+                                       assets,report_inline.plain_report(source))
+            print("DELIVERY_HTML_BYTES:%d" % len(delivery.encode("utf-8")),flush=True)
+            print("DELIVERY_CANONICAL_BYTES:%d" % report_inline.validate_delivery_size(delivery)[1],flush=True)
+            print("DELIVERY_WIRE_BYTES:%d" % len(wire.as_bytes()),flush=True)
+            print("US_RASTER_COVERAGE:%d" % len(package["us_tickers"]),flush=True)
+            verify_actual_display(browser,html_source,delivery,assets,package,args.output)
         finally:
             browser.close()
     digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
@@ -342,6 +419,9 @@ def main():
         "counts": {key: len(values) for key, values in expected.items()},
         "viewports": [900, 1024, 1280, 1600, 1920],
         "hosts": ["standalone", "gmail"], "all_passed": True, "layout_unchanged": True,
+        "delivery_sha256":report_inline.digest(delivery.encode("utf-8")),
+        "package_sha256":report_inline.digest((args.output/"inline-report.json").read_bytes()),
+        "delivery_checked":True,"delivery_viewports":[1600,1920],
     }
     proof_path.write_text(json.dumps(proof, ensure_ascii=False, indent=2), encoding="utf-8")
     print("PREVIEW_PASSED:%s" % json.dumps(proof, ensure_ascii=False), flush=True)
