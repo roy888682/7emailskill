@@ -8,9 +8,9 @@ from email.utils import formatdate, make_msgid
 from pathlib import Path
 
 if __package__:
-    from . import email_layout, email_flags, report_inline
+    from . import email_layout, email_flags, report_inline, us_naver_links
 else:
-    import email_layout, email_flags, report_inline
+    import email_layout, email_flags, report_inline, us_naver_links
 from datetime import datetime, timedelta, date, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -774,7 +774,7 @@ def get_us_ath(usd_krw):
                 if tk in DOW30: idx.append("Dow")
                 if tk in sp500_set: idx.append("S&P500")
                 idx.append(exchange_map.get(tk,"NYSE"))
-                url=f"https://m.stock.naver.com/worldstock/stock/{tk}/total"
+                url=None  # Filled from Naver official security identity before rendering.
                 perf={}
                 if is_etf:
                     try:
@@ -819,6 +819,7 @@ def get_us_ath(usd_krw):
                  f"추종지수 {sum(1 for s in etf_items if s.get('etf_index'))}/{len(etf_items)}, "
                  f"원화 AUM {sum(1 for s in etf_items if s.get('aum'))}/{len(etf_items)}, "
                  f"투자분야 {sum(1 for s in etf_items if s.get('investment_area'))}/{len(etf_items)}")
+    us_naver_links.resolve_us_links(out)
     out.sort(key=lambda x:x["gap"])
     log.info(f"미국 최종:{len(out)}"); return out
 
@@ -1140,7 +1141,7 @@ def compose_email_message(html, subject, user, to, inline_images=None, plain_tex
         asset.add_header("Content-Disposition", "inline")
         msg.attach(asset)
     for cid,png in inline_images.items():
-        if not re.fullmatch(r"us-report-\d{2}",cid) or "cid:"+cid not in html:
+        if not re.fullmatch(r"us-report-\d{3}",cid) or "cid:"+cid not in html:
             raise RuntimeError("Invalid or unreferenced inline report image")
         asset=MIMEImage(png,_subtype="png")
         asset.add_header("Content-ID","<"+cid+">")
@@ -1183,7 +1184,7 @@ def send_email(html, subject, inline_images=None, source_html=None):
         smtp.sendmail(user,to,msg.as_bytes(),mail_options=("BODY=8BITMIME",))
     log.info(f"✅ 발송→{to}")
 
-CODE_VERSION = "2026-10-09-small-inline-body-complete-us-table"
+CODE_VERSION = "2026-10-09-linked-numbered-complete-us-table"
 
 def main(prepare_only=False):
     log.info(f"=== ATH 리포트 시작 (코드버전: {CODE_VERSION}) ===")
@@ -1266,6 +1267,8 @@ def send_prepared():
     if (proof.get("delivery_sha256")!=report_inline.digest(delivery.encode("utf-8"))
         or proof.get("package_sha256")!=report_inline.digest(package_bytes)
         or proof.get("delivery_checked") is not True
+        or proof.get("numbering_checked") is not True
+        or proof.get("us_link_clicks")!=len(manifest["us"])
         or set(proof.get("delivery_viewports",[]))!={1600,1920}):
         raise RuntimeError("Actual delivery body or image proof is incomplete")
     assets=report_inline.verify_package(html,delivery,manifest,package,directory)

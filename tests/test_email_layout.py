@@ -29,7 +29,7 @@ class EmailLayoutTests(unittest.TestCase):
         self.assertIn("text-align:right;font-variant-numeric:tabular-nums", body)
         self.assertNotIn(".tbl", body)
         doc = BeautifulSoup(body, "html5lib")
-        self.assertNotIn("n",doc.select("#us th")[2].get("class",[]))
+        self.assertNotIn("n",doc.select("#us th")[3].get("class",[]))
     def test_new_list_is_complete_and_precedes_etf(self):
         body = render_email(**self.data)
         self.assertEqual(inventory(body)["new"],["US:"+row["ticker"] for row in self.data["new_us"]])
@@ -63,8 +63,37 @@ class EmailLayoutTests(unittest.TestCase):
         self.assertTrue(doc.select(".stock-table b, .new-table b"))
         for row in doc.select("#us tbody tr, #kr tbody tr, #new tbody tr"):
             cells=row.find_all("td",recursive=False)
-            self.assertIn("r",cells[5].get("class",[]))
-            self.assertIn("r",cells[7].get("class",[]))
+            self.assertIn("r",cells[6].get("class",[]))
+            self.assertIn("r",cells[8].get("class",[]))
+    def test_every_security_table_has_sequential_no_column(self):
+        body = render_email(**self.data)
+        doc = BeautifulSoup(body, "html5lib")
+        for table_id, count, columns in (("us",218,11),("kr",17,11),("new",10,10),("returns",20,11)):
+            table = doc.find("table", id=table_id)
+            self.assertEqual(table.select_one("thead th").get_text(strip=True), "No.")
+            rows = table.select("tbody tr")
+            self.assertEqual(len(rows), count)
+            self.assertEqual([row.find_all("td",recursive=False)[0].get_text(strip=True) for row in rows],
+                             [str(number) for number in range(1,count+1)])
+            self.assertTrue(all(len(row.find_all("td",recursive=False)) == columns for row in rows))
+
+    def test_mixed_new_list_numbers_continue_across_countries(self):
+        body = render_email(**dict(self.data, new_kr=self.data["kr"][:2], new_us=self.data["us"][:3]))
+        doc = BeautifulSoup(body, "html5lib")
+        rows = doc.select("#new tbody tr")
+        self.assertEqual([row.find_all("td",recursive=False)[0].get_text(strip=True) for row in rows],
+                         ["1","2","3","4","5"])
+        self.assertEqual(inventory(body)["new"],
+                         ["KR:"+row["ticker"] for row in self.data["kr"][:2]] +
+                         ["US:"+row["ticker"] for row in self.data["us"][:3]])
+
+    def test_optional_etf_details_also_include_sequential_numbers(self):
+        doc = BeautifulSoup(etf_section_html(self.data["etf_info"], include_details=True), "html5lib")
+        table = doc.select_one(".etf-details table")
+        self.assertEqual(table.select_one("thead th").get_text(strip=True), "No.")
+        self.assertEqual([row.find_all("td",recursive=False)[0].get_text(strip=True) for row in table.select("tbody tr")],
+                         [str(number) for number in range(1,21)])
+
     def test_transport_compaction_preserves_the_exact_table_dom(self):
         from unittest.mock import patch
         with patch("src.email_layout.compact_transport_html", side_effect=lambda source: source):

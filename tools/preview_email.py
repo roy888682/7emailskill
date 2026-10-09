@@ -127,8 +127,8 @@ def gmail_host_html(html_source):
 LAYOUT_CHECK = r"""expected => {
  const viewport=window.innerWidth,tolerance=1.5,problems=[];
  const specs=[
-   ["us","us",1,10],["kr","kr",1,10],
-   ["new","new",1,9],["etf","returns",2,11]
+   ["us","us",2,11],["kr","kr",2,11],
+   ["new","new",2,10],["etf","returns",2,11]
  ];
  const getRows=id=>{
    const table=document.getElementById(id);
@@ -139,6 +139,9 @@ LAYOUT_CHECK = r"""expected => {
    problems.push("Document overflow: "+document.documentElement.scrollWidth+" > "+viewport);
  for(const [key,id,tickerColumn,cellCount] of specs){
    const rows=getRows(id),wanted=expected[key];
+   const table=document.getElementById(id);
+   if(table&&table.querySelector("th")?.textContent.trim()!=="No.")
+     problems.push(id+" is missing the No. heading");
    const tickers=rows.map(row=>{
      const cell=row.cells[tickerColumn],link=cell&&cell.querySelector("a");
      if(!link){problems.push(id+" is missing a ticker link");return "";}
@@ -146,7 +149,7 @@ LAYOUT_CHECK = r"""expected => {
        .filter(node=>node.nodeType===Node.TEXT_NODE)
        .map(node=>node.textContent).join("").trim();
      if(key==="new"){
-       const label=row.cells[0]?.querySelector("img")?.alt||"";
+       const label=row.cells[1]?.querySelector("img")?.alt||"";
        if(!["성조기","태극기"].includes(label))
          problems.push("New-security flag lacks a recognizable country label");
        return (label==="성조기"?"US":"KR")+":"+ticker;
@@ -164,7 +167,9 @@ LAYOUT_CHECK = r"""expected => {
    rows.forEach((row,index)=>{
      if(row.cells.length!==cellCount)
        problems.push(id+" row "+index+" has "+row.cells.length+" cells, expected "+cellCount);
-     const flag=row.cells[key==="etf"?1:0]?.querySelector("img");
+     if(row.cells[0]?.textContent.trim()!==String(index+1))
+       problems.push(id+" row "+index+" has a missing or incorrect No.");
+     const flag=row.cells[1]?.querySelector("img");
      if(!flag||!flag.complete||!flag.naturalWidth)
        problems.push(id+" row "+index+" has a missing/broken country flag");
    });
@@ -193,7 +198,7 @@ LAYOUT_CHECK = r"""expected => {
    if(new Set(colors).size!==4)problems.push("ETF "+index+" return colors are not distinct");
  });
  [...getRows("us"),...getRows("kr"),...getRows("new")].forEach(row=>{
-   for(const column of [5,7]){
+   for(const column of [6,8]){
      const cell=row.cells[column];
      if(!cell||getComputedStyle(cell).color!=="rgb(194, 57, 50)")
        problems.push("ATH/day-change values must be red");
@@ -295,6 +300,28 @@ def verify_actual_display(browser,source,delivery,assets,meta,output):
                     mean=max(ImageStat.Stat(ImageChops.difference(old,new)).mean)
                     if mean>8:
                         raise AssertionError("Actual displayed US raster differs visually from the original table")
+                    links=displayed.locator("#us-display a")
+                    if links.count()!=len(meta["rows"]):
+                        raise AssertionError("Every US row must have its own Naver link")
+                    displayed.evaluate("""()=>{
+                        window.verifiedClicks=[];
+                        document.addEventListener("click",event=>{
+                            const link=event.target.closest("#us-display a");
+                            if(link){event.preventDefault();window.verifiedClicks.push(link.href);}
+                        },true);
+                    }""")
+                    for index,row in enumerate(meta["rows"]):
+                        link=links.nth(index)
+                        if link.get_attribute("href")!=row["url"]:
+                            raise AssertionError("US row links changed order")
+                        link.scroll_into_view_if_needed()
+                        bounds=link.bounding_box()
+                        displayed.mouse.click(bounds["x"]+row["click_x"]*bounds["width"]/meta["width"],
+                                              bounds["y"]+bounds["height"]/2)
+                    if displayed.evaluate("window.verifiedClicks")!=[row["url"] for row in meta["rows"]]:
+                        raise AssertionError("A displayed US ticker does not open its own Naver URL")
+                    print("US_LINK_CLICK_QA:"+json.dumps({"host":host,"viewport":width,
+                          "clicked":len(meta["rows"]),"all_match":True}),flush=True)
                     print("DELIVERY_DISPLAY_QA:"+json.dumps({"host":host,"viewport":width,
                           "us":len(meta["us_tickers"]),"segments":len(assets),"mean_pixel_difference":mean,
                           "geometry_preserved":True,"other_sections_identical":True}),flush=True)
@@ -386,7 +413,10 @@ def main():
                                 const table=document.getElementById("us"),outer=table.parentElement.getBoundingClientRect();
                                 return Array.from(table.tBodies[0].rows).map(row=>{
                                     const box=row.getBoundingClientRect();
-                                    return {ticker:row.cells[1].querySelector("a").textContent.trim(),
+                                    const link=row.cells[2].querySelector("a"),target=link.getBoundingClientRect();
+                                    return {number:Number(row.cells[0].textContent.trim()),
+                                            ticker:Array.from(link.childNodes).filter(n=>n.nodeType===Node.TEXT_NODE).map(n=>n.textContent).join("").trim(),
+                                            url:link.href,click_x:target.x+target.width/2-outer.left,
                                             top:box.top-outer.top,bottom:box.bottom-outer.top};
                                 });
                             }""")
@@ -422,6 +452,7 @@ def main():
         "delivery_sha256":report_inline.digest(delivery.encode("utf-8")),
         "package_sha256":report_inline.digest((args.output/"inline-report.json").read_bytes()),
         "delivery_checked":True,"delivery_viewports":[1600,1920],
+        "us_link_clicks":len(expected["us"]),"numbering_checked":True,
     }
     proof_path.write_text(json.dumps(proof, ensure_ascii=False, indent=2), encoding="utf-8")
     print("PREVIEW_PASSED:%s" % json.dumps(proof, ensure_ascii=False), flush=True)

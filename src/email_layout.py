@@ -118,14 +118,14 @@ def etf_section_html(etf_info, include_details=False):
               ("5y", "5년", "cagr5y"), ("10y", "10년", "cagr10y"),
               ("cumulative", "누적", "cumulative_return"))
     table = ('<div class="etf-comparison"><table class="data-table etf-table" id="returns"><thead><tr>'
-             '<th class="number">순위</th><th class="flag-cell">국가</th><th>티커</th><th>종목명</th>' +
+             '<th class="number">No.</th><th class="flag-cell">국가</th><th>티커</th><th>종목명</th>' +
              "".join(f'<th class="number {"one-year" if period == "1y" else ""}">{label}</th>'
                      for period, label, _ in labels) +
              '<th class="number" data-field="aum">AUM·시총(원화)</th><th data-field="inception">설립일</th></tr></thead><tbody>')
     for rank, row in enumerate(rows, 1):
         country = "US" if row.get("market") == "US" else "KR"
         ticker = h(row.get("ticker"))
-        table += (f'<tr class="etf-row" data-ticker="{ticker}"><td class="number">{rank:02d}</td>'
+        table += (f'<tr class="etf-row" data-ticker="{ticker}"><td class="number">{rank}</td>'
                   f'<td class="flag-cell">{flag_icon(country)}</td>'
                   f'<td class="ticker-cell"><a href="{safe_url(row.get("url"))}">{ticker}</a></td>'
                   f'<td class="name-cell">{h(row.get("name"))}</td>' +
@@ -143,10 +143,10 @@ def etf_section_html(etf_info, include_details=False):
     details = ""
     if include_details:
         details = ('<div class="etf-details"><h3>ETF 상세정보</h3><table class="data-table">'
-                   '<thead><tr><th>티커</th><th>종목명</th><th>추종지수</th><th>ETF 성격</th>'
+                   '<thead><tr><th class="number">No.</th><th>티커</th><th>종목명</th><th>추종지수</th><th>ETF 성격</th>'
                    '<th>운용사</th><th class="number">AUM</th><th>설립일</th></tr></thead><tbody>')
-        for row in rows:
-            details += (f'<tr><td>{h(row.get("ticker"))}</td><td>{h(row.get("name"))}</td>'
+        for rank, row in enumerate(rows, 1):
+            details += (f'<tr><td class="number">{rank}</td><td>{h(row.get("ticker"))}</td><td>{h(row.get("name"))}</td>'
                         f'<td>{h(row.get("etf_index"))}</td><td>{h(row.get("etf_kind"))}</td>'
                         f'<td>{h(row.get("issuer"))}</td><td class="number">{aum(row.get("aum") or row.get("mcap"))}</td>'
                         f'<td>{h(inception_text(row))}</td></tr>')
@@ -155,7 +155,7 @@ def etf_section_html(etf_info, include_details=False):
         details = ""
     return head + table + notes + details + "</div>"
 
-def _stock_row(row, country, new=False, compact=False):
+def _stock_row(row, country, new=False, compact=False, number=1):
     ticker = h(row.get("ticker"))
     asset = row.get("asset_type", "주식")
     kind = "etf" if asset == "ETF" else "stock"
@@ -164,6 +164,7 @@ def _stock_row(row, country, new=False, compact=False):
     cls = "new-row" if compact else "stock-row"
     source = h(row.get("investment_area_source") or "업종 데이터")
     cells = (f'<tr class="{cls}" data-ticker="{ticker}" data-key="{country}:{ticker}">'
+             f'<td class="number">{number}</td>'
              f'<td class="flag-cell">{flag_icon(country)}</td>'
              f'<td class="ticker-cell"><a href="{safe_url(row.get("url"))}">{ticker}</a>{new_badge}</td>'
              f'<td class="name-cell">{h(row.get("name"))}</td>'
@@ -176,7 +177,7 @@ def _stock_row(row, country, new=False, compact=False):
     return cells + ("" if compact else f'<td>{h(badges)}</td>') + "</tr>"
 
 def _stock_head(compact=False):
-    return ('<thead><tr><th class="flag-cell">국가</th><th>티커</th><th>종목명</th><th>구분</th>'
+    return ('<thead><tr><th class="number">No.</th><th class="flag-cell">국가</th><th>티커</th><th>종목명</th><th>구분</th>'
             '<th class="number">시총·AUM(원화)</th><th class="number">ATH 괴리율</th>'
             '<th>업종·투자분야</th><th class="number">전일 등락률</th><th class="number">누적일수</th>' +
             ("" if compact else "<th>지수</th>") + "</tr></thead><tbody>")
@@ -192,8 +193,9 @@ def new_summary(new_us, new_kr, totals=None, offset=0):
             '<p class="intro">직전 거래일에 없던 종목 · 누적일수는 과거 재등장을 포함합니다.</p>')
     if not count:
         return head + '<p class="muted">오늘의 신규 등장 종목이 없습니다.</p></div>'
-    rows = "".join(_stock_row(row, country, compact=True)
-                   for country, items in (("KR", new_kr), ("US", new_us)) for row in items)
+    numbered = [(country, row) for country, items in (("KR", new_kr), ("US", new_us)) for row in items]
+    rows = "".join(_stock_row(row, country, compact=True, number=number)
+                   for number, (country, row) in enumerate(numbered, offset + 1))
     return head + '<table class="data-table new-table" id="new">' + _stock_head(True) + rows + '</tbody></table></div>'
 
 def stocks_table(stocks, title, currency, holiday, date_s, hmsg="", new_tickers=None):
@@ -205,7 +207,8 @@ def stocks_table(stocks, title, currency, holiday, date_s, hmsg="", new_tickers=
     if not stocks:
         return head + banner + '<p class="muted">해당 종목 없음</p></div>'
     table = f'<table class="data-table stock-table" id="{country.lower()}">' + _stock_head()
-    table += "".join(_stock_row(row, country, row.get("ticker") in new_tickers) for row in stocks)
+    table += "".join(_stock_row(row, country, row.get("ticker") in new_tickers, number=number)
+                     for number, row in enumerate(stocks, 1))
     return head + banner + table + '</tbody></table></div>'
 
 def _summary(us, kr, info, indices):
@@ -351,14 +354,14 @@ def inventory(source):
                 anchor = cells[column].find("a")
                 result.append(str(anchor.contents[0]) if anchor else cells[column].get_text(strip=True))
         return result
-    result = {"us": tickers("us", 1), "kr": tickers("kr", 1),
+    result = {"us": tickers("us", 2), "kr": tickers("kr", 2),
               "etf": tickers("returns", 2), "new": []}
     table = doc.find("table", id="new")
     if table:
         for row in table.select("tbody tr"):
             cells = row.find_all("td", recursive=False)
-            country = "US" if cells[0].find("img")["src"] == "cid:u" else "KR"
-            result["new"].append(country + ":" + str(cells[1].find("a").contents[0]))
+            country = "US" if cells[1].find("img")["src"] == "cid:u" else "KR"
+            result["new"].append(country + ":" + str(cells[2].find("a").contents[0]))
     return result
 
 

@@ -102,8 +102,9 @@ class EmailDeliveryTests(unittest.TestCase):
                 delivery,package=report_inline.make_package(html,manifest,None,[],{},Path("work"))
                 proof.update(delivery_sha256=report_inline.digest(delivery.encode("utf-8")),
                              package_sha256=report_inline.digest(Path("work/inline-report.json").read_bytes()),
-                             delivery_checked=True,delivery_viewports=[1600,1920])
-                for change in ({"delivery_checked":False}, {"delivery_sha256":"bad"}, {"package_sha256":"bad"}, {"delivery_viewports":[]}, {"all_passed":False}, {"layout_unchanged":False}, {"html_bytes":1}, {"hosts":["standalone"]},
+                             delivery_checked=True,delivery_viewports=[1600,1920],
+                             us_link_clicks=0,numbering_checked=True)
+                for change in ({"numbering_checked":False}, {"us_link_clicks":1}, {"delivery_checked":False}, {"delivery_sha256":"bad"}, {"package_sha256":"bad"}, {"delivery_viewports":[]}, {"all_passed":False}, {"layout_unchanged":False}, {"html_bytes":1}, {"hosts":["standalone"]},
                                {"viewports":[1024]}, {"counts":{}}, {"sha256":"bad"}):
                     with self.subTest(change=change):
                         Path("work/preview-passed.json").write_text(json.dumps(dict(proof, **change)), encoding="utf-8")
