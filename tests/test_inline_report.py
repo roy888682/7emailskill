@@ -48,11 +48,14 @@ class InlineReportTests(unittest.TestCase):
     def test_every_numbered_us_row_has_its_own_correct_naver_link_and_all_pixels(self):
         source, expected, png, rows = fixture()
         with tempfile.TemporaryDirectory() as directory:
-            delivery, meta = report_inline.make_package(source, expected, png, rows, {}, directory)
+            delivery, meta = report_inline.make_package(source, expected, png, rows, {"font_size": 9.5}, directory)
             assets = report_inline.verify_package(source, delivery, expected, meta, directory)
             doc = BeautifulSoup(delivery, "html5lib")
             anchors = doc.select("#us-display a")
             self.assertEqual(len(anchors), 218)
+            self.assertEqual(meta["captured_font_size"], 9.5)
+            self.assertIn("width:1360px;max-width:none", delivery)
+            self.assertNotIn("#us-display img{display:block;width:100%", delivery)
             self.assertEqual([anchor["href"] for anchor in anchors], [row["url"] for row in rows])
             self.assertEqual([image["alt"] for image in doc.select("#us-display a img")],
                              [f'{row["number"]}. {row["ticker"]}' for row in rows])
@@ -77,8 +80,8 @@ class InlineReportTests(unittest.TestCase):
     def test_missing_reordered_changed_or_relinked_report_is_rejected(self):
         source, expected, png, rows = fixture(4)
         with tempfile.TemporaryDirectory() as directory:
-            delivery, meta = report_inline.make_package(source, expected, png, rows, {}, directory)
-            for change in ("omitted", "reordered", "changed", "number", "ticker", "url", "links"):
+            delivery, meta = report_inline.make_package(source, expected, png, rows, {"font_size": 9.5}, directory)
+            for change in ("omitted", "reordered", "changed", "number", "ticker", "url", "links", "font"):
                 altered = copy.deepcopy(meta)
                 if change == "omitted":
                     altered["assets"] = altered["assets"][:-1]
@@ -92,6 +95,8 @@ class InlineReportTests(unittest.TestCase):
                     altered["rows"][0]["ticker"] = "MISSING"
                 elif change == "url":
                     altered["rows"][0]["url"] = rows[1]["url"]
+                elif change == "font":
+                    altered["captured_font_size"] = 8
                 else:
                     altered["links"].reverse()
                 with self.subTest(change=change), self.assertRaises(RuntimeError):
@@ -118,18 +123,18 @@ class InlineReportTests(unittest.TestCase):
                            source.replace("https://m.stock.naver.com", "https://example.test", 1)]
             for altered_source in bad_sources:
                 with self.assertRaises(RuntimeError):
-                    report_inline.make_package(altered_source, expected, png, rows, {}, directory)
+                    report_inline.make_package(altered_source, expected, png, rows, {"font_size": 9.5}, directory)
             for key, value in (("number", 2), ("ticker", "OTHER"), ("url", rows[1]["url"]),
                                ("top", float("nan")), ("bottom", 10000)):
                 altered = copy.deepcopy(rows)
                 altered[0][key] = value
                 with self.subTest(key=key), self.assertRaises(RuntimeError):
-                    report_inline.make_package(source, expected, png, altered, {}, directory)
+                    report_inline.make_package(source, expected, png, altered, {"font_size": 9.5}, directory)
 
     def test_empty_us_report_remains_valid(self):
         source, expected, png, rows = fixture(0)
         with tempfile.TemporaryDirectory() as directory:
-            delivery, meta = report_inline.make_package(source, expected, png, rows, {}, directory)
+            delivery, meta = report_inline.make_package(source, expected, png, rows, {"font_size": 9.5}, directory)
             self.assertEqual(delivery, source)
             self.assertEqual(meta["links"], [])
             self.assertEqual(report_inline.verify_package(source, delivery, expected, meta, directory), {})

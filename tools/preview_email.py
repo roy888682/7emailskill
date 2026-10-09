@@ -268,11 +268,13 @@ def verify_actual_display(browser,source,delivery,assets,meta,output):
     from src.report_inline import inline_sources
     document=inline_sources(delivery,assets)
     for host in ("standalone","gmail"):
-        for width in (1600,1920):
+        for width in (900,1024,1280,1600,1920):
             original=browser.new_page(viewport={"width":width,"height":1200},device_scale_factor=1)
             displayed=browser.new_page(viewport={"width":width,"height":1200},device_scale_factor=1)
+            fixed_reference=None
             try:
-                original.set_content(gmail_host_html(source) if host=="gmail" else source,wait_until="load")
+                source_document=gmail_host_html(source) if host=="gmail" else source
+                original.set_content(source_document,wait_until="load")
                 displayed.set_content(gmail_host_html(document) if host=="gmail" else document,wait_until="load")
                 for page in (original,displayed):
                     page.evaluate("document.fonts.ready")
@@ -286,20 +288,45 @@ def verify_actual_display(browser,source,delivery,assets,meta,output):
                     first=original.locator("#us").locator("xpath=..").bounding_box()
                     second=displayed.locator("#us-display").bounding_box()
                     if any(abs(first[key]-second[key])>1.5 for key in ("x","y","width","height")):
-                        raise AssertionError("Inline US section changed the accepted desktop geometry")
+                        raise AssertionError("Inline US section changed the other report sections' desktop geometry")
                     top=int(first["y"])
                     if before.crop((0,0,width,top)).tobytes()!=after.crop((0,0,width,top)).tobytes():
                         raise AssertionError("Header, new securities, ETF or Korean table layout changed")
+                    kr_font=original.evaluate("""()=>{
+                        const cell=document.querySelector("#kr tbody td")||document.querySelector("#us tbody td");
+                        return parseFloat(getComputedStyle(cell).fontSize);
+                    }""")
+                    captured_font=meta["captured_font_size"]
+                    image_metrics=displayed.evaluate("""()=>Array.from(document.querySelectorAll("#us-display img"))
+                        .map(image=>({width:image.getBoundingClientRect().width,naturalWidth:image.naturalWidth}))""")
+                    if not image_metrics or any(metric["naturalWidth"]!=meta["width"] or
+                            abs(metric["width"]-meta["width"])>.01 for metric in image_metrics):
+                        raise AssertionError("US row images were resized and no longer match the Korean text size")
+                    effective_fonts=[captured_font*metric["width"]/meta["width"] for metric in image_metrics]
+                    if any(abs(size-kr_font)>.001 for size in effective_fonts):
+                        raise AssertionError("Displayed US font size differs from the unchanged Korean table")
+                    # Compare the actual painted US area against the same source
+                    # constrained to its native capture width, without scaling text.
+                    fixed_reference=browser.new_page(viewport={"width":width,"height":1200},device_scale_factor=1)
+                    fixed_reference.set_content(source_document,wait_until="load")
+                    fixed_reference.evaluate("(nativeWidth)=>document.getElementById('us').parentElement.style.width=nativeWidth+'px'",meta["width"])
+                    fixed_reference.evaluate("document.fonts.ready")
+                    fixed_box=fixed_reference.locator("#us").locator("xpath=..").bounding_box()
+                    reference_pixels=Image.open(io.BytesIO(fixed_reference.screenshot(full_page=True))).convert("RGB")
                     def region(picture,box):
                         return picture.crop((round(box["x"]),round(box["y"]),
                                              round(box["x"]+box["width"]),round(box["y"]+box["height"])))
-                    old=region(before,first)
-                    new=region(after,second)
-                    if new.size!=old.size:
-                        new=new.resize(old.size)
+                    old=region(reference_pixels,fixed_box)
+                    painted_box={**second,"width":meta["width"]}
+                    new=region(after,painted_box)
+                    if new.width!=old.width or abs(new.height-old.height)>1:
+                        raise AssertionError("US native-width display geometry changed")
+                    common_height=min(old.height,new.height)
+                    old=old.crop((0,0,old.width,common_height))
+                    new=new.crop((0,0,new.width,common_height))
                     mean=max(ImageStat.Stat(ImageChops.difference(old,new)).mean)
                     if mean>8:
-                        raise AssertionError("Actual displayed US raster differs visually from the original table")
+                        raise AssertionError("Actual displayed US raster differs visually from its native-size source table")
                     links=displayed.locator("#us-display a")
                     if links.count()!=len(meta["rows"]):
                         raise AssertionError("Every US row must have its own Naver link")
@@ -322,12 +349,16 @@ def verify_actual_display(browser,source,delivery,assets,meta,output):
                         raise AssertionError("A displayed US ticker does not open its own Naver URL")
                     print("US_LINK_CLICK_QA:"+json.dumps({"host":host,"viewport":width,
                           "clicked":len(meta["rows"]),"all_match":True}),flush=True)
+                    print("US_FONT_MATCH_QA:"+json.dumps({"host":host,"viewport":width,
+                          "kr_font_px":kr_font,"captured_us_font_px":captured_font,
+                          "displayed_us_font_px":effective_fonts[0],"native_width":meta["width"],
+                          "displayed_width":image_metrics[0]["width"],"all_match":True}),flush=True)
                     print("DELIVERY_DISPLAY_QA:"+json.dumps({"host":host,"viewport":width,
                           "us":len(meta["us_tickers"]),"segments":len(assets),"mean_pixel_difference":mean,
                           "geometry_preserved":True,"other_sections_identical":True}),flush=True)
                     if host=="gmail" and width==1600:
                         png=after.crop((round(second["x"]),round(second["y"]),
-                                        round(second["x"]+second["width"]),round(second["y"])+480))
+                                        round(second["x"])+meta["width"],round(second["y"])+480))
                         stream=io.BytesIO()
                         png.save(stream,format="PNG")
                         print("PREVIEW_IMAGE_ACTUAL_DELIVERY_US:"+base64.b64encode(stream.getvalue()).decode("ascii"),flush=True)
@@ -336,6 +367,9 @@ def verify_actual_display(browser,source,delivery,assets,meta,output):
             finally:
                 original.close()
                 displayed.close()
+                if fixed_reference is not None:
+                    fixed_reference.close()
+    return True
 
 def main():
     parser = argparse.ArgumentParser()
@@ -406,9 +440,18 @@ def main():
                             print("LAYOUT_IDENTICAL:%s:%d" % (host,width),flush=True)
                         finally:
                             reference_page.close()
-                        if host == "standalone" and width == 1600 and expected["us"]:
+                        if host == "standalone" and width == 900 and expected["us"]:
                             section=page.locator("#us").locator("xpath=..")
                             geometry=section.bounding_box()
+                            font_sizes=page.evaluate("""()=>{
+                                const us=document.querySelector("#us tbody td");
+                                const kr=document.querySelector("#kr tbody td");
+                                const size=element=>parseFloat(getComputedStyle(element).fontSize);
+                                return {us:size(us),kr:size(kr||us)};
+                            }""")
+                            if abs(font_sizes["us"]-font_sizes["kr"])>.001:
+                                raise AssertionError("US capture font size must equal the unchanged Korean font size")
+                            geometry["font_size"]=font_sizes["us"]
                             rows=page.evaluate("""()=>{
                                 const table=document.getElementById("us"),outer=table.parentElement.getBoundingClientRect();
                                 return Array.from(table.tBodies[0].rows).map(row=>{
@@ -440,7 +483,7 @@ def main():
             print("DELIVERY_CANONICAL_BYTES:%d" % report_inline.validate_delivery_size(delivery)[1],flush=True)
             print("DELIVERY_WIRE_BYTES:%d" % len(wire.as_bytes()),flush=True)
             print("US_RASTER_COVERAGE:%d" % len(package["us_tickers"]),flush=True)
-            verify_actual_display(browser,html_source,delivery,assets,package,args.output)
+            us_font_matches_kr=verify_actual_display(browser,html_source,delivery,assets,package,args.output)
         finally:
             browser.close()
     digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
@@ -451,7 +494,8 @@ def main():
         "hosts": ["standalone", "gmail"], "all_passed": True, "layout_unchanged": True,
         "delivery_sha256":report_inline.digest(delivery.encode("utf-8")),
         "package_sha256":report_inline.digest((args.output/"inline-report.json").read_bytes()),
-        "delivery_checked":True,"delivery_viewports":[1600,1920],
+        "delivery_checked":True,"delivery_viewports":[900,1024,1280,1600,1920],
+        "us_font_matches_kr":us_font_matches_kr,
         "us_link_clicks":len(expected["us"]),"numbering_checked":True,
     }
     proof_path.write_text(json.dumps(proof, ensure_ascii=False, indent=2), encoding="utf-8")

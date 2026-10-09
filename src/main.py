@@ -1184,7 +1184,7 @@ def send_email(html, subject, inline_images=None, source_html=None):
         smtp.sendmail(user,to,msg.as_bytes(),mail_options=("BODY=8BITMIME",))
     log.info(f"✅ 발송→{to}")
 
-CODE_VERSION = "2026-10-09-linked-numbered-complete-us-table"
+CODE_VERSION = "2026-10-09-matching-us-kr-font-size"
 
 def main(prepare_only=False):
     log.info(f"=== ATH 리포트 시작 (코드버전: {CODE_VERSION}) ===")
@@ -1269,7 +1269,8 @@ def send_prepared():
         or proof.get("delivery_checked") is not True
         or proof.get("numbering_checked") is not True
         or proof.get("us_link_clicks")!=len(manifest["us"])
-        or set(proof.get("delivery_viewports",[]))!={1600,1920}):
+        or proof.get("us_font_matches_kr") is not True
+        or set(proof.get("delivery_viewports",[]))!={900,1024,1280,1600,1920}):
         raise RuntimeError("Actual delivery body or image proof is incomplete")
     assets=report_inline.verify_package(html,delivery,manifest,package,directory)
     send_email(delivery,(directory/"email-subject.txt").read_text(encoding="utf-8"),

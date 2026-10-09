@@ -84,6 +84,12 @@ def _validate_rows(rows, records, height):
             raise RuntimeError("US row geometry has a gap or overlap")
         previous = bottom
 
+def _font_size(geometry):
+    value = geometry.get("font_size")
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+        raise RuntimeError("The captured US font size is missing or invalid")
+    return float(value)
+
 def _save(directory, delivery, meta):
     (directory / "email-delivery.html").write_text(delivery, encoding="utf-8")
     (directory / "inline-report.json").write_text(
@@ -101,7 +107,7 @@ def make_package(source, expected, png, rows, geometry, directory):
         meta = {"source_sha256": digest(source.encode("utf-8")),
                 "delivery_sha256": digest(source.encode("utf-8")),
                 "us_tickers": [], "rows": [], "links": [], "geometry": {},
-                "width": 0, "height": 0, "assets": []}
+                "width": 0, "height": 0, "captured_font_size": None, "assets": []}
         _save(directory, source, meta)
         return source, meta
     table = doc.find("table", id="us")
@@ -111,6 +117,7 @@ def make_package(source, expected, png, rows, geometry, directory):
     full = Image.open(io.BytesIO(png)).convert("RGB")
     width, height = full.size
     _validate_rows(rows, records, height)
+    captured_font_size = _font_size(geometry)
     if width <= 0 or height <= 0 or len(records) > 997:
         raise RuntimeError("Inline report dimensions or row count exceeds the supported budget")
 
@@ -160,8 +167,8 @@ def make_package(source, expected, png, rows, geometry, directory):
 
     # Shared rules avoid repeating long inline styles for 218 linked rows.
     style = doc.new_tag("style")
-    style.string = ("#us-display a{display:block;line-height:0}"
-                    f"#us-display img{{display:block;width:100%;max-width:{width}px;"
+    style.string = (f"#us-display a{{display:block;width:{width}px;line-height:0}}"
+                    f"#us-display img{{display:block;width:{width}px;max-width:none;"
                     "height:auto;border:0;margin:0;padding:0}")
     doc.head.append(style)
     section.replace_with(replacement)
@@ -173,7 +180,7 @@ def make_package(source, expected, png, rows, geometry, directory):
             "delivery_sha256": digest(delivery.encode("utf-8")),
             "us_tickers": expected["us"], "rows": rows, "links": links,
             "geometry": geometry, "width": width, "height": height,
-            "pixels_sha256": digest(full.tobytes()), "assets": assets}
+            "captured_font_size": captured_font_size, "pixels_sha256": digest(full.tobytes()), "assets": assets}
     _save(directory, delivery, meta)
     return delivery, meta
 
@@ -186,6 +193,8 @@ def verify_package(source, delivery, expected, meta, directory):
     if meta.get("us_tickers") != expected["us"]:
         raise RuntimeError("Inline report is missing US candidates")
     _validate_rows(meta.get("rows", []), records, meta.get("height", 0))
+    if records and meta.get("captured_font_size") != _font_size(meta.get("geometry", {})):
+        raise RuntimeError("The captured US font size changed after browser validation")
     actual = email_layout.inventory(delivery)
     if actual != {**expected, "us": []}:
         raise RuntimeError("Non-US tables changed during inline packaging")
