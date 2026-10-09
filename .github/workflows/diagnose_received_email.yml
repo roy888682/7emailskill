@@ -1,0 +1,22 @@
+name: Read received report size diagnostics
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['tools/diagnose_received_email.py']
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install beautifulsoup4 html5lib
+      - name: Inspect only requested report structure and byte sizes
+        env:
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
+        run: python tools/diagnose_received_email.py
