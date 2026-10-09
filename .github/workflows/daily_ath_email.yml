@@ -4,13 +4,6 @@ on:
   schedule:
     - cron: '0 22 * * 1-5'   # 22:00 UTC = 07:00 KST (화~토)
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - 'src/**'
-      - 'tests/**'
-      - 'tools/**'
-      - 'requirements.txt'
 
 jobs:
   send-ath-email:
