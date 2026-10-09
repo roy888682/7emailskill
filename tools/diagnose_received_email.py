@@ -26,13 +26,18 @@ def main():
         if status!="OK":
             raise RuntimeError("Could not open the read-only All Mail mailbox")
         status,found=mailbox.uid("search",None,"X-GM-MSGID","1878572327997601042")
+        requested=bool(status=="OK" and found and found[0])
+        if not requested:
+            query=f'"in:sent subject:ATH to:{recipient} after:2026/10/08"'
+            status,found=mailbox.uid("search",None,"X-GM-RAW",query)
+        result["copy"]="requested_received" if requested else "sender_sent"
         if status=="OK" and found and found[0]:
             uid=found[0].split()[-1]
             status,items=mailbox.uid("fetch",uid,"(BODY.PEEK[])")
             raw=next(item[1] for item in items if isinstance(item,tuple))
             msg=message_from_bytes(raw)
             html_parts=[p for p in msg.walk() if p.get_content_type()=="text/html"]
-            result.update(target_accessible=True,raw_bytes=len(raw),
+            result.update(target_accessible=requested,copy_accessible=True,raw_bytes=len(raw),
                           part_encodings=[{"type":p.get_content_type(),"cte":p.get("Content-Transfer-Encoding"),
                                            "decoded_bytes":len(p.get_payload(decode=True) or b"")}
                                           for p in msg.walk() if not p.is_multipart()])
