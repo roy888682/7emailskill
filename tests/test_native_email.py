@@ -48,6 +48,12 @@ class NativeEmailTests(unittest.TestCase):
             self.assertLessEqual(meta["canonical_bytes"], native_email.MAX_CANONICAL_BYTES)
             self.assertLess(meta["style_characters"], native_email.MAX_STYLE_CHARACTERS)
             self.assertLessEqual(max(len(line.encode("utf-8")) for line in delivery.splitlines()), 998)
+            from src.main import compose_email_message
+            wire = compose_email_message(delivery, "test", "sender@example.test", "reader@example.test").as_bytes()
+            self.assertLessEqual(len(wire), 95000)
+            self.assertIn(b"Content-Type: text/plain", wire)
+            self.assertTrue(doc.find("style").string)
+            self.assertGreater(meta["style_characters"], 3000)
 
     def test_changed_number_field_link_or_flag_is_rejected_even_with_updated_metadata(self):
         source, expected = fixture(3)

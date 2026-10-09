@@ -1153,6 +1153,8 @@ def compose_email_message(html, subject, user, to, inline_images=None, plain_tex
     if decoded_bytes > 12000000:
         raise RuntimeError(f"Decoded email {decoded_bytes:,} bytes exceeds the inline image budget")
     wire = msg.as_bytes()
+    if not inline_images and len(wire) > 95000:
+        raise RuntimeError("Native serialized email exceeds the Gmail budget; never remove candidates")
     if len(wire) > 20000000:
         raise RuntimeError("Serialized inline report exceeds the SMTP delivery budget")
     if max((len(line) for line in wire.split(b"\r\n")), default=0) > 998:
@@ -1164,7 +1166,7 @@ def send_email(html, subject, inline_images=None, source_html=None):
     user=os.environ["GMAIL_USER"]; pwd=os.environ["GMAIL_APP_PASSWORD"]
     to=os.environ.get("RECIPIENT_EMAIL","ykhan@dacpole.com")
     msg = compose_email_message(html, subject, user, to, inline_images,
-                                report_inline.plain_report(source_html) if source_html else None)
+                                report_inline.plain_report(source_html) if source_html and inline_images else None)
     preview_dir = Path("work")
     preview_dir.mkdir(exist_ok=True)
     (preview_dir / "email-preview.html").write_text(report_inline.inline_sources(html, inline_images or {}), encoding="utf-8")

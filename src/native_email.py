@@ -26,7 +26,7 @@ def validate_delivery_size(html):
     doc = BeautifulSoup(html, "html5lib")
     size = len(html.encode("utf-8"))
     canonical = len(str(doc).encode("utf-8"))
-    style_size = sum(len(tag.get_text()) for tag in doc.find_all("style"))
+    style_size = sum(len(str(tag.string or "")) for tag in doc.find_all("style"))
     if size > MAX_HTML_BYTES or canonical > MAX_CANONICAL_BYTES:
         raise RuntimeError(f"Native body {size:,}/{canonical:,} bytes exceeds the clipping budget; never remove candidates")
     if style_size >= MAX_STYLE_CHARACTERS:
@@ -155,7 +155,7 @@ def _compact(source):
             else:
                 metric.attrs.pop("class", None)
     for style in doc.find_all("style"):
-        style.string = _trim_css(style.get_text(), doc)
+        style.string = _trim_css(str(style.string or ""), doc)
     style = doc.new_tag("style")
     style.string = _column_css()
     doc.head.append(style)
@@ -177,7 +177,7 @@ def prepare(source, expected, directory):
         "raw":len(delivery.encode("utf-8")),
         "canonical":len(str(doc).encode("utf-8")),
         "class_attributes":len(doc.select("[class]")),
-        "style_characters":sum(len(tag.get_text()) for tag in doc.find_all("style")),
+        "style_characters":sum(len(str(tag.string or "")) for tag in doc.find_all("style")),
     }), flush=True)
     size, canonical = validate_delivery_size(delivery)
     meta = {"source_sha256": digest(source.encode("utf-8")),
@@ -185,7 +185,7 @@ def prepare(source, expected, directory):
             "semantic_sha256": semantics, "inventory": actual,
             "native_tables": [table.get("id") for table in doc.select("table.data-table")],
             "html_bytes": size, "canonical_bytes": canonical,
-            "style_characters": sum(len(tag.get_text()) for tag in doc.find_all("style")),
+            "style_characters": sum(len(str(tag.string or "")) for tag in doc.find_all("style")),
             "links_sha256": digest(json.dumps(
                 [(a.get("href"), a.get_text()) for a in original.body.find_all("a")],
                 ensure_ascii=False).encode("utf-8"))}
@@ -206,7 +206,7 @@ def verify_package(source, delivery, expected, meta, directory):
               "semantic_sha256": semantics, "inventory": actual,
               "native_tables": [table.get("id") for table in doc.select("table.data-table")],
               "html_bytes": size, "canonical_bytes": canonical,
-              "style_characters": sum(len(tag.get_text()) for tag in doc.find_all("style")),
+              "style_characters": sum(len(str(tag.string or "")) for tag in doc.find_all("style")),
               "links_sha256": links_sha}
     if meta != wanted or semantics != after_semantics or delivery != _compact(source):
         raise RuntimeError("Native delivery differs from the complete verified source")

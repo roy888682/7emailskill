@@ -500,7 +500,7 @@ def main():
             if assets != {}:
                 raise AssertionError("Native production delivery must not contain report PNGs")
             wire=compose_email_message(delivery,"ATH 기본표","sender@example.test","reader@example.test",
-                                       {},report_inline.plain_report(source))
+                                       {})
             print("DELIVERY_HTML_BYTES:%d" % len(delivery.encode("utf-8")),flush=True)
             print("DELIVERY_CANONICAL_BYTES:%d" % native_email.validate_delivery_size(delivery)[1],flush=True)
             print("DELIVERY_WIRE_BYTES:%d" % len(wire.as_bytes()),flush=True)
