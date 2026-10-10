@@ -2,7 +2,7 @@
 import unittest
 from bs4 import BeautifulSoup
 from src.email_layout import (render_email, etf_section_html, inception_text,
-                              row_size, industry_text, inventory, validate_size,
+                              row_size, row_size_html, aum, industry_text, inventory, validate_size,
                               validate_inventory, MAX_EMAIL_BYTES, CSS, compact_transport_html)
 from tools.preview_email import sample_data, make_stock
 
@@ -115,7 +115,7 @@ class EmailLayoutTests(unittest.TestCase):
     def test_missing_data_and_empty_report(self):
         self.assertEqual(inception_text({"first_date":"2016-01-02"}),"2016-01-02")
         self.assertEqual(inception_text({"inception":"20230425"}),"2023-04-25")
-        self.assertEqual(row_size({"asset_type":"ETF","aum":1.4,"mcap":9}),"1.40조원")
+        self.assertEqual(row_size({"asset_type":"ETF","aum":1.4,"mcap":9}),"1조원")
         self.assertEqual(row_size({"asset_type":"ETF","aum":None,"mcap":.0034}),"34억원")
         self.assertEqual(industry_text({"asset_type":"ETF","investment_area":"반도체"}),"반도체")
         body=render_email([],[],self.data["info"],1342)
@@ -127,6 +127,39 @@ class EmailLayoutTests(unittest.TestCase):
         body=render_email(**self.data)
         self.assertNotIn("<script>",body)
         self.assertIn("&lt;script&gt;",body)
+
+    def test_integer_krw_sizes_keep_the_one_trillion_boundary_and_aum_fallback(self):
+        for value, expected in ((553.99,"553조원"),(1.0,"1조원"),(.99999,"9,999억원"),
+                                (.55309,"5,530억원"),(.0003,"3억원")):
+            with self.subTest(value=value):
+                self.assertEqual(aum(value),expected)
+                html=row_size_html({"asset_type":"주식","mcap":value})
+                self.assertEqual("color:#c23932" in html,value<1)
+        for invalid in (None,0,-1,float("nan"),float("inf")):
+            with self.subTest(invalid=invalid):
+                self.assertEqual(aum(invalid),"-")
+                self.assertEqual(row_size({"asset_type":"ETF","aum":invalid,"mcap":.55309}),"5,530억원")
+
+    def test_small_aum_is_red_in_every_security_section_and_native_delivery(self):
+        from src import native_email
+        import tempfile
+        self.data["us"][0]["mcap"] = .55309
+        self.data["kr"][0]["mcap"] = .55309
+        self.data["etf_info"]["rows"][0]["aum"] = .55309
+        body=render_email(**self.data)
+        # Use a small complete inventory to keep this threshold regression bounded.
+        data=dict(self.data,us=self.data["us"][:1],kr=self.data["kr"][:1],
+                  new_us=self.data["us"][:1],new_kr=self.data["kr"][:1],
+                  etf_info={"rows":self.data["etf_info"]["rows"][:1]})
+        source=render_email(**data)
+        with tempfile.TemporaryDirectory() as directory:
+            delivery,_=native_email.prepare(source,inventory(source),directory)
+        for html in (body,delivery):
+            doc=BeautifulSoup(html,"html5lib")
+            for table_id,column in (("us",5),("kr",5),("new",5),("returns",9)):
+                cell=doc.select_one("#"+table_id+" tbody tr").find_all("td",recursive=False)[column]
+                self.assertEqual(cell.get_text(),"5,530억원")
+                self.assertEqual(cell.find("span")["style"],"color:#c23932")
     def test_stricter_delivery_size_guard(self):
         self.assertLessEqual(MAX_EMAIL_BYTES,85000)
         with self.assertRaises(RuntimeError):
@@ -144,3 +177,4 @@ BASELINE_CSS = "\nbody{margin:0;background:#f2f5f8;color:#17263d;font-family:Ari
 
 if __name__=="__main__":
     unittest.main()
+

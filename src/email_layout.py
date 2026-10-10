@@ -2,6 +2,7 @@
 import math
 import re
 from datetime import datetime
+from decimal import Decimal
 from html import escape
 import pytz
 if __package__:
@@ -60,14 +61,24 @@ def aum(value):
     if not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
         return "-"
     if value < 1:
-        return f"{value * 1e4:,.0f}억원"
-    return f"{value:,.2f}조원" if value < 10 else f"{value:,.1f}조원"
+        return f"{int(Decimal(str(value)) * 10000):,}억원"
+    return f"{int(value):,}조원"
 
-def row_size(row):
+def row_size_value(row):
     value = row.get("aum") if row.get("asset_type") == "ETF" else None
     if not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
         value = row.get("mcap")
-    return aum(value)
+    return value
+
+def row_size(row):
+    return aum(row_size_value(row))
+
+def row_size_html(row):
+    value = row_size_value(row)
+    text = aum(value)
+    if text != "-" and value < 1:
+        return f'<span style="color:#c23932">{text}</span>'
+    return text
 
 def signal_pct(value):
     return pct(value).replace('class="up"', 'class="signal-red" style="color:#c23932"').replace(
@@ -132,7 +143,7 @@ def etf_section_html(etf_info, include_details=False):
                   "".join(f'<td class="number {"one-year" if period == "1y" else ""}">'
                           f'{compact_metric(period, label, row.get(key))}</td>'
                           for period, label, key in labels) +
-                  f'<td class="number" data-field="aum">{row_size(dict(row, asset_type="ETF"))}</td>'
+                  f'<td class="number" data-field="aum">{row_size_html(dict(row, asset_type="ETF"))}</td>'
                   f'<td class="date-cell" data-field="inception">{h(inception_text(row))}</td></tr>')
     table += '</tbody></table></div>'
     notes = ('<p class="notes">ATH -10% 이내 비채권 ETF 기준. 1년 이력이 없는 ETF는 순위에서 제외합니다. '
@@ -148,7 +159,7 @@ def etf_section_html(etf_info, include_details=False):
         for rank, row in enumerate(rows, 1):
             details += (f'<tr><td class="number">{rank}</td><td>{h(row.get("ticker"))}</td><td>{h(row.get("name"))}</td>'
                         f'<td>{h(row.get("etf_index"))}</td><td>{h(row.get("etf_kind"))}</td>'
-                        f'<td>{h(row.get("issuer"))}</td><td class="number">{aum(row.get("aum") or row.get("mcap"))}</td>'
+                        f'<td>{h(row.get("issuer"))}</td><td class="number">{row_size_html(dict(row, asset_type="ETF"))}</td>'
                         f'<td>{h(inception_text(row))}</td></tr>')
         details += ('</tbody></table><p class="notes">운용사는 미확인 시 브랜드로 추정합니다.</p></div>')
     else:
@@ -169,7 +180,7 @@ def _stock_row(row, country, new=False, compact=False, number=1):
              f'<td class="ticker-cell"><a href="{safe_url(row.get("url"))}">{ticker}</a>{new_badge}</td>'
              f'<td class="name-cell">{h(row.get("name"))}</td>'
              f'<td><span class="asset asset-{kind}">{h(asset)}</span></td>'
-             f'<td class="number" data-field="size">{row_size(row)}</td>'
+             f'<td class="number" data-field="size">{row_size_html(row)}</td>'
              f'<td class="number" data-field="gap">{signal_pct(row.get("gap"))}</td>'
              f'<td title="{source}">{h(industry_text(row))}</td>'
              f'<td class="number" data-field="change">{signal_pct(row.get("change"))}</td>'
@@ -379,3 +390,4 @@ def validate_size(source):
     if size > MAX_EMAIL_BYTES:
         raise RuntimeError(f"Email HTML {size:,} bytes exceeds {MAX_EMAIL_BYTES:,}; compact markup before sending, never remove candidates")
     return size
+
