@@ -4,11 +4,6 @@ on:
   schedule:
     - cron: '0 22 * * 1-5'   # 22:00 UTC = 07:00 KST (화~토)
   workflow_dispatch:
-  push:
-    paths:
-      - 'src/**'
-      - 'tests/**'
-      - 'tools/preview_email.py'
 
 jobs:
   send-ath-email:
