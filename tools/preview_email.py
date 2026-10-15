@@ -68,7 +68,7 @@ def sample_data():
                          "last_date": "2026-10-07", "return_as_of": "2026-10-07"})
             etfs.append(item)
             (kr if korean else us).append(item)
-    etfs.sort(key=lambda item: item["lifetime_cagr"])
+    etfs.sort(key=lambda item: item["lifetime_cagr"], reverse=True)
     info = {"us_last_str": "2026년 10월 07일(수)", "kr_last_str": "2026년 10월 07일(수)",
             "us_holiday": False, "kr_holiday": False, "us_holiday_msg": "", "kr_holiday_msg": ""}
     return {"us": us, "kr": kr, "info": info, "usd_krw": 1343.4, "new_us": us[:119], "new_kr": kr[:1],
@@ -149,6 +149,9 @@ LAYOUT_CHECK = r"""expected => {
    const table=document.getElementById(id);
    if(table&&table.querySelector("th")?.textContent.trim()!=="No.")
      problems.push(id+" is missing the No. heading");
+   for(const heading of table?.querySelectorAll("thead th")||[])
+     if(getComputedStyle(heading).textAlign!=="center")
+       problems.push(id+" column heading must be centered: "+heading.textContent.trim());
    const tickers=rows.map(row=>{
      const cell=row.cells[tickerColumn],link=cell&&cell.querySelector("a");
      if(!link){problems.push(id+" is missing a ticker link");return "";}
@@ -195,7 +198,8 @@ LAYOUT_CHECK = r"""expected => {
       !headings[11].includes("설립")||!/연수|기간/.test(headings[12]))
      problems.push("ETF columns must end with cumulative → lifetime CAGR → KRW AUM → inception → elapsed years");
  }
- let previousLifetime=-Infinity;
+ let previousLifetime=Infinity;
+ if(getRows("returns").length>100)problems.push("ETF comparison exceeds the top 100 limit");
  getRows("returns").forEach((row,index)=>{
    const colors=[];
    for(const [column,cls] of [[4,"p1"],[5,"p3"],[6,"p5"],[7,"p10"]]){
@@ -207,8 +211,8 @@ LAYOUT_CHECK = r"""expected => {
    if(new Set(colors).size!==4)problems.push("ETF "+index+" return colors are not distinct");
    const lifetime=parseFloat(row.cells[9]?.textContent.replace(/,/g,""));
    const years=parseFloat(row.cells[12]?.textContent.replace(/,/g,""));
-   if(!Number.isFinite(lifetime)||lifetime<previousLifetime)
-     problems.push("ETF lifetime CAGR must be finite and sorted ascending");
+   if(!Number.isFinite(lifetime)||lifetime>previousLifetime)
+     problems.push("ETF lifetime CAGR must be finite and sorted descending");
    if(!Number.isFinite(years)||years<0)
      problems.push("ETF displayed elapsed years must be nonnegative");
    previousLifetime=lifetime;
@@ -246,6 +250,13 @@ LAYOUT_CHECK = r"""expected => {
      const expectedFont=tableId==="returns"&&column!==11?13:12.35;
      if(Math.abs(parseFloat(style.fontSize)-expectedFont)>.01)
        problems.push("Row "+index+" font differs from the enlarged design: "+style.fontSize);
+     if(tableId!=="returns"&&column===7){
+       const label=cell.querySelector(".iwc");
+       if(!cell.classList.contains("iw")||!label||label.textContent!==cell.textContent||
+          Math.abs(label.getBoundingClientRect().width-126)>.01||
+          Math.abs(parseFloat(style.maxWidth)-126)>.01)
+         problems.push("Row "+index+" industry column must retain full text at 70% width (126px)");
+     }
      const name=column===3?cell.querySelector(".nm"):null;
      if(column===3){
        if(!name||name.textContent!==cell.textContent)

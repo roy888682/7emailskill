@@ -94,7 +94,7 @@ class EtfRankingAndHtmlTests(unittest.TestCase):
         return {"ticker": ticker, "asset_type": "ETF", "first_date": "2024-01-01",
                 "last_date": "2026-01-01", "cumulative_return": cumulative, **extra}
 
-    def test_lifetime_ascending_ranking_ignores_one_year_return(self):
+    def test_lifetime_descending_ranking_ignores_one_year_return(self):
         us = [
             self.dated_etf("US_LOW", 10.0, cagr1y=40.0),
             self.dated_etf("US_HIGH", 100.0, cagr1y=-5.0),
@@ -109,16 +109,16 @@ class EtfRankingAndHtmlTests(unittest.TestCase):
         ]
         info = build_etf_info(us, kr)
         self.assertEqual([s["ticker"] for s in info["rows"]],
-                         ["KR_ZERO", "US_LOW", "KR_MID", "US_HIGH", "KR_NEW"])
+                         ["KR_NEW", "US_HIGH", "KR_MID", "US_LOW", "KR_ZERO"])
         self.assertEqual(info["pool"], 6)
         self.assertEqual(info["with_ret"], 5)
 
-    def test_existing_top_twenty_limit(self):
-        etfs = [self.dated_etf(str(i), float(i)) for i in range(24, -1, -1)]
+    def test_top_hundred_limit_preserves_descending_ranks_and_candidate_counts(self):
+        etfs = [self.dated_etf(str(i), float(i)) for i in range(125)]
         info = build_etf_info(etfs, [])
-        self.assertEqual(len(info["rows"]), 20)
-        self.assertEqual([s["ticker"] for s in info["rows"]], list(map(str, range(20))))
-        self.assertEqual((info["pool"], info["with_ret"]), (25, 25))
+        self.assertEqual(len(info["rows"]), 100)
+        self.assertEqual([s["ticker"] for s in info["rows"]], list(map(str, range(124, 24, -1))))
+        self.assertEqual((info["pool"], info["with_ret"]), (125, 125))
 
     def test_comparison_shows_all_six_return_metrics_in_order(self):
         row = {"ticker": "ETF", "name": "Example ETF", "market": "US",
@@ -131,7 +131,7 @@ class EtfRankingAndHtmlTests(unittest.TestCase):
         for expected in [">12.3</span>", ">9.1</span>", ">8.0</span>", ">6.0</span>",
                          ">159.4</span>", ">10.0</span>"]:
             self.assertIn(expected, html)
-        self.assertIn("연평균 누적수익률 오름차순", html)
+        self.assertIn("연평균 누적수익률 내림차순", html)
 
     def test_missing_long_period_returns_keep_valid_cumulative_return(self):
         row = {"ticker": "NEW", "name": "New ETF", "cagr1y": 20.0,
@@ -239,8 +239,8 @@ class EtfLifetimeMetricTests(unittest.TestCase):
         self.assertEqual(high["cumulative_return"], low["cumulative_return"])
         self.assertNotEqual(high["cumulative_growth"], low["cumulative_growth"])
         info = build_etf_info([high, low], [])
-        self.assertEqual([s["ticker"] for s in info["rows"]], ["LOW", "HIGH"])
-        self.assertLess(info["rows"][0]["lifetime_cagr"], info["rows"][1]["lifetime_cagr"])
+        self.assertEqual([s["ticker"] for s in info["rows"]], ["HIGH", "LOW"])
+        self.assertGreater(info["rows"][0]["lifetime_cagr"], info["rows"][1]["lifetime_cagr"])
 
     def test_price_metadata_retains_actual_first_and_last_observations(self):
         perf = _etf_price_performance([date(2024, 1, 2), date(2026, 1, 5)], [100, 200])

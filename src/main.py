@@ -639,15 +639,15 @@ def _etf_aum(v):
     return f"{v:,.2f}조" if v < 10 else f"{v:,.1f}조"
 
 def build_etf_info(us, kr):
-    """한국·미국 ETF 중 설립 이후 연평균 누적수익률 오름차순 20개."""
+    """한국·미국 ETF 중 설립 이후 연평균 누적수익률 내림차순 상위 100개."""
     pool = [s for s in kr + us if s.get("asset_type") == "ETF"]
     ranked = []
     for item in pool:
         metrics = _etf_lifetime_metrics(item)
         if metrics is not None:
             ranked.append({**item, **metrics})
-    ranked.sort(key=lambda s: s["lifetime_cagr"])
-    return {"rows": ranked[:20], "pool": len(pool), "with_ret": len(ranked)}
+    ranked.sort(key=lambda s: s["lifetime_cagr"], reverse=True)
+    return {"rows": ranked[:100], "pool": len(pool), "with_ret": len(ranked)}
 
 
 def etf_section_html(etf_info):
@@ -1282,7 +1282,7 @@ def main(prepare_only=False):
     for s in us: s["streak"] = us_streak.get(s["ticker"], 1)
     for s in kr: s["streak"] = kr_streak.get(s["ticker"], 1)
 
-    # ETF 전용 섹션: ATH -10% 이내 ETF(한국+미국) 중 설립 이후 연평균 누적수익률 오름차순 20개
+    # ETF 전용 섹션: ATH -10% 이내 ETF(한국+미국) 중 설립 이후 연평균 누적수익률 내림차순 상위 100개
     etf_info = build_etf_info(us, kr)
     log.info(f"ETF 섹션: 풀 {etf_info['pool']}개 / 연평균 누적수익률 산출 {etf_info['with_ret']}개 / 표시 {len(etf_info['rows'])}개")
 

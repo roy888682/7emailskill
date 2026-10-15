@@ -25,8 +25,10 @@ table{border-collapse:collapse}a{color:#1260ad;text-decoration:none}
 .intro,.etf-caption{font-size:13px;color:#64778b;margin:4px 0 7px}
 .data-table{width:100%;table-layout:auto;background:#fff;border:1px solid #dce5ee;font-size:12.35px;line-height:1.25}
 .data-table th,.data-table td{white-space:nowrap;padding:3px 1px;text-align:left;vertical-align:middle}
-.data-table th{background:#163b68;color:#fff;font-weight:bold;font-size:13px;white-space:normal;word-break:keep-all}
+.data-table th{background:#163b68;color:#fff;font-weight:bold;font-size:13px;white-space:normal;word-break:keep-all;text-align:center!important}
 .data-table .w{white-space:normal;overflow-wrap:anywhere;word-break:break-word;max-width:180px}
+.data-table .iw{width:126px;max-width:126px}
+.data-table .iwc{display:block;width:126px;max-width:126px;white-space:normal;overflow-wrap:anywhere;word-break:break-word}
 .data-table .nm{display:block;width:120px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}
 .stock-table th{background:#ee990b;color:#fff}
 .asset{display:inline-block;border-radius:3px;padding:1px 3px;font-size:11.7px;font-weight:bold}.s{background:#dff3ee;color:#087569}.e{background:#eee5fa;color:#753caf}
@@ -128,7 +130,7 @@ def elapsed_years_text(value):
 def etf_section_html(etf_info, include_details=False):
     rows = etf_info.get("rows", [])
     head = ('<div class="section" id="etf"><h2>ETF 수익률 비교</h2>'
-            f'<p class="intro">연평균 누적수익률 오름차순 · {len(rows)}개'
+            f'<p class="intro">연평균 누적수익률 내림차순 · 상위 {len(rows)}개'
             f' · 산출 가능 {etf_info.get("with_ret", 0)} / 후보 {etf_info.get("pool", 0)}개</p>'
             '<p class="etf-caption">최근 1·3·5·10년: 연평균수익률(CAGR) · 누적: 전체 수익률 · 연평균 누적: 설립일부터 복리 환산 · 수익률 단위: %</p>')
     if not rows:
@@ -136,7 +138,7 @@ def etf_section_html(etf_info, include_details=False):
     labels = (("1y", "1년", "cagr1y"), ("3y", "3년", "cagr3y"),
               ("5y", "5년", "cagr5y"), ("10y", "10년", "cagr10y"),
               ("cumulative", "누적", "cumulative_return"),
-              ("lifetime", "연평균 누적수익률 ↑", "lifetime_cagr"))
+              ("lifetime", "연평균 누적수익률 ↓", "lifetime_cagr"))
     table = ('<div class="etf-comparison"><table class="data-table etf-table" id="returns"><thead><tr>'
              '<th class="number">No.</th><th class="flag-cell">국가</th><th>티커</th><th>종목명</th>' +
              "".join(f'<th class="number {"one-year" if period == "1y" else ""}">{label}</th>'
@@ -157,7 +159,7 @@ def etf_section_html(etf_info, include_details=False):
                   f'<td class="date-cell" data-field="inception">{h(inception_text(row))}</td>'
                   f'<td class="number" data-field="lifetime_years">{elapsed_years_text(row.get("lifetime_years"))}</td></tr>')
     table += '</tbody></table></div>'
-    notes = ('<p class="notes">ATH -10% 이내 비채권 ETF 중 연평균 누적수익률 산출 가능 종목을 오름차순으로 최대 20개 표시합니다. '
+    notes = ('<p class="notes">ATH -10% 이내 비채권 ETF 중 연평균 누적수익률 산출 가능 종목을 내림차순으로 최대 100개 표시합니다. '
              '기간 이력이 부족하면 -로 표시합니다.<br>'
              '누적수익률은 수집 가능한 최초 거래일 종가 대비 최신 종가의 전체 상승률이며, 연환산하지 않음.<br>'
              '연평균 누적수익률 = [(1 + 누적수익률/100)^(1/누적연수) - 1] × 100. '
@@ -196,7 +198,7 @@ def _stock_row(row, country, new=False, compact=False, number=1):
              f'<td><span class="asset asset-{kind}">{h(asset)}</span></td>'
              f'<td class="number" data-field="size">{row_size_html(row)}</td>'
              f'<td class="number" data-field="gap">{signal_pct(row.get("gap"))}</td>'
-             f'<td class="w" title="{source}">{h(industry_text(row))}</td>'
+             f'<td class="w iw" title="{source}"><span class="iwc">{h(industry_text(row))}</span></td>'
              f'<td class="number" data-field="change">{signal_pct(row.get("change"))}</td>'
              f'<td class="number">{h(row.get("streak", 1))}일째</td>')
     return cells + ("" if compact else f'<td class="w">{h(badges)}</td>') + "</tr>"
@@ -204,7 +206,7 @@ def _stock_row(row, country, new=False, compact=False, number=1):
 def _stock_head(compact=False):
     return ('<thead><tr><th class="number">No.</th><th class="flag-cell">국가</th><th>티커</th><th>종목명</th><th>구분</th>'
             '<th class="number">시총·AUM(원화)</th><th class="number">ATH 괴리율</th>'
-            '<th>업종·투자분야</th><th class="number">전일 등락률</th><th class="number">누적일수</th>' +
+            '<th class="iw">업종·투자분야</th><th class="number">전일 등락률</th><th class="number">누적일수</th>' +
             ("" if compact else "<th>지수</th>") + "</tr></thead><tbody>")
 
 def asset_breakdown(rows):
