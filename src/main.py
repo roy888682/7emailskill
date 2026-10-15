@@ -281,6 +281,62 @@ def _calc_perf(dates, closes):
 
     return cagr(1), cagr(3), cagr(5), cagr(10), cumulative, dates[0]
 
+
+def _etf_price_performance(dates, closes):
+    """Keep the observed price dates and unrounded growth for lifetime CAGR."""
+    c1, c3, c5, c10, cumulative, first = _calc_perf(dates, closes)
+    growth = None
+    if first is not None:
+        first_p, last_p = float(closes[0]), float(closes[-1])
+        if (math.isfinite(first_p) and math.isfinite(last_p)
+                and first_p > 0 and last_p > 0):
+            growth = last_p / first_p
+    return {"cagr1y": c1, "cagr3y": c3, "cagr5y": c5, "cagr10y": c10,
+            "cumulative_return": cumulative, "cumulative_growth": growth,
+            "first_date": first.isoformat() if first is not None else None,
+            "last_date": dates[-1].isoformat() if first is not None else None}
+
+
+def _performance_date(value):
+    """Reject malformed calendar dates instead of annualizing guessed periods."""
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _etf_lifetime_metrics(item):
+    """Annualize cumulative price growth to the last observed close date."""
+    last = _performance_date(item.get("last_date"))
+    first = _performance_date(item.get("first_date"))
+    inception = _performance_date(item.get("inception"))
+    if last is None or (first is not None and first > last):
+        return None
+    start = inception if inception is not None and inception < last else first
+    if start is None or start >= last:
+        return None
+    years = (last - start).days / 365.25
+    raw_growth = item.get("cumulative_growth")
+    cumulative = item.get("cumulative_return")
+    if isinstance(raw_growth, bool) or (raw_growth is None and isinstance(cumulative, bool)):
+        return None
+    try:
+        growth = float(raw_growth) if raw_growth is not None else 1 + float(cumulative) / 100
+        if not math.isfinite(growth) or growth < 0:
+            return None
+        annualized = math.expm1(math.log(growth) / years) * 100 if growth else -100.0
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not math.isfinite(annualized):
+        return None
+    return {"lifetime_cagr": annualized, "lifetime_years": years,
+            "return_as_of": last.isoformat(), "inception": start.isoformat()}
+
+
 def _flatten(d, prefix="", depth=0):
     flat = {}
     if not isinstance(d, dict):
@@ -583,10 +639,14 @@ def _etf_aum(v):
     return f"{v:,.2f}조" if v < 10 else f"{v:,.1f}조"
 
 def build_etf_info(us, kr):
-    """한국·미국 ETF 중 최근 1년 수익률 내림차순 상위 20개."""
+    """한국·미국 ETF 중 설립 이후 연평균 누적수익률 오름차순 20개."""
     pool = [s for s in kr + us if s.get("asset_type") == "ETF"]
-    ranked = sorted([s for s in pool if s.get("cagr1y") is not None],
-                    key=lambda s: s["cagr1y"], reverse=True)
+    ranked = []
+    for item in pool:
+        metrics = _etf_lifetime_metrics(item)
+        if metrics is not None:
+            ranked.append({**item, **metrics})
+    ranked.sort(key=lambda s: s["lifetime_cagr"])
     return {"rows": ranked[:20], "pool": len(pool), "with_ret": len(ranked)}
 
 
@@ -780,10 +840,7 @@ def get_us_ath(usd_krw):
                 if is_etf:
                     try:
                         dts=[d.date() for d in s.index]
-                        c1,c3,c5,c10,cumulative,fd=_calc_perf(dts,[float(x) for x in s.tolist()])
-                        perf={"cagr1y":c1,"cagr3y":c3,"cagr5y":c5,"cagr10y":c10,
-                              "cumulative_return":cumulative,
-                              "first_date":fd.isoformat() if fd else None}
+                        perf=_etf_price_performance(dts,[float(x) for x in s.tolist()])
                     except Exception:
                         perf={}
                 out.append({"ticker":tk,"name":sec_name if is_etf else tk,
@@ -1029,10 +1086,7 @@ def get_kr_ath(usd_krw, kr_last=None):
                    "investment_area_source":meta.get("investment_area_source"),
                    "url":f"https://m.stock.naver.com/domestic/stock/{code}/total"}
             if etf_flag and dates and len(dates) == len(closes):
-                c1, c3, c5, c10, cumulative, fd = _calc_perf(dates, closes)
-                res.update({"cagr1y": c1, "cagr3y": c3, "cagr5y": c5, "cagr10y": c10,
-                            "cumulative_return": cumulative,
-                            "first_date": fd.isoformat() if fd else None})
+                res.update(_etf_price_performance(dates, closes))
             return res
         return None
 
@@ -1228,9 +1282,9 @@ def main(prepare_only=False):
     for s in us: s["streak"] = us_streak.get(s["ticker"], 1)
     for s in kr: s["streak"] = kr_streak.get(s["ticker"], 1)
 
-    # ETF 전용 섹션: ATH -10% 이내 ETF(한국+미국) 중 최근 1년 수익률 내림차순 20개
+    # ETF 전용 섹션: ATH -10% 이내 ETF(한국+미국) 중 설립 이후 연평균 누적수익률 오름차순 20개
     etf_info = build_etf_info(us, kr)
-    log.info(f"ETF 섹션: 풀 {etf_info['pool']}개 / 1년수익률 산출 {etf_info['with_ret']}개 / 표시 {len(etf_info['rows'])}개")
+    log.info(f"ETF 섹션: 풀 {etf_info['pool']}개 / 연평균 누적수익률 산출 {etf_info['with_ret']}개 / 표시 {len(etf_info['rows'])}개")
 
     diag = {"us_days_before": us_days_before, "kr_days_before": kr_days_before}
     email_html = build_email(us,kr,info,usd_krw,new_us,new_kr,diag,indices,etf_info)

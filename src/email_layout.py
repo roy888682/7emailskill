@@ -27,6 +27,7 @@ table{border-collapse:collapse}a{color:#1260ad;text-decoration:none}
 .data-table th,.data-table td{white-space:nowrap;padding:3px 1px;text-align:left;vertical-align:middle}
 .data-table th{background:#163b68;color:#fff;font-weight:bold;font-size:13px;white-space:normal;word-break:keep-all}
 .data-table .w{white-space:normal;overflow-wrap:anywhere;word-break:break-word;max-width:180px}
+.data-table .nm{display:block;width:120px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}
 .stock-table th{background:#ee990b;color:#fff}
 .asset{display:inline-block;border-radius:3px;padding:1px 3px;font-size:11.7px;font-weight:bold}.s{background:#dff3ee;color:#087569}.e{background:#eee5fa;color:#753caf}
 .data-table td{border-bottom:1px solid #e7edf3}.data-table tbody tr:nth-child(even){background:#f6f8fb}
@@ -118,40 +119,52 @@ def compact_metric(period, label, value):
     return (f'<div class="metric" data-period="{period}">'
             f'<span class="metric-label">{label}</span><strong>{number}</strong></div>')
 
+def elapsed_years_text(value):
+    if not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+        return "-"
+    return f"{value:.2f}년"
+
+
 def etf_section_html(etf_info, include_details=False):
     rows = etf_info.get("rows", [])
     head = ('<div class="section" id="etf"><h2>ETF 수익률 비교</h2>'
-            f'<p class="intro">1년 연평균수익률 내림차순 · 상위 {len(rows)}개'
+            f'<p class="intro">연평균 누적수익률 오름차순 · {len(rows)}개'
             f' · 산출 가능 {etf_info.get("with_ret", 0)} / 후보 {etf_info.get("pool", 0)}개</p>'
-            '<p class="etf-caption">최근 1·3·5·10년: 연평균수익률(CAGR) · 누적: 설립 이래 누적수익률 · 단위: %</p>')
+            '<p class="etf-caption">최근 1·3·5·10년: 연평균수익률(CAGR) · 누적: 전체 수익률 · 연평균 누적: 설립일부터 복리 환산 · 수익률 단위: %</p>')
     if not rows:
         return head + '<p class="muted">해당 ETF 없음</p></div>'
-    labels = (("1y", "1년 ↓", "cagr1y"), ("3y", "3년", "cagr3y"),
+    labels = (("1y", "1년", "cagr1y"), ("3y", "3년", "cagr3y"),
               ("5y", "5년", "cagr5y"), ("10y", "10년", "cagr10y"),
-              ("cumulative", "누적", "cumulative_return"))
+              ("cumulative", "누적", "cumulative_return"),
+              ("lifetime", "연평균 누적수익률 ↑", "lifetime_cagr"))
     table = ('<div class="etf-comparison"><table class="data-table etf-table" id="returns"><thead><tr>'
              '<th class="number">No.</th><th class="flag-cell">국가</th><th>티커</th><th>종목명</th>' +
              "".join(f'<th class="number {"one-year" if period == "1y" else ""}">{label}</th>'
                      for period, label, _ in labels) +
-             '<th class="number" data-field="aum">AUM·시총(원화)</th><th data-field="inception">설립일</th></tr></thead><tbody>')
+             '<th class="number" data-field="aum">AUM·시총(원화)</th><th data-field="inception">설립일</th>'
+             '<th class="number" data-field="lifetime_years">누적연수</th></tr></thead><tbody>')
     for rank, row in enumerate(rows, 1):
         country = "US" if row.get("market") == "US" else "KR"
         ticker = h(row.get("ticker"))
         table += (f'<tr class="etf-row" data-ticker="{ticker}"><td class="number">{rank}</td>'
                   f'<td class="flag-cell">{flag_icon(country)}</td>'
                   f'<td class="ticker-cell"><a href="{safe_url(row.get("url"))}">{ticker}</a></td>'
-                  f'<td class="name-cell w">{h(row.get("name"))}</td>' +
+                  f'<td class="name-cell"><span class="nm">{h(row.get("name"))}</span></td>' +
                   "".join(f'<td class="number {"one-year" if period == "1y" else ""}">'
                           f'{compact_metric(period, label, row.get(key))}</td>'
                           for period, label, key in labels) +
                   f'<td class="number" data-field="aum">{row_size_html(dict(row, asset_type="ETF"))}</td>'
-                  f'<td class="date-cell" data-field="inception">{h(inception_text(row))}</td></tr>')
+                  f'<td class="date-cell" data-field="inception">{h(inception_text(row))}</td>'
+                  f'<td class="number" data-field="lifetime_years">{elapsed_years_text(row.get("lifetime_years"))}</td></tr>')
     table += '</tbody></table></div>'
-    notes = ('<p class="notes">ATH -10% 이내 비채권 ETF 기준. 1년 이력이 없는 ETF는 순위에서 제외합니다. '
+    notes = ('<p class="notes">ATH -10% 이내 비채권 ETF 중 연평균 누적수익률 산출 가능 종목을 오름차순으로 최대 20개 표시합니다. '
              '기간 이력이 부족하면 -로 표시합니다.<br>'
-             '설립 이래 누적수익률은 수집 가능한 최초 거래일 종가 대비 최신 종가의 전체 상승률이며, 연환산하지 않음.<br>'
+             '누적수익률은 수집 가능한 최초 거래일 종가 대비 최신 종가의 전체 상승률이며, 연환산하지 않음.<br>'
+             '연평균 누적수익률 = [(1 + 누적수익률/100)^(1/누적연수) - 1] × 100. '
+             '누적연수는 설립일부터 최신 주가 기준일까지의 실제 일수 ÷ 365.25이며, 계산은 반올림 전 값으로 합니다.<br>'
              '한국 ETF는 분배금 미반영 가격수익률, 미국 ETF는 배당 재투자 반영 수정주가 기준입니다.<br>'
-             '설립일은 운용사 공시값을 우선하고, 없으면 수집 가능한 최초 거래일을 표시합니다. AUM 우선, 없으면 시총을 원화로 표시합니다.</p>')
+             '설립일은 유효한 운용사 공시값을 우선하고, 없으면 수집 가능한 최초 거래일을 사용합니다. '
+             '최초 가격 이력이 설립일보다 늦으면 해당 가격 이력의 누적수익률을 사용합니다. AUM 우선, 없으면 시총을 원화로 표시합니다.</p>')
     details = ""
     if include_details:
         details = ('<div class="etf-details"><h3>ETF 상세정보</h3><table class="data-table">'
@@ -179,7 +192,7 @@ def _stock_row(row, country, new=False, compact=False, number=1):
              f'<td class="number">{number}</td>'
              f'<td class="flag-cell">{flag_icon(country)}</td>'
              f'<td class="ticker-cell"><a href="{safe_url(row.get("url"))}">{ticker}</a>{new_badge}</td>'
-             f'<td class="name-cell w">{h(row.get("name"))}</td>'
+             f'<td class="name-cell"><span class="nm">{h(row.get("name"))}</span></td>'
              f'<td><span class="asset asset-{kind}">{h(asset)}</span></td>'
              f'<td class="number" data-field="size">{row_size_html(row)}</td>'
              f'<td class="number" data-field="gap">{signal_pct(row.get("gap"))}</td>'
