@@ -3,7 +3,7 @@ import unittest
 from bs4 import BeautifulSoup
 from src.email_layout import (render_email, etf_section_html, inception_text,
                               row_size, row_size_html, aum, industry_text, inventory, validate_size,
-                              validate_inventory, MAX_EMAIL_BYTES, CSS, compact_transport_html)
+                              validate_inventory, MAX_EMAIL_BYTES, CSS, compact_transport_html, security_count)
 from tools.preview_email import sample_data, make_stock
 
 class EmailLayoutTests(unittest.TestCase):
@@ -22,7 +22,29 @@ class EmailLayoutTests(unittest.TestCase):
         self.assertEqual(validate_inventory(body, expected), expected)
         self.assertEqual((len(actual["us"]),len(actual["kr"])),(218,17))
         doc = BeautifulSoup(body, "html5lib")
-        self.assertEqual([node.get_text() for node in doc.select(".count")], ["17 종목","218 종목"])
+        self.assertEqual([node.get_text() for node in doc.select(".count")], ["17종목","218종목"])
+
+    def test_country_and_new_counts_show_independent_stock_etf_breakdowns(self):
+        us = [make_stock("US%04d" % i, number=i, asset_type="주식" if i < 75 else "ETF") for i in range(229)]
+        kr = [make_stock("KR%04d" % i, market="KOSPI", number=i, asset_type="주식" if i < 4 else "ETF") for i in range(11)]
+        new_us, new_kr = us[:5] + us[75:99], kr[:1] + kr[4:7]
+        data = dict(self.data, us=us, kr=kr, new_us=new_us, new_kr=new_kr)
+        doc = BeautifulSoup(render_email(**data), "html5lib")
+        markets = [node.get_text() for node in doc.select(".summary .market")]
+        self.assertEqual(markets, ["한국 11종목( 4종목 주식, 7종목 ETF )",
+                                   "미국 229종목( 75종목 주식, 154종목 ETF )"])
+        heading = doc.select_one("#new-stocks h2").get_text()
+        self.assertEqual(heading, "오늘의 신규 등장 · 한국 4종목( 1종목 주식, 3종목 ETF ) · 미국 29종목( 5종목 주식, 24종목 ETF )")
+        for country, label in (("kr", "11종목( 4종목 주식, 7종목 ETF )"),
+                               ("us", "229종목( 75종목 주식, 154종목 ETF )")):
+            intro = doc.select_one("#" + country).find_previous("p", class_="intro")
+            self.assertTrue(intro.get_text().startswith(label))
+        self.assertEqual(len(inventory(str(doc))["new"]), 33)
+
+    def test_empty_and_default_asset_count_labels(self):
+        self.assertEqual(security_count([]), "0종목( 0종목 주식, 0종목 ETF )")
+        self.assertEqual(security_count([{}, {"asset_type": "주식"}, {"asset_type": "ETF"}]),
+                         "3종목( 2종목 주식, 1종목 ETF )")
     def test_restores_original_header_alignment(self):
         body = render_email(**self.data)
         self.assertIn("text-align:left", body)
@@ -177,4 +199,5 @@ BASELINE_CSS = "\nbody{margin:0;background:#f2f5f8;color:#17263d;font-family:Ari
 
 if __name__=="__main__":
     unittest.main()
+
 

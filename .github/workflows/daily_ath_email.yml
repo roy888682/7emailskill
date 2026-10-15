@@ -2,7 +2,7 @@ name: 📈 Daily ATH Stock Email
 
 on:
   schedule:
-    - cron: '0 22 * * *'   # 22:00 UTC = 다음 날 07:00 KST (매일)
+    - cron: '0 22 * * 1-5'   # UTC 월~금 22:00 = KST 화~토 07:00 (일·월 발송 없음)
   workflow_dispatch:
 
 permissions:

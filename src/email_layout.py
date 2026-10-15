@@ -193,14 +193,26 @@ def _stock_head(compact=False):
             '<th>업종·투자분야</th><th class="number">전일 등락률</th><th class="number">누적일수</th>' +
             ("" if compact else "<th>지수</th>") + "</tr></thead><tbody>")
 
+def asset_breakdown(rows):
+    """Use the same asset classification as the security rows."""
+    etfs = sum(row.get("asset_type") == "ETF" for row in rows)
+    return f"( {len(rows) - etfs}종목 주식, {etfs}종목 ETF )"
+
+
+def security_count(rows):
+    return f"{len(rows)}종목{asset_breakdown(rows)}"
+
+
 def new_summary(new_us, new_kr, totals=None, offset=0):
     """All new securities are a dedicated visible list, never count-only badges."""
     total_kr, total_us = totals or (len(new_kr), len(new_us))
     count = len(new_us) + len(new_kr)
     overall = total_kr + total_us
     note = (f" · 전체 {overall}개 중 {offset + 1}~{offset + count}번째" if count < overall else "")
+    kr_label = security_count(new_kr) if total_kr == len(new_kr) else f"{total_kr}종목"
+    us_label = security_count(new_us) if total_us == len(new_us) else f"{total_us}종목"
     head = (f'<div class="section new-section" id="new-stocks" data-total="{overall}" data-shown="{count}">'
-            f'<h2>오늘의 신규 등장 · 한국 {total_kr} · 미국 {total_us}{note}</h2>'
+            f'<h2>오늘의 신규 등장 · 한국 {kr_label} · 미국 {us_label}{note}</h2>'
             '<p class="intro">직전 거래일에 없던 종목 · 누적일수는 과거 재등장을 포함합니다.</p>')
     if not count:
         return head + '<p class="muted">오늘의 신규 등장 종목이 없습니다.</p></div>'
@@ -213,7 +225,7 @@ def stocks_table(stocks, title, currency, holiday, date_s, hmsg="", new_tickers=
     country = "US" if currency == "USD" else "KR"
     new_tickers = set(new_tickers or [])
     head = (f'<div class="section stock-section"><h2>{flag_html(country)}{h(title)}</h2>'
-            f'<p class="intro">{len(stocks)}종목 · 기준일 {h(date_s)} · ATH 괴리율 -10%에 가까운 순</p>')
+            f'<p class="intro">{security_count(stocks)} · 기준일 {h(date_s)} · ATH 괴리율 -10%에 가까운 순</p>')
     banner = f'<div class="notice">{h(hmsg)}</div>' if holiday and hmsg else ""
     if not stocks:
         return head + banner + '<p class="muted">해당 종목 없음</p></div>'
@@ -227,10 +239,10 @@ def _summary(us, kr, info, indices):
         v = indices.get(key)
         return f"{v:,.1f}" if v else "-"
     return ('<div class="summary"><table role="presentation" class="layout"><tr><td>'
-            f'<div class="market">{flag_html("KR")}한국 <span class="count">{len(kr)}<span style="font-size:12px"> 종목</span></span></div>'
+            f'<div class="market">{flag_html("KR")}한국 <span class="count">{len(kr)}<span style="font-size:12px">종목</span></span><span style="font-size:12px">{asset_breakdown(kr)}</span></div>'
             f'<div class="muted">KOSPI {value("kospi")} {pct(indices.get("kospi_chg"))}<br>{h(info.get("kr_last_str"))}</div>'
             '</td><td>'
-            f'<div class="market">{flag_html("US")}미국 <span class="count">{len(us)}<span style="font-size:12px"> 종목</span></span></div>'
+            f'<div class="market">{flag_html("US")}미국 <span class="count">{len(us)}<span style="font-size:12px">종목</span></span><span style="font-size:12px">{asset_breakdown(us)}</span></div>'
             f'<div class="muted">S&amp;P 500 {value("sp500")} {pct(indices.get("sp500_chg"))}<br>{h(info.get("us_last_str"))}</div>'
             '</td></tr></table></div>')
 
@@ -390,4 +402,5 @@ def validate_size(source):
     if size > MAX_EMAIL_BYTES:
         raise RuntimeError(f"Email HTML {size:,} bytes exceeds {MAX_EMAIL_BYTES:,}; compact markup before sending, never remove candidates")
     return size
+
 
