@@ -1,6 +1,6 @@
 # 📈 Daily ATH Stock Emailer
 
-**화~토요일 오전 7시(KST)** 에 월~금 장 결과를 미국(S&P 500) + 한국(KOSPI/KOSDAQ) 52주 신고가 종목을 이메일로 자동 발송하는 GitHub Actions 자동화.
+월~금 미국(S&P 500)·한국(KOSPI/KOSDAQ) 장 결과의 52주 신고가 종목을 **화~토요일 오전 7시(KST)**에 이메일로 자동 발송하는 GitHub Actions 자동화입니다. 일요일과 월요일에는 예약 발송하지 않습니다.
 
 ---
 
