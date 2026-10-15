@@ -4,9 +4,6 @@ on:
   schedule:
     - cron: '0 22 * * *'   # 22:00 UTC = 다음 날 07:00 KST (매일)
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths: ['.github/workflows/daily_ath_email.yml']
 
 permissions:
   contents: read
