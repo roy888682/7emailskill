@@ -12,7 +12,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-MAX_HTML_BYTES = 200000
 
 def make_stock(ticker, market="US", number=0, asset_type="주식"):
     korean = market != "US"
@@ -454,10 +453,8 @@ def main():
         source = build_preview_html()
         data = preview_data()
         expected = manifest_for(data)
-    size = len(source.encode("utf-8"))
+    size = native_email.validate_source_size(source)
     print("PREVIEW_HTML_BYTES:%d" % size, flush=True)
-    if args.html and size > MAX_HTML_BYTES:
-        raise AssertionError("HTML body %d bytes exceeds %d-byte budget" % (size, MAX_HTML_BYTES))
     html_source = inline_flag_sources(source)
     gmail_source = gmail_host_html(html_source)
     if args.reference:
@@ -537,3 +534,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

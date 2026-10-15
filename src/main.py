@@ -3,6 +3,7 @@ import os, smtplib, logging, time, io, re, json, bisect, math
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.image import MIMEImage
+from email.mime.application import MIMEApplication
 from email.policy import SMTP
 from email.utils import formatdate, make_msgid
 from pathlib import Path
@@ -1120,8 +1121,7 @@ def build_subject(info):
 
 
 def compose_email_message(html, subject, user, to, inline_images=None, plain_text=None):
-    """One complete HTML body with inline flags and zero attachment parts."""
-    email_layout.validate_size(html)
+    """Keep every row inline; back up large reports with a complete HTML file."""
     native_email.validate_delivery_size(html)
     inline_images=inline_images or {}
     msg = MIMEMultipart("related", policy=SMTP)
@@ -1147,14 +1147,24 @@ def compose_email_message(html, subject, user, to, inline_images=None, plain_tex
         asset.add_header("Content-ID","<"+cid+">")
         asset.add_header("Content-Disposition","inline")
         msg.attach(asset)
-    # Images are inline display content. Bound the small HTML and total SMTP message separately.
-    # Log the encoded transport size separately from these content budgets.
+    # Gmail clipping is a display concern, not a reason to skip the daily email.
+    # Preserve the complete native body and supply a standalone copy on large days.
+    if native_email.clipping_risk(html) or (not inline_images and len(msg.as_bytes()) > 95000):
+        full_report = email_flags.inline_flag_sources(report_inline.inline_sources(html, inline_images))
+        attachment = MIMEApplication(full_report.encode("utf-8"), _subtype="octet-stream")
+        attachment.add_header("Content-Disposition", "attachment", filename="ath-full-report.html")
+        outer = MIMEMultipart("mixed", policy=SMTP)
+        for header in ("Subject", "From", "To", "Date", "Message-ID"):
+            outer[header] = msg[header]
+            del msg[header]
+        outer.attach(msg)
+        outer.attach(attachment)
+        msg = outer
+    # Bound actual SMTP resources, independently of the mail client's clipping threshold.
     decoded_bytes = sum(len(part.get_payload(decode=True) or b"") for part in msg.walk() if not part.is_multipart())
     if decoded_bytes > 12000000:
         raise RuntimeError(f"Decoded email {decoded_bytes:,} bytes exceeds the inline image budget")
     wire = msg.as_bytes()
-    if not inline_images and len(wire) > 95000:
-        raise RuntimeError("Native serialized email exceeds the Gmail budget; never remove candidates")
     if len(wire) > 20000000:
         raise RuntimeError("Serialized inline report exceeds the SMTP delivery budget")
     if max((len(line) for line in wire.split(b"\r\n")), default=0) > 998:
@@ -1176,8 +1186,13 @@ def send_email(html, subject, inline_images=None, source_html=None):
     log.info(f"메일 전체 본문: 미국 {us_rows}종목 / 한국 {kr_rows}종목 / "
              f"{len(html.encode('utf-8')):,}바이트 / 전송 {len(msg.as_bytes()):,}바이트 / 첨부 {attachment_count}개 / 추가 본문 이미지 {len(inline_images or {})}개")
     bodies = [part for part in msg.walk() if part.get_content_type() == "text/html"]
-    if attachment_count or len(bodies) != 1 or bodies[0].get_payload(decode=True).decode("utf-8").replace("\r\n", "\n") != html.replace("\r\n", "\n"):
+    if len(bodies) != 1 or bodies[0].get_payload(decode=True).decode("utf-8").replace("\r\n", "\n") != html.replace("\r\n", "\n"):
         raise RuntimeError("MIME body failed delivery validation")
+    attachments = [part for part in msg.walk() if part.get_content_disposition() == "attachment"]
+    expected_report = email_flags.inline_flag_sources(report_inline.inline_sources(html, inline_images or {}))
+    if attachments and (len(attachments) != 1 or attachments[0].get_filename() != "ath-full-report.html"
+                        or attachments[0].get_payload(decode=True) != expected_report.encode("utf-8")):
+        raise RuntimeError("Complete report attachment failed delivery validation")
     with smtplib.SMTP_SSL("smtp.gmail.com",465) as smtp:
         smtp.ehlo()
         if not smtp.has_extn("8bitmime"):
@@ -1186,7 +1201,7 @@ def send_email(html, subject, inline_images=None, source_html=None):
         smtp.sendmail(user,to,msg.as_bytes(),mail_options=("BODY=8BITMIME",))
     log.info(f"✅ 발송→{to}")
 
-CODE_VERSION = "2026-10-10-native-us-kr-table-font"
+CODE_VERSION = "2026-10-15-reliable-complete-report-delivery"
 
 def main(prepare_only=False):
     log.info(f"=== ATH 리포트 시작 (코드버전: {CODE_VERSION}) ===")
@@ -1294,3 +1309,4 @@ if __name__ == "__main__":
         send_prepared()
     else:
         main(prepare_only=args.prepare_only)
+

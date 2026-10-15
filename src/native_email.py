@@ -9,15 +9,28 @@ if __package__:
 else:
     import email_layout
 
-MAX_HTML_BYTES = 75000
-MAX_CANONICAL_BYTES = 90000
+# Gmail may shorten its inline view at these conservative margins. They are
+# delivery hints: the complete report can also travel as an HTML attachment.
+CLIPPING_HTML_BYTES = 75000
+CLIPPING_CANONICAL_BYTES = 90000
+# Bound resource usage separately from a mail client's display threshold.
+MAX_SOURCE_BYTES = 1000000
+MAX_HTML_BYTES = 1000000
+MAX_CANONICAL_BYTES = 1250000
 MAX_STYLE_CHARACTERS = 8192
 
 def validate_source_size(html):
     size = len(html.encode("utf-8"))
-    if size > 200000:
+    if size > MAX_SOURCE_BYTES:
         raise RuntimeError("Source body exceeds preparation budget; never remove candidates")
     return size
+
+def clipping_risk(html):
+    """Whether the complete inline report needs a full-report backup."""
+    if len(html.encode("utf-8")) > CLIPPING_HTML_BYTES:
+        return True
+    canonical = len(str(BeautifulSoup(html, "html5lib")).encode("utf-8"))
+    return canonical > CLIPPING_CANONICAL_BYTES
 
 def digest(value):
     return hashlib.sha256(value).hexdigest()
@@ -28,7 +41,7 @@ def validate_delivery_size(html):
     canonical = len(str(doc).encode("utf-8"))
     style_size = sum(len(str(tag.string or "")) for tag in doc.find_all("style"))
     if size > MAX_HTML_BYTES or canonical > MAX_CANONICAL_BYTES:
-        raise RuntimeError(f"Native body {size:,}/{canonical:,} bytes exceeds the clipping budget; never remove candidates")
+        raise RuntimeError(f"Native body {size:,}/{canonical:,} bytes exceeds the delivery safety budget; never remove candidates")
     if style_size >= MAX_STYLE_CHARACTERS:
         raise RuntimeError("Native CSS exceeds Gmail's style budget; never remove candidates")
     return size, canonical
@@ -182,6 +195,7 @@ def _facts(source, expected):
     return doc, actual, semantic_digest(doc)
 
 def prepare(source, expected, directory):
+    validate_source_size(source)
     original, actual, semantics = _facts(source, expected)
     delivery = _compact(source)
     doc, checked, after_semantics = _facts(delivery, expected)
@@ -210,6 +224,7 @@ def prepare(source, expected, directory):
     return delivery, meta
 
 def verify_package(source, delivery, expected, meta, directory):
+    validate_source_size(source)
     original, actual, semantics = _facts(source, expected)
     doc, checked, after_semantics = _facts(delivery, expected)
     size, canonical = validate_delivery_size(delivery)
@@ -233,3 +248,4 @@ def verify_package(source, delivery, expected, meta, directory):
 def plain_report(source):
     doc = BeautifulSoup(source, "html5lib")
     return doc.body.get_text(" ", strip=True) if doc.body else doc.get_text(" ", strip=True)
+

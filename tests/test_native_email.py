@@ -1,9 +1,10 @@
-"""Complete native delivery, field integrity and conservative Gmail budgets."""
+"""Complete native delivery, field integrity and separate Gmail display hints."""
 import copy
 import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from bs4 import BeautifulSoup
 from src import native_email
@@ -11,13 +12,14 @@ from src.email_layout import inventory, render_email
 from tools.preview_email import sample_data, make_stock
 
 
-def fixture(count=218):
+def fixture(count=218, long_names=False):
     data = sample_data()
     data["us"] = [make_stock("US%04d" % number, number=number) for number in range(count)]
     # Keep the full row/column coverage with realistic compact display labels;
     # the unrelated long-label overflow fixture belongs to browser layout QA.
     for row in data["us"] + data["kr"] + data["etf_info"]["rows"]:
-        row["name"] = row["ticker"]
+        row["name"] = ("Global Semiconductor and Artificial Intelligence Infrastructure " + row["ticker"]
+                       if long_names else row["ticker"])
         row["industry"] = "반도체"
         row["investment_area"] = "반도체"
         row["index"] = ["NASDAQ"] if row.get("market") == "US" else ["KOSPI"]
@@ -28,6 +30,38 @@ def fixture(count=218):
 
 
 class NativeEmailTests(unittest.TestCase):
+    def test_large_daily_reports_keep_every_native_row_and_value(self):
+        for count in (240, 520):
+            with self.subTest(count=count), tempfile.TemporaryDirectory() as directory:
+                source, expected = fixture(count, long_names=True)
+                delivery, meta = native_email.prepare(source, expected, directory)
+                self.assertEqual(native_email.verify_package(source, delivery, expected, meta, directory), {})
+                self.assertTrue(native_email.clipping_risk(delivery))
+                self.assertEqual(inventory(delivery), expected)
+                original = BeautifulSoup(source, "html5lib")
+                doc = BeautifulSoup(delivery, "html5lib")
+                self.assertEqual(native_email.semantic_digest(doc), native_email.semantic_digest(original))
+                rows = doc.select("#us tbody tr")
+                self.assertEqual(len(rows), count)
+                self.assertEqual([row.find("td").get_text(strip=True) for row in rows],
+                                 [str(number) for number in range(1, count + 1)])
+                self.assertEqual(rows[-1].find_all("td")[3].get_text(),
+                                 "Global Semiconductor and Artificial Intelligence Infrastructure US%04d" % (count - 1))
+                self.assertLessEqual(meta["html_bytes"], native_email.MAX_HTML_BYTES)
+                self.assertLessEqual(meta["canonical_bytes"], native_email.MAX_CANONICAL_BYTES)
+                self.assertLessEqual(max(len(line.encode("utf-8")) for line in delivery.splitlines()), 998)
+
+    def test_clipping_margins_are_hints_instead_of_delivery_failures(self):
+        self.assertFalse(native_email.clipping_risk("<p>Small report</p>"))
+        raw_large = "<p>" + "x" * native_email.CLIPPING_HTML_BYTES + "</p>"
+        self.assertTrue(native_email.clipping_risk(raw_large))
+        native_email.validate_delivery_size(raw_large)
+        # Optional closing tags can expand a small wire body past the old guard.
+        compact = "<table><tr>" + "<td>x" * 13000 + "</table>"
+        self.assertLess(len(compact.encode("utf-8")), native_email.CLIPPING_HTML_BYTES)
+        self.assertTrue(native_email.clipping_risk(compact))
+        native_email.validate_delivery_size(compact)
+
     def test_all_218_us_rows_and_other_tables_remain_native_with_every_field(self):
         source, expected = fixture()
         with tempfile.TemporaryDirectory() as directory:
@@ -94,13 +128,15 @@ class NativeEmailTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as directory, self.subTest(kind=kind), self.assertRaises(RuntimeError):
                 native_email.prepare(str(doc), expected, directory)
 
-    def test_native_body_and_reparsed_body_both_have_size_guards(self):
+    def test_source_and_delivery_hard_budgets_still_reject_excessive_bodies(self):
+        with self.assertRaisesRegex(RuntimeError, "preparation budget"):
+            native_email.validate_source_size("x" * (native_email.MAX_SOURCE_BYTES + 1))
         with self.assertRaisesRegex(RuntimeError, "never remove candidates"):
             native_email.validate_delivery_size("<p>" + "x" * native_email.MAX_HTML_BYTES + "</p>")
-        # Optional closing tags can conceal a much larger reparsed HTML body.
-        compact = "<table><tr>" + "<td>x" * 13000 + "</table>"
+        # Exercise the independent canonical guard with a smaller test budget.
+        compact = "<table><tr>" + "<td>x" * 130 + "</table>"
         self.assertLess(len(compact.encode("utf-8")), native_email.MAX_HTML_BYTES)
-        with self.assertRaisesRegex(RuntimeError, "never remove candidates"):
+        with patch.object(native_email, "MAX_CANONICAL_BYTES", 1000), self.assertRaisesRegex(RuntimeError, "delivery safety budget"):
             native_email.validate_delivery_size(compact)
         with self.assertRaisesRegex(RuntimeError, "style budget"):
             native_email.validate_delivery_size("<style>" + " " * native_email.MAX_STYLE_CHARACTERS + "</style>")
@@ -119,3 +155,4 @@ class NativeEmailTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -1,4 +1,4 @@
-"""Delivery regressions: every candidate in one body and zero attachments."""
+"""Delivery regressions: complete native bodies and large-report backups."""
 import os
 import tempfile
 import unittest
@@ -11,7 +11,7 @@ from tools.preview_email import sample_data, make_stock
 from datetime import date
 import re
 from src.email_layout import inventory, render_email, validate_size
-from src import native_email
+from src import native_email, email_flags
 
 
 class EmailDeliveryTests(unittest.TestCase):
@@ -48,7 +48,7 @@ class EmailDeliveryTests(unittest.TestCase):
             compose_email_message("x"*999,"test","a@example.test","b@example.test")
 
     def test_oversized_html_is_rejected_before_smtp_without_dropping_rows(self):
-        html = '<img src="cid:u">' + "가" * 85000
+        html = '<img src="cid:u">' + "가" * native_email.MAX_HTML_BYTES
         with self.assertRaisesRegex(RuntimeError, "never remove candidates"):
             compose_email_message(html, "test", "a@example.test", "b@example.test")
         with patch.dict(os.environ, {"GMAIL_USER":"a", "GMAIL_APP_PASSWORD":"b"}):
@@ -56,6 +56,43 @@ class EmailDeliveryTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     send_email(html, "test")
                 smtp.assert_not_called()
+
+    def test_large_live_sized_report_reaches_smtp_with_every_row_and_standalone_backup(self):
+        data = sample_data()
+        data["us"] = [make_stock("US%04d" % number, number=number) for number in range(240)]
+        for row in data["us"]:
+            row["name"] = "Example Semiconductor Company " + row["ticker"]
+            row["industry"] = "반도체 장비 및 소재"
+        data["new_us"] = data["us"][:25]
+        source = render_email(**data)
+        expected = inventory(source)
+        with tempfile.TemporaryDirectory() as directory:
+            delivery, _ = native_email.prepare(source, expected, directory)
+            self.assertTrue(native_email.clipping_risk(delivery))
+            original = os.getcwd()
+            try:
+                os.chdir(directory)
+                with patch.dict(os.environ, {"GMAIL_USER": "sender@example.test",
+                                             "GMAIL_APP_PASSWORD": "test-password",
+                                             "RECIPIENT_EMAIL": "reader@example.test"}), patch("src.main.smtplib.SMTP_SSL") as smtp:
+                    send_email(delivery, "large daily report")
+                    smtp.return_value.__enter__.return_value.sendmail.assert_called_once()
+                    sent = smtp.return_value.__enter__.return_value.sendmail.call_args.args[2]
+                    message = message_from_bytes(sent)
+                    body = next(part for part in message.walk() if part.get_content_type() == "text/html")
+                    body_html = body.get_payload(decode=True).decode("utf-8").replace("\r\n", "\n")
+                    self.assertEqual(body_html, delivery.replace("\r\n", "\n"))
+                    self.assertEqual(inventory(body_html), expected)
+                    attachments = [part for part in message.walk() if part.get_content_disposition() == "attachment"]
+                    self.assertEqual(len(attachments), 1)
+                    self.assertEqual(attachments[0].get_filename(), "ath-full-report.html")
+                    attached_html = attachments[0].get_payload(decode=True).decode("utf-8")
+                    self.assertEqual(attached_html, email_flags.inline_flag_sources(delivery))
+                    self.assertIn("data:image/png;base64,", attached_html)
+                    self.assertNotIn("cid:", attached_html)
+                    self.assertLessEqual(max(map(len, sent.split(b"\r\n"))), 998)
+            finally:
+                os.chdir(original)
 
     def test_main_sends_all_218_us_and_17_kr_in_one_message(self):
         data = sample_data()
@@ -160,3 +197,4 @@ class EmailDeliveryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

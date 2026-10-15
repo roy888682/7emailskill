@@ -2,8 +2,18 @@ name: 📈 Daily ATH Stock Email
 
 on:
   schedule:
-    - cron: '0 22 * * 1-5'   # 22:00 UTC = 07:00 KST (화~토)
+    - cron: '0 22 * * *'   # 22:00 UTC = 다음 날 07:00 KST (매일)
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/daily_ath_email.yml']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daily-ath-email
+  cancel-in-progress: false
 
 jobs:
   send-ath-email:
@@ -91,3 +101,15 @@ jobs:
         with:
           path: data/daily_snapshots.json
           key: ath-snapshot-${{ github.run_id }}
+
+      - name: 📎 실패 진단 파일 보관
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: email-delivery-diagnostics-${{ github.run_id }}
+          path: |
+            work/*.json
+            work/*.html
+            work/*.png
+          if-no-files-found: ignore
+          retention-days: 7
