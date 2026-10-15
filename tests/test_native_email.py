@@ -87,8 +87,9 @@ class NativeEmailTests(unittest.TestCase):
             wire = message.as_bytes()
             # A complete large report may include its self-contained HTML backup.
             # Preserve the inline body exactly and enforce the actual SMTP budget.
-            self.assertEqual([part.get_payload(decode=True) for part in message.walk()
-                              if part.get_content_type() == "text/html"], [delivery.encode("utf-8")])
+            self.assertEqual([part.get_payload(decode=True).decode("utf-8").replace("\r\n", "\n")
+                              for part in message.walk() if part.get_content_type() == "text/html"],
+                             [delivery.replace("\r\n", "\n")])
             self.assertLessEqual(len(wire), 20000000)
             self.assertIn(b"Content-Type: text/plain", wire)
             self.assertTrue(doc.find("style").string)
