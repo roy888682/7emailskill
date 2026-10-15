@@ -214,24 +214,38 @@ LAYOUT_CHECK = r"""expected => {
  }
  all.forEach((row,index)=>{
    const box=row.getBoundingClientRect();
-   if(box.height>32)problems.push("Row "+index+" is taller than one line: "+box.height);
    if(box.left< -tolerance||box.right>viewport+tolerance)
      problems.push("Row "+index+" exceeds the viewport");
-   for(const cell of row.cells){
+   const tableId=row.closest("table").id;
+   const wrappingColumns=tableId==="returns"?[3]:tableId==="new"?[3,7]:[3,7,10];
+   let rowWrapped=false;
+   for(const [column,cell] of Array.from(row.cells).entries()){
      const style=getComputedStyle(cell),bounds=cell.getBoundingClientRect();
-     if(style.whiteSpace!=="nowrap")problems.push("Row "+index+" permits wrapping");
-     if(parseFloat(style.fontSize)>12)problems.push("Row "+index+" inherits a large host font");
+     const mayWrap=wrappingColumns.includes(column);
+     if(cell.classList.contains("w")!==mayWrap)
+       problems.push("Row "+index+" has an incorrect wrapping column "+column);
+     if(style.whiteSpace!==(mayWrap?"normal":"nowrap"))
+       problems.push("Row "+index+" has an incorrect wrapping style in column "+column);
+     const expectedFont=tableId==="returns"&&column!==10?13:12.35;
+     if(Math.abs(parseFloat(style.fontSize)-expectedFont)>.01)
+       problems.push("Row "+index+" font differs from the enlarged design: "+style.fontSize);
      const walker=document.createTreeWalker(cell,NodeFilter.SHOW_TEXT);let node;
      while((node=walker.nextNode())){
        if(!node.textContent.trim())continue;
        const range=document.createRange();range.selectNodeContents(node);
        const rects=Array.from(range.getClientRects()).filter(rect=>rect.width);
-       if(rects.length>1)problems.push("Row "+index+" wraps: "+node.textContent.trim());
+       if(rects.length>1){
+         if(mayWrap)rowWrapped=true;
+         else problems.push("Row "+index+" wraps a numeric or ticker field: "+node.textContent.trim());
+       }
        for(const rect of rects)
-         if(rect.left<bounds.left-tolerance||rect.right>bounds.right+tolerance)
+         if(rect.left<bounds.left-tolerance||rect.right>bounds.right+tolerance||
+            rect.top<bounds.top-tolerance||rect.bottom>bounds.bottom+tolerance)
            problems.push("Row "+index+" clips text: "+node.textContent.trim());
      }
    }
+   if(!rowWrapped&&box.height>42)
+     problems.push("Row "+index+" is taller than its single-line content: "+box.height);
  });
  const broken=Array.from(document.images).filter(image=>!image.complete||!image.naturalWidth);
  if(broken.length)problems.push("Broken images: "+broken.map(image=>image.alt).join(","));

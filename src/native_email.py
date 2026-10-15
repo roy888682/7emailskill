@@ -78,7 +78,7 @@ def _column_css():
         (7, "color:#087d67"),
         (8, "color:#7944b0"),
         (9, "color:#17263d"),
-        (11, "text-align:left;font-variant-numeric:normal;font-size:9.5px"),
+        (11, "text-align:left;font-variant-numeric:normal;font-size:12.35px"),
     )
     for column, declarations in rules:
         groups.append(_selectors(etfs, column) + "{" + declarations + "}")
@@ -126,8 +126,7 @@ def _trim_css(css, doc):
     css = css.replace(".stock-table b,.new-table b", ".c b")
     css = css.replace(".stock-table i,.new-table i", ".c i")
     css = css.replace(".stock-table th{", ".c th{")
-    css = css.replace("padding-left:3px;padding-right:3px", "")
-    css = css.replace("padding:3px 3px", "padding:3px")
+    css = css.replace("padding-left:1px;padding-right:1px", "")
     css = css.replace(".etf-comparison .data-table{", ".v{")
     css = css.replace(".m{", ".v b{")
     css = css.replace(".data-table .t,.data-table a{", ".data-table a{")

@@ -12,35 +12,36 @@ else:
 
 MAX_BODY_BYTES = 85000
 CSS = """
-body{margin:0;background:#f2f5f8;color:#17263d;font-family:Arial,'Malgun Gothic','Apple SD Gothic Neo',sans-serif;font-size:12px;line-height:1.4}
+body{margin:0;background:#f2f5f8;color:#17263d;font-family:Arial,'Malgun Gothic','Apple SD Gothic Neo',sans-serif;font-size:15.6px;line-height:1.4}
 table{border-collapse:collapse}a{color:#1260ad;text-decoration:none}
-.shell{max-width:1360px;margin:0 auto;padding:12px;color:#17263d;background:#f2f5f8;font-family:Arial,'Malgun Gothic','Apple SD Gothic Neo',sans-serif;font-size:12px;line-height:1.4}.layout{width:100%;table-layout:fixed}
+.shell{max-width:1360px;margin:0 auto;padding:12px;color:#17263d;background:#f2f5f8;font-family:Arial,'Malgun Gothic','Apple SD Gothic Neo',sans-serif;font-size:15.6px;line-height:1.4}.layout{width:100%;table-layout:fixed}
 .hero{background:#11243c;color:#fff;border-radius:9px;padding:12px 16px}.hero .eyebrow{display:none}
-.hero h1{font-size:19px;line-height:1.2;margin:0 0 5px}.date{font-size:11px;color:#c5d5e4}
-.hero .foot{font-size:10px;color:#9eb5cc;border-top:1px solid #30465f;padding-top:6px;margin-top:7px}
+.hero h1{font-size:24.7px;line-height:1.2;margin:0 0 5px}.date{font-size:14.3px;color:#c5d5e4}
+.hero .foot{font-size:13px;color:#9eb5cc;border-top:1px solid #30465f;padding-top:6px;margin-top:7px}
 .summary{margin-top:8px;background:#fff;border:1px solid #dfe7ef;border-radius:8px;padding:8px 10px}
-.summary td{width:50%;padding:0 6px;vertical-align:top}.count{font-size:17px;font-weight:bold}
-.market{font-weight:bold;font-size:11px;margin-bottom:2px}.muted{font-size:10px;color:#667a90}
-.section{margin-top:14px}.section h2{margin:0;font-size:16px;line-height:1.25}
-.intro,.etf-caption{font-size:10px;color:#64778b;margin:4px 0 7px}
-.data-table{width:100%;table-layout:auto;background:#fff;border:1px solid #dce5ee;font-size:9.5px;line-height:1.25}
-.data-table th,.data-table td{white-space:nowrap;padding:3px 3px;text-align:left;vertical-align:middle}
-.data-table th{background:#163b68;color:#fff;font-weight:bold;font-size:10px}
+.summary td{width:50%;padding:0 3px;vertical-align:top}.count{font-size:22.1px;font-weight:bold}
+.market{font-weight:bold;font-size:14.3px;margin-bottom:2px}.muted{font-size:13px;color:#667a90}
+.section{margin-top:14px}.section h2{margin:0;font-size:20.8px;line-height:1.25}
+.intro,.etf-caption{font-size:13px;color:#64778b;margin:4px 0 7px}
+.data-table{width:100%;table-layout:auto;background:#fff;border:1px solid #dce5ee;font-size:12.35px;line-height:1.25}
+.data-table th,.data-table td{white-space:nowrap;padding:3px 1px;text-align:left;vertical-align:middle}
+.data-table th{background:#163b68;color:#fff;font-weight:bold;font-size:13px;white-space:normal;word-break:keep-all}
+.data-table .w{white-space:normal;overflow-wrap:anywhere;word-break:break-word;max-width:180px}
 .stock-table th{background:#ee990b;color:#fff}
-.asset{display:inline-block;border-radius:3px;padding:1px 4px;font-size:9px;font-weight:bold}.s{background:#dff3ee;color:#087569}.e{background:#eee5fa;color:#753caf}
+.asset{display:inline-block;border-radius:3px;padding:1px 3px;font-size:11.7px;font-weight:bold}.s{background:#dff3ee;color:#087569}.e{background:#eee5fa;color:#753caf}
 .data-table td{border-bottom:1px solid #e7edf3}.data-table tbody tr:nth-child(even){background:#f6f8fb}
 .data-table .n{text-align:right;font-variant-numeric:tabular-nums}
-.data-table .f{text-align:center;padding-left:3px;padding-right:3px}.f img{width:20px;height:auto;vertical-align:middle}
+.data-table .f{text-align:center;padding-left:1px;padding-right:1px}.f img{width:20px;height:auto;vertical-align:middle}
 .data-table .t{font-weight:bold}.data-table .y{background:#eaf1fb;font-weight:bold}
-.data-table th.y{background:#2b4665;color:#fff}.data-table .d{font-size:9.5px}
-.etf-comparison .data-table{font-size:10px}.metric-label{display:none}.m{display:block;font-size:10px;font-weight:bold;line-height:1.25}
-.etf-details{margin-top:12px}.etf-details h3{font-size:13px;margin:0 0 6px}
+.data-table th.y{background:#2b4665;color:#fff}.data-table .d{font-size:12.35px}
+.etf-comparison .data-table{font-size:13px}.metric-label{display:none}.m{display:block;font-size:13px;font-weight:bold;line-height:1.25}
+.etf-details{margin-top:12px}.etf-details h3{font-size:16.9px;margin:0 0 6px}
 .up{color:#c04840}.down{color:#2862a6}.flat{color:#52677d}
 .new-section{border-top:3px solid #ee990b;padding-top:8px}.new-table th{background:#ee990b}.r{color:#c23932}.data-table .p1{color:#c23932}.data-table .p3{color:#245ba6}.data-table .p5{color:#087d67}.data-table .p10{color:#7944b0}.data-table .z{background:#f6f8fb}
-.new{background:#e6f3ed;color:#237353;border-radius:3px;padding:0 3px;margin-left:3px;font-size:8px;font-weight:bold}
-.notice{background:#fff4dc;color:#796438;border-radius:6px;padding:8px 10px;font-size:10px;margin:8px 0}
-.report-note{padding:8px 10px;background:#e8f0f8;border-radius:6px;color:#405d7a;font-size:10px}
-.notes{font-size:9px;line-height:1.5;color:#75869a;margin:8px 0}.footer{text-align:center;color:#8a9aab;font-size:9px;padding:16px 0 8px}
+.new{background:#e6f3ed;color:#237353;border-radius:3px;padding:0 3px;margin-left:3px;font-size:10.4px;font-weight:bold}
+.notice{background:#fff4dc;color:#796438;border-radius:6px;padding:8px 10px;font-size:13px;margin:8px 0}
+.report-note{padding:8px 10px;background:#e8f0f8;border-radius:6px;color:#405d7a;font-size:13px}
+.notes{font-size:11.7px;line-height:1.5;color:#75869a;margin:8px 0}.footer{text-align:center;color:#8a9aab;font-size:11.7px;padding:16px 0 8px}
 """
 
 def h(value):
@@ -139,7 +140,7 @@ def etf_section_html(etf_info, include_details=False):
         table += (f'<tr class="etf-row" data-ticker="{ticker}"><td class="number">{rank}</td>'
                   f'<td class="flag-cell">{flag_icon(country)}</td>'
                   f'<td class="ticker-cell"><a href="{safe_url(row.get("url"))}">{ticker}</a></td>'
-                  f'<td class="name-cell">{h(row.get("name"))}</td>' +
+                  f'<td class="name-cell w">{h(row.get("name"))}</td>' +
                   "".join(f'<td class="number {"one-year" if period == "1y" else ""}">'
                           f'{compact_metric(period, label, row.get(key))}</td>'
                           for period, label, key in labels) +
@@ -178,14 +179,14 @@ def _stock_row(row, country, new=False, compact=False, number=1):
              f'<td class="number">{number}</td>'
              f'<td class="flag-cell">{flag_icon(country)}</td>'
              f'<td class="ticker-cell"><a href="{safe_url(row.get("url"))}">{ticker}</a>{new_badge}</td>'
-             f'<td class="name-cell">{h(row.get("name"))}</td>'
+             f'<td class="name-cell w">{h(row.get("name"))}</td>'
              f'<td><span class="asset asset-{kind}">{h(asset)}</span></td>'
              f'<td class="number" data-field="size">{row_size_html(row)}</td>'
              f'<td class="number" data-field="gap">{signal_pct(row.get("gap"))}</td>'
-             f'<td title="{source}">{h(industry_text(row))}</td>'
+             f'<td class="w" title="{source}">{h(industry_text(row))}</td>'
              f'<td class="number" data-field="change">{signal_pct(row.get("change"))}</td>'
              f'<td class="number">{h(row.get("streak", 1))}일째</td>')
-    return cells + ("" if compact else f'<td>{h(badges)}</td>') + "</tr>"
+    return cells + ("" if compact else f'<td class="w">{h(badges)}</td>') + "</tr>"
 
 def _stock_head(compact=False):
     return ('<thead><tr><th class="number">No.</th><th class="flag-cell">국가</th><th>티커</th><th>종목명</th><th>구분</th>'
@@ -239,10 +240,10 @@ def _summary(us, kr, info, indices):
         v = indices.get(key)
         return f"{v:,.1f}" if v else "-"
     return ('<div class="summary"><table role="presentation" class="layout"><tr><td>'
-            f'<div class="market">{flag_html("KR")}한국 <span class="count">{len(kr)}<span style="font-size:12px">종목</span></span><span style="font-size:12px">{asset_breakdown(kr)}</span></div>'
+            f'<div class="market">{flag_html("KR")}한국 <span class="count">{len(kr)}<span style="font-size:15.6px">종목</span></span><span style="font-size:15.6px">{asset_breakdown(kr)}</span></div>'
             f'<div class="muted">KOSPI {value("kospi")} {pct(indices.get("kospi_chg"))}<br>{h(info.get("kr_last_str"))}</div>'
             '</td><td>'
-            f'<div class="market">{flag_html("US")}미국 <span class="count">{len(us)}<span style="font-size:12px">종목</span></span><span style="font-size:12px">{asset_breakdown(us)}</span></div>'
+            f'<div class="market">{flag_html("US")}미국 <span class="count">{len(us)}<span style="font-size:15.6px">종목</span></span><span style="font-size:15.6px">{asset_breakdown(us)}</span></div>'
             f'<div class="muted">S&amp;P 500 {value("sp500")} {pct(indices.get("sp500_chg"))}<br>{h(info.get("us_last_str"))}</div>'
             '</td></tr></table></div>')
 

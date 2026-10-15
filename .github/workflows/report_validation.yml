@@ -52,9 +52,9 @@ jobs:
           data["new_us"] = data["us"][:5] + data["us"][75:99]
           data["new_kr"] = data["kr"][:1] + data["kr"][4:7]
           for row in data["us"] + data["kr"] + data["etf_info"]["rows"]:
-              row["name"] = row["ticker"]
-              row["industry"] = row["investment_area"] = "반도체"
-              row["index"] = ["NASDAQ"] if row["market"] == "US" else ["KOSPI"]
+              row["name"] = ("한국반도체인공지능산업솔루션 " if row["market"] != "US" else "Semiconductor Infrastructure Holdings ") + row["ticker"]
+              row["industry"] = row["investment_area"] = "반도체 장비 및 인공지능 인프라"
+              row["index"] = ["S&P500", "NASDAQ"] if row["market"] == "US" else ["KOSPI"]
           directory = Path("work")
           directory.mkdir(exist_ok=True)
           (directory / "email-body.html").write_text(render_email(**data), encoding="utf-8")

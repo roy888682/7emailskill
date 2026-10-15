@@ -5,3 +5,5 @@ For every requested change to this repository, finish implementation and appropr
 Scheduled reports must run Tuesday through Saturday at 07:00 Asia/Seoul for Monday through Friday market results (`0 22 * * 1-5` in UTC). Do not schedule Sunday or Monday sends. Explicit post-change verification sends requested by the maintainer are separate from that schedule.
 
 Show the stock and ETF breakdown, computed from the actual rows, for both countries' overall counts and both countries' newly appearing counts.
+
+The current readable report style uses 12.35px stock/new-row text and 13px ETF return text (about 30% larger than the earlier style), with 1px horizontal cell padding. Long names, industry labels, and index labels may wrap; preserve every value and keep ticker/numeric fields on one line.
