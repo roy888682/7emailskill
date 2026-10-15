@@ -267,7 +267,8 @@ LAYOUT_CHECK = r"""expected => {
        if(!node.textContent.trim())continue;
        const range=document.createRange();range.selectNodeContents(node);
        const rects=Array.from(range.getClientRects()).filter(rect=>rect.width);
-       if(rects.length>1){
+       // Ellipsis can produce visible and hidden rectangles on the same line.
+       if(rects.some(rect=>Math.abs(rect.top-rects[0].top)>tolerance)){
          if(mayWrap)rowWrapped=true;
          else problems.push("Row "+index+" wraps a numeric or ticker field: "+node.textContent.trim());
        }
