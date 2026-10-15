@@ -23,13 +23,13 @@ table{border-collapse:collapse}a{color:#1260ad;text-decoration:none}
 .market{font-weight:bold;font-size:14.3px;margin-bottom:2px}.muted{font-size:13px;color:#667a90}
 .section{margin-top:14px}.section h2{margin:0;font-size:20.8px;line-height:1.25}
 .intro,.etf-caption{font-size:13px;color:#64778b;margin:4px 0 7px}
-.data-table{width:100%;table-layout:auto;background:#fff;border:1px solid #dce5ee;font-size:12.35px;line-height:1.25}
-.data-table th,.data-table td{white-space:nowrap;padding:3px 1px;text-align:left;vertical-align:middle}
-.data-table th{background:#163b68;color:#fff;font-weight:bold;font-size:13px;white-space:normal;word-break:keep-all;text-align:center!important}
-.data-table .w{white-space:normal;overflow-wrap:anywhere;word-break:break-word;max-width:180px}
+.data-table{width:100%;table-layout:fixed;background:#fff;border:1px solid #dce5ee;font-size:12.35px;line-height:1.25}
+.data-table th,.data-table td{white-space:nowrap;overflow:hidden;padding:3px 1px;text-align:left;vertical-align:middle;border-right:1px solid #000}
+.data-table th:last-child,.data-table td:last-child{border-right:0}
+.data-table th{background:#163b68;color:#fff;font-weight:bold;font-size:13px;white-space:nowrap;text-align:center!important}
+.data-table .cl,.data-table .nm,.data-table .iwc{display:block;width:100%;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .data-table .iw{width:126px;max-width:126px}
-.data-table .iwc{display:block;width:126px;max-width:126px;white-space:normal;overflow-wrap:anywhere;word-break:break-word}
-.data-table .nm{display:block;width:120px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}
+.data-table .nm{text-align:left}
 .stock-table th{background:#ee990b;color:#fff}
 .asset{display:inline-block;border-radius:3px;padding:1px 3px;font-size:11.7px;font-weight:bold}.s{background:#dff3ee;color:#087569}.e{background:#eee5fa;color:#753caf}
 .data-table td{border-bottom:1px solid #e7edf3}.data-table tbody tr:nth-child(even){background:#f6f8fb}
@@ -99,12 +99,63 @@ def industry_text(row):
     return row.get("industry") or "미확인"
 
 
+def brief_investment_text(row):
+    """Prefer the actual index, then a concise provider/category label."""
+    if row.get("asset_type") != "ETF":
+        return industry_text(row)
+    ticker = str(row.get("ticker") or "").upper()
+    if ticker == "QQQ":
+        return "나스닥100"
+    if ticker == "TQQQ":
+        return "나스닥100·일일3배"
+    if ticker == "DFAC":
+        return "미국주식·액티브"
+    text = " ".join(str(row.get(key) or "") for key in
+                    ("etf_index", "investment_area", "name"))
+    if re.search(r"NASDAQ[\s-]*100|나스닥\s*100", text, re.I):
+        return "나스닥100"
+    if re.search(r"S\s*&\s*P\s*500", text, re.I):
+        return "S&P500"
+    if re.search(r"반도체|semiconductor|philadelphia", text, re.I):
+        geographic_text = re.sub(r"Global\s+X", "", text, flags=re.I)
+        if re.search(r"글로벌|global|world", geographic_text, re.I):
+            return "글로벌반도체"
+        overseas = re.search(r"미국|US |U\.S\.|NASDAQ|PHILADELPHIA", text, re.I)
+        region = "미국" if row.get("market") == "US" or overseas else "한국"
+        return region + "반도체"
+    if re.search(r"KOSPI\s*200|코스피\s*200|KODEX\s*200|TIGER\s*200", text, re.I):
+        return "코스피200"
+    if re.search(r"\bgold\b|금현물|골드(?!만)", text, re.I):
+        return "금"
+    return str(row.get("etf_index") or row.get("investment_area") or row.get("etf_kind") or "미확인")
+
+
+def price_text(value):
+    if not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+        return "-"
+    # Significant digits also preserve tiny split-adjusted inception prices.
+    return format(value, ".12g")
+
+
+def table_columns(kind):
+    if kind == "returns":
+        widths = ("3%", "3%", "6%", None, "9%", "4.5%", "4.5%", "4.5%", "4.5%",
+                  "6%", "7%", "7%", "9%", "48px", "9%", "6%")
+    else:
+        widths = ("3%", "3%", "9%", None, "126px", "5%", "42px", "9%", "9%", "8%")
+        if kind != "new":
+            widths += ("12%",)
+    return '<colgroup>' + ''.join(f'<col style="width:{width}">' if width else '<col>' for width in widths) + '</colgroup>'
+
+
 def flag_icon(market):
     """Small drawn PNG flags for dense desktop table cells."""
     icon = re.sub(r' style="[^"]*"', "", flag_html(market))
     return icon.replace('width="30"', 'width="20"').replace('height="16"', 'height="11"').replace('height="20"', 'height="13"')
 
 def inception_text(row):
+    if row.get("inception_verified") is False:
+        return "미확인"
     value = row.get("inception") or row.get("first_date")
     if not value:
         return "-"
@@ -132,41 +183,49 @@ def etf_section_html(etf_info, include_details=False):
     head = ('<div class="section" id="etf"><h2>ETF 수익률 비교</h2>'
             f'<p class="intro">연평균 누적수익률 내림차순 · 상위 {len(rows)}개'
             f' · 산출 가능 {etf_info.get("with_ret", 0)} / 후보 {etf_info.get("pool", 0)}개</p>'
-            '<p class="etf-caption">최근 1·3·5·10년: 연평균수익률(CAGR) · 누적: 전체 수익률 · 연평균 누적: 설립일부터 복리 환산 · 수익률 단위: %</p>')
+            '<p class="etf-caption">최근 1·3·5·10년: 연평균수익률(CAGR) · 누적: 표시된 두 기준주가의 수익률 · 연평균 누적: 같은 가격 기간을 복리 환산 · 수익률 단위: %</p>')
     if not rows:
         return head + '<p class="muted">해당 ETF 없음</p></div>'
     labels = (("1y", "1년", "cagr1y"), ("3y", "3년", "cagr3y"),
               ("5y", "5년", "cagr5y"), ("10y", "10년", "cagr10y"),
-              ("cumulative", "누적", "cumulative_return"),
-              ("lifetime", "연평균 누적수익률 ↓", "lifetime_cagr"))
-    table = ('<div class="etf-comparison"><table class="data-table etf-table" id="returns"><thead><tr>'
-             '<th class="number">No.</th><th class="flag-cell">국가</th><th>티커</th><th>종목명</th>' +
+              ("cumulative", "누적", "cumulative_return"))
+    table = ('<div class="etf-comparison"><table class="data-table etf-table" id="returns">' + table_columns("returns") + '<thead><tr>'
+             '<th class="number">No.</th><th class="flag-cell">국가</th><th>티커</th><th>종목명</th><th>업종·투자분야</th>' +
              "".join(f'<th class="number {"one-year" if period == "1y" else ""}">{label}</th>'
                      for period, label, _ in labels) +
-             '<th class="number" data-field="aum">AUM·시총(원화)</th><th data-field="inception">설립일</th>'
+             '<th class="number">최초 수정·기준주가</th><th class="number">최근 수정·기준주가</th>'
+             '<th class="number">연평균 누적수익률 ↓</th>'
+             '<th class="number" data-field="aum">AUM·시총(원화)</th><th data-field="inception">설립·상장일</th>'
              '<th class="number" data-field="lifetime_years">누적연수</th></tr></thead><tbody>')
     for rank, row in enumerate(rows, 1):
         country = "US" if row.get("market") == "US" else "KR"
         ticker = h(row.get("ticker"))
+        first_title = h(f'{row.get("price_start_date") or row.get("first_date") or "날짜 미확인"} · {row.get("price_basis") or "가격 기준 미확인"} · {row.get("price_currency") or ("USD" if country == "US" else "KRW")}')
+        last_title = h(f'{row.get("price_end_date") or row.get("last_date") or "날짜 미확인"} · {row.get("price_basis") or "가격 기준 미확인"} · {row.get("price_currency") or ("USD" if country == "US" else "KRW")}')
         table += (f'<tr class="etf-row" data-ticker="{ticker}"><td class="number">{rank}</td>'
                   f'<td class="flag-cell">{flag_icon(country)}</td>'
                   f'<td class="ticker-cell"><a href="{safe_url(row.get("url"))}">{ticker}</a></td>'
-                  f'<td class="name-cell"><span class="nm">{h(row.get("name"))}</span></td>' +
+                  f'<td class="name-cell"><span class="nm">{h(row.get("name"))}</span></td>'
+                  f'<td title="{h(row.get("etf_index") or industry_text(row))}">{h(brief_investment_text(row))}</td>' +
                   "".join(f'<td class="number {"one-year" if period == "1y" else ""}">'
                           f'{compact_metric(period, label, row.get(key))}</td>'
                           for period, label, key in labels) +
+                  f'<td class="number" title="{first_title}">{price_text(row.get("initial_adjusted_price"))}</td>'
+                  f'<td class="number" title="{last_title}">{price_text(row.get("latest_adjusted_price"))}</td>'
+                  f'<td class="number">{compact_metric("lifetime", "연평균 누적수익률 ↓", row.get("lifetime_cagr"))}</td>'
                   f'<td class="number" data-field="aum">{row_size_html(dict(row, asset_type="ETF"))}</td>'
-                  f'<td class="date-cell" data-field="inception">{h(inception_text(row))}</td>'
+                  f'<td class="date-cell" data-field="inception" title="{h(row.get("inception_source") or "설립일 출처 미확인")}">{h(inception_text(row))}</td>'
                   f'<td class="number" data-field="lifetime_years">{elapsed_years_text(row.get("lifetime_years"))}</td></tr>')
     table += '</tbody></table></div>'
     notes = ('<p class="notes">ATH -10% 이내 비채권 ETF 중 연평균 누적수익률 산출 가능 종목을 내림차순으로 최대 100개 표시합니다. '
              '기간 이력이 부족하면 -로 표시합니다.<br>'
-             '누적수익률은 수집 가능한 최초 거래일 종가 대비 최신 종가의 전체 상승률이며, 연환산하지 않음.<br>'
+             '누적수익률 = (최근 수정·기준주가 ÷ 최초 수정·기준주가 - 1) × 100이며, 연환산하지 않음. 두 가격은 같은 제공업체·같은 조정 기준입니다.<br>'
              '연평균 누적수익률 = [(1 + 누적수익률/100)^(1/누적연수) - 1] × 100. '
-             '누적연수는 설립일부터 최신 주가 기준일까지의 실제 일수 ÷ 365.25이며, 계산은 반올림 전 값으로 합니다.<br>'
-             '한국 ETF는 분배금 미반영 가격수익률, 미국 ETF는 배당 재투자 반영 수정주가 기준입니다.<br>'
-             '설립일은 유효한 운용사 공시값을 우선하고, 없으면 수집 가능한 최초 거래일을 사용합니다. '
-             '최초 가격 이력이 설립일보다 늦으면 해당 가격 이력의 누적수익률을 사용합니다. AUM 우선, 없으면 시총을 원화로 표시합니다.</p>')
+             '누적연수는 표시된 최초·최근 가격의 실제 기준일 차이 ÷ 365.25이며, 계산은 반올림 전 값으로 합니다.<br>'
+             '미국과 수정주가 확보 한국 ETF는 Yahoo 제공 수정주가(auto_adjust) 기준입니다. 수정주가 확보 불가 한국 ETF는 네이버 차트 종가이며 배당조정 미확인으로 구분합니다.<br>'
+             '설립일 당일 가격이 없으면 실제 최초 확보일 가격을 표시합니다. 각 가격에 마우스를 올리면 전체 값·기준일·통화·가격 기준을 확인할 수 있습니다. 설립일 출처가 불명확하면 미확인으로 표시합니다.<br>'
+             'DFAC: ETF 최초상장 2021-06-14, 전신 펀드 2007-10-04, 지분종류 재편 기준일 2026-10-02. ETF 최초상장 이후 가격으로 계산하며 재편일을 최초상장일로 사용하지 않습니다. '
+             'AUM 우선, 없으면 시총을 원화로 표시합니다.</p>')
     details = ""
     if include_details:
         details = ('<div class="etf-details"><h3>ETF 상세정보</h3><table class="data-table">'
@@ -195,18 +254,18 @@ def _stock_row(row, country, new=False, compact=False, number=1):
              f'<td class="flag-cell">{flag_icon(country)}</td>'
              f'<td class="ticker-cell"><a href="{safe_url(row.get("url"))}">{ticker}</a>{new_badge}</td>'
              f'<td class="name-cell"><span class="nm">{h(row.get("name"))}</span></td>'
+             f'<td class="iw" title="{source}"><span class="iwc">{h(brief_investment_text(row))}</span></td>'
              f'<td><span class="asset asset-{kind}">{h(asset)}</span></td>'
              f'<td class="number" data-field="size">{row_size_html(row)}</td>'
              f'<td class="number" data-field="gap">{signal_pct(row.get("gap"))}</td>'
-             f'<td class="w iw" title="{source}"><span class="iwc">{h(industry_text(row))}</span></td>'
              f'<td class="number" data-field="change">{signal_pct(row.get("change"))}</td>'
              f'<td class="number">{h(row.get("streak", 1))}일째</td>')
-    return cells + ("" if compact else f'<td class="w">{h(badges)}</td>') + "</tr>"
+    return cells + ("" if compact else f'<td>{h(badges)}</td>') + "</tr>"
 
 def _stock_head(compact=False):
-    return ('<thead><tr><th class="number">No.</th><th class="flag-cell">국가</th><th>티커</th><th>종목명</th><th>구분</th>'
+    return (table_columns("new" if compact else "stocks") + '<thead><tr><th class="number">No.</th><th class="flag-cell">국가</th><th>티커</th><th>종목명</th><th class="iw">업종·투자분야</th><th>구분</th>'
             '<th class="number">시총·AUM(원화)</th><th class="number">ATH 괴리율</th>'
-            '<th class="iw">업종·투자분야</th><th class="number">전일 등락률</th><th class="number">누적일수</th>' +
+            '<th class="number">전일 등락률</th><th class="number">누적일수</th>' +
             ("" if compact else "<th>지수</th>") + "</tr></thead><tbody>")
 
 def asset_breakdown(rows):
@@ -300,7 +359,7 @@ def delivery_html(source, compact=True):
         for rank, row in enumerate(table.select("tbody tr")):
             row.attrs = {"class":["z"]} if rank % 2 else {}
             for cell in row.find_all("td", recursive=False):
-                cell.attrs = {"class":cell.get("class", [])} if cell.get("class") else {}
+                cell.attrs = {key: value for key, value in cell.attrs.items() if key in ("class", "title")}
                 metric = cell.find("div", class_="metric")
                 if metric:
                     period = metric.get("data-period")
@@ -324,12 +383,26 @@ def delivery_html(source, compact=True):
                     picture.attrs = {"src":picture["src"],"alt":picture.get("alt","")}
     for tag in doc.find_all():
         for key in list(tag.attrs):
-            if key.startswith("data-") or key == "title":
+            if key.startswith("data-"):
                 del tag.attrs[key]
         if tag.get("class"):
             tag["class"] = [aliases.get(cls, cls) for cls in tag["class"] if cls not in ("name-cell", "etf-table")]
             if not tag["class"]:
                 del tag["class"]
+    for cell in doc.select("table.data-table th, table.data-table td"):
+        # All columns use one-line clipping; preserve the full value for copying/hover.
+        wrapper = cell.find(["span"], class_=["nm", "iwc"], recursive=False)
+        if wrapper is None:
+            wrapper = doc.new_tag("span")
+            wrapper["class"] = ["cl"]
+            for child in list(cell.contents):
+                wrapper.append(child.extract())
+            cell.append(wrapper)
+        elif "nm" not in wrapper.get("class", []):
+            wrapper["class"] = wrapper.get("class", []) + ["cl"]
+        full_value = cell.get_text()
+        detail = cell.get("title")
+        wrapper["title"] = full_value + (" · " + detail if detail else "")
     result = str(doc)
     result = re.sub(r">\s+<", "><", result).strip()
     return compact_transport_html(result) if compact else result
@@ -373,7 +446,7 @@ def compact_transport_html(source):
                     lambda match: match.group(1) + match.group(2).replace("}", "}\n") + match.group(3),
                     result, flags=re.DOTALL)
     # Whitespace inside opening tags is invisible even when td end tags are omitted.
-    result = re.sub(r"<(tr|table|thead|tbody|div|p|h1|h2|style|br)(?=[\s>])", r"<\1\n", result)
+    result = re.sub(r"<(td|th|tr|table|thead|tbody|div|p|h1|h2|style|br)(?=[\s>])", r"<\1\n", result)
     if max((len(line.encode("utf-8")) for line in result.splitlines()), default=0) > 998:
         raise RuntimeError("HTML exceeds the SMTP line limit; compact markup without removing candidates")
     return result

@@ -55,6 +55,8 @@ jobs:
               row["url"] = make_stock(row["ticker"], market=row["market"])["url"]
               row["lifetime_cagr"] = 100.0 - index
               row["cumulative_return"] = ((1 + row["lifetime_cagr"] / 100) ** row["lifetime_years"] - 1) * 100
+              row["initial_adjusted_price"] = 100.0
+              row["latest_adjusted_price"] = 100.0 * (1 + row["cumulative_return"] / 100)
               hundred_etfs.append(row)
           data["etf_info"] = {"rows": hundred_etfs, "pool": 125, "with_ret": 125}
           data["us"] = [make_stock("US%04d" % i, number=i, asset_type="주식" if i < 75 else "ETF") for i in range(229)]

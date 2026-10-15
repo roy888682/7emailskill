@@ -282,19 +282,48 @@ def _calc_perf(dates, closes):
     return cagr(1), cagr(3), cagr(5), cagr(10), cumulative, dates[0]
 
 
-def _etf_price_performance(dates, closes):
-    """Keep the observed price dates and unrounded growth for lifetime CAGR."""
+US_ETF_VERIFIED_LAUNCH = {
+    # DFAC's 2026-10-02 date is a share-class reorganization. Its original ETF
+    # launch was 2021-06-14; the predecessor mutual fund began on 2007-10-04.
+    # Price returns below start with exchange-traded ETF history, not its
+    # predecessor's NAV history or the latest share-class creation date.
+    "DFAC": {"inception": "2021-06-14", "inception_label": "ETF 최초상장일",
+             "predecessor_inception": "2007-10-04", "current_portfolio_inception": "2005-09-15",
+             "share_class_reorganization": "2026-10-02",
+             "inception_source": "Dimensional·SEC 원래 ETF 상장일",
+             "inception_url": "https://www.dimensional.com/us-en/newsroom/dimensional-lists-four-new-etfs-following-the-industrys-largest-mutual-fund-to-etf-conversion"},
+}
+
+
+def _etf_price_performance(dates, closes, *, price_basis=None, price_currency=None,
+                           not_before=None):
+    """Retain the exact prices and dates used for independently verifiable returns."""
+    if len(dates) != len(closes):
+        dates, closes = [], []
+    if not_before is not None:
+        cutoff = _performance_date(not_before)
+        pairs = [(d, p) for d, p in zip(dates, closes)
+                 if cutoff is not None and _performance_date(d) is not None
+                 and _performance_date(d) >= cutoff]
+        dates, closes = ([d for d, _ in pairs], [p for _, p in pairs])
     c1, c3, c5, c10, cumulative, first = _calc_perf(dates, closes)
-    growth = None
+    growth = first_p = last_p = None
     if first is not None:
-        first_p, last_p = float(closes[0]), float(closes[-1])
-        if (math.isfinite(first_p) and math.isfinite(last_p)
-                and first_p > 0 and last_p > 0):
-            growth = last_p / first_p
+        try:
+            start_p, end_p = float(closes[0]), float(closes[-1])
+            if (math.isfinite(start_p) and math.isfinite(end_p)
+                    and start_p > 0 and end_p > 0):
+                first_p, last_p, growth = start_p, end_p, end_p / start_p
+        except (TypeError, ValueError, OverflowError):
+            pass
+    first_date = first.isoformat() if first is not None else None
+    last_date = dates[-1].isoformat() if first is not None else None
     return {"cagr1y": c1, "cagr3y": c3, "cagr5y": c5, "cagr10y": c10,
             "cumulative_return": cumulative, "cumulative_growth": growth,
-            "first_date": first.isoformat() if first is not None else None,
-            "last_date": dates[-1].isoformat() if first is not None else None}
+            "first_date": first_date, "last_date": last_date,
+            "initial_adjusted_price": first_p, "latest_adjusted_price": last_p,
+            "price_start_date": first_date, "price_end_date": last_date,
+            "price_basis": price_basis, "price_currency": price_currency}
 
 
 def _performance_date(value):
@@ -309,23 +338,62 @@ def _performance_date(value):
         return None
 
 
+def _validated_etf_metadata(item):
+    """Reject inception metadata contradicted by actual earlier price history."""
+    result = dict(item)
+    if item.get("market") == "US" and item.get("ticker") in US_ETF_VERIFIED_LAUNCH:
+        result.update(US_ETF_VERIFIED_LAUNCH[item["ticker"]])
+        result["inception_verified"] = True
+    first = _performance_date(result.get("price_start_date") or result.get("first_date"))
+    last = _performance_date(result.get("price_end_date") or result.get("last_date"))
+    inception = _performance_date(result.get("inception"))
+    if result.get("inception_verified") and first is not None and inception is not None and first < inception:
+        result["price_history_inception_mismatch"] = True
+        return result
+    if inception is None or (last is not None and inception > last) or (
+            first is not None and inception > first):
+        if result.get("inception"):
+            log.warning("ETF 설립일 메타데이터 불일치 %s: 제공 설립일=%s, 최초 가격일=%s, 최신 가격일=%s",
+                        result.get("ticker"), result.get("inception"), first, last)
+            result["rejected_inception"] = result.get("inception")
+        result["inception"] = first.isoformat() if first is not None else None
+        result["inception_source"] = "최초 제공 가격일(설립일 미확인)"
+        result["inception_verified"] = False
+    elif first is not None and last is not None and first <= last:
+        # A coherent dated provider record is cross-checked, whereas an inferred
+        # first-price fallback remains explicitly unverified.
+        source = result.get("inception_source") or ""
+        if source.startswith(("Yahoo ", "네이버 ETF 공시", "Dimensional")) and "미확인" not in source:
+            result["inception_verified"] = True
+    return result
+
+
 def _etf_lifetime_metrics(item):
-    """Annualize cumulative price growth to the last observed close date."""
-    last = _performance_date(item.get("last_date"))
-    first = _performance_date(item.get("first_date"))
-    inception = _performance_date(item.get("inception"))
-    if last is None or (first is not None and first > last):
+    """Annualize the same observed price interval that supplies cumulative return."""
+    item = _validated_etf_metadata(item)
+    last = _performance_date(item.get("price_end_date") or item.get("last_date"))
+    first = _performance_date(item.get("price_start_date") or item.get("first_date"))
+    if last is None or first is None or first >= last or item.get("price_history_inception_mismatch"):
         return None
-    start = inception if inception is not None and inception < last else first
-    if start is None or start >= last:
+    # Verified ETF launch dates must never annualize predecessor NAV observations.
+    if item.get("inception_verified") and _performance_date(item.get("inception")) > first:
         return None
-    years = (last - start).days / 365.25
+    years = (last - first).days / 365.25
     raw_growth = item.get("cumulative_growth")
     cumulative = item.get("cumulative_return")
     if isinstance(raw_growth, bool) or (raw_growth is None and isinstance(cumulative, bool)):
         return None
     try:
-        growth = float(raw_growth) if raw_growth is not None else 1 + float(cumulative) / 100
+        initial_price, latest_price = item.get("initial_adjusted_price"), item.get("latest_adjusted_price")
+        if initial_price is not None or latest_price is not None:
+            if isinstance(initial_price, bool) or isinstance(latest_price, bool):
+                return None
+            initial_price, latest_price = float(initial_price), float(latest_price)
+            if not math.isfinite(initial_price) or not math.isfinite(latest_price) or initial_price <= 0 or latest_price <= 0:
+                return None
+            growth = latest_price / initial_price
+        else:
+            growth = float(raw_growth) if raw_growth is not None else 1 + float(cumulative) / 100
         if not math.isfinite(growth) or growth < 0:
             return None
         annualized = math.expm1(math.log(growth) / years) * 100 if growth else -100.0
@@ -334,7 +402,12 @@ def _etf_lifetime_metrics(item):
     if not math.isfinite(annualized):
         return None
     return {"lifetime_cagr": annualized, "lifetime_years": years,
-            "return_as_of": last.isoformat(), "inception": start.isoformat()}
+            "cumulative_return": round((growth - 1) * 100, 1),
+            "cumulative_growth": growth, "return_as_of": last.isoformat(),
+            "price_start_date": first.isoformat(), "price_end_date": last.isoformat(),
+            "inception": item.get("inception"),
+            "inception_source": item.get("inception_source"),
+            "inception_verified": item.get("inception_verified", False)}
 
 
 def _flatten(d, prefix="", depth=0):
@@ -618,8 +691,13 @@ def enrich_us_etf(tk: str, name: str, usd_krw: float) -> dict:
     if isinstance(inc, (int, float)) and inc > 0:
         try:
             res["inception"] = datetime.fromtimestamp(inc, tz=timezone.utc).date().isoformat()
+            res["inception_source"] = "Yahoo fundInceptionDate(가격이력 교차검증)"
+            res["inception_verified"] = False
         except Exception:
             pass
+    if tk in US_ETF_VERIFIED_LAUNCH:
+        res.update(US_ETF_VERIFIED_LAUNCH[tk])
+        res["inception_verified"] = True
     res["etf_index"] = _extract_us_index(info.get("longBusinessSummary") or "")
     return {k: v for k, v in res.items() if v is not None}
 
@@ -840,7 +918,10 @@ def get_us_ath(usd_krw):
                 if is_etf:
                     try:
                         dts=[d.date() for d in s.index]
-                        perf=_etf_price_performance(dts,[float(x) for x in s.tolist()])
+                        perf=_etf_price_performance(
+                            dts, [float(x) for x in s.tolist()],
+                            price_basis="Yahoo 제공 수정주가(auto_adjust)", price_currency="USD",
+                            not_before=US_ETF_VERIFIED_LAUNCH.get(tk, {}).get("inception"))
                     except Exception:
                         perf={}
                 out.append({"ticker":tk,"name":sec_name if is_etf else tk,
@@ -872,7 +953,7 @@ def get_us_ath(usd_krw):
         for s in etf_items:
             s.setdefault("etf_kind", classify_us_etf(s["name"], None))
             s.setdefault("aum", s.get("mcap"))
-            s.setdefault("inception", s.get("first_date"))
+            s.update(_validated_etf_metadata(s))
         log.info(f"미국 ETF 상세 결과: 운용사 {sum(1 for s in etf_items if s.get('issuer'))}/{len(etf_items)}, "
                  f"추종지수 {sum(1 for s in etf_items if s.get('etf_index'))}/{len(etf_items)}, "
                  f"원화 AUM {sum(1 for s in etf_items if s.get('aum'))}/{len(etf_items)}, "
@@ -1036,6 +1117,30 @@ def _kr_price_history_dated(code: str, count: int = 8000):
         return [], []
 
 
+def _kr_etf_adjusted_performance(code, market, fallback):
+    """Use verified fresh Yahoo adjusted history, or retain explicitly raw Naver closes."""
+    expected_last = _performance_date(fallback.get("price_end_date") or fallback.get("last_date"))
+    if expected_last is None:
+        return None
+    suffix = ".KQ" if market == "KOSDAQ" else ".KS"
+    try:
+        history = yf.Ticker(code + suffix).history(period="max", auto_adjust=True, timeout=12)
+        closes = history["Close"].dropna()
+        dates = [stamp.date() for stamp in closes.index]
+        prices = [float(value) for value in closes.tolist()]
+        if (len(dates) < 2 or dates[-1] != expected_last
+                or any(not math.isfinite(value) or value <= 0 for value in prices)):
+            return None
+        # A shorter Yahoo series would silently discard known inception-era prices.
+        expected_first = _performance_date(fallback.get("price_start_date") or fallback.get("first_date"))
+        if expected_first is not None and dates[0] > expected_first + timedelta(days=7):
+            return None
+        return _etf_price_performance(dates, prices,
+                                      price_basis="Yahoo 제공 수정주가(auto_adjust)", price_currency="KRW")
+    except Exception:
+        return None
+
+
 def get_kr_ath(usd_krw, kr_last=None):
     universe = get_kr_universe()
     if not universe:
@@ -1086,7 +1191,8 @@ def get_kr_ath(usd_krw, kr_last=None):
                    "investment_area_source":meta.get("investment_area_source"),
                    "url":f"https://m.stock.naver.com/domestic/stock/{code}/total"}
             if etf_flag and dates and len(dates) == len(closes):
-                res.update(_etf_price_performance(dates, closes))
+                res.update(_etf_price_performance(
+                    dates, closes, price_basis="네이버 차트 종가·배당조정 미확인", price_currency="KRW"))
             return res
         return None
 
@@ -1136,12 +1242,19 @@ def get_kr_ath(usd_krw, kr_last=None):
                 parsed = {}
             s["etf_index"] = parsed.get("etf_index")
             s["issuer"] = parsed.get("issuer") or kr_issuer_from_brand(s["name"])
-            s["inception"] = parsed.get("inception") or s.get("first_date")
+            s["inception"] = parsed.get("inception")
+            if parsed.get("inception"):
+                s["inception_source"] = "네이버 ETF 공시 상장일(가격이력 교차검증)"
+                s["inception_verified"] = False
             s["aum"] = parsed.get("aum") or s.get("aum") or s.get("mcap")
             if parsed.get("investment_area"):
                 s["investment_area"] = parsed["investment_area"]
                 s["investment_area_source"] = parsed["investment_area_source"]
             s["etf_kind"] = classify_kr_etf(s["name"])
+            adjusted = _kr_etf_adjusted_performance(s["ticker"], s.get("market"), s)
+            if adjusted is not None:
+                s.update(adjusted)
+            s.update(_validated_etf_metadata(s))
         with ThreadPoolExecutor(max_workers=8) as ex:
             list(ex.map(enrich_kr, etf_items))
         log.info(f"한국 ETF 상세 결과: 추종지수 {sum(1 for s in etf_items if s.get('etf_index'))}/{len(etf_items)}, "
@@ -1285,6 +1398,14 @@ def main(prepare_only=False):
     # ETF 전용 섹션: ATH -10% 이내 ETF(한국+미국) 중 설립 이후 연평균 누적수익률 내림차순 상위 100개
     etf_info = build_etf_info(us, kr)
     log.info(f"ETF 섹션: 풀 {etf_info['pool']}개 / 연평균 누적수익률 산출 {etf_info['with_ret']}개 / 표시 {len(etf_info['rows'])}개")
+    for item in us:
+        if item.get("ticker") == "DFAC" and item.get("asset_type") == "ETF":
+            audited = {**item, **(_etf_lifetime_metrics(item) or {})}
+            keys = ("inception", "inception_label", "inception_source", "inception_verified",
+                    "price_start_date", "price_end_date", "initial_adjusted_price", "latest_adjusted_price",
+                    "cagr5y", "cagr10y", "cumulative_return", "lifetime_years", "lifetime_cagr",
+                    "price_basis", "price_currency")
+            log.info("ETF 가격 검증 DFAC: %s", json.dumps({key: audited.get(key) for key in keys}, ensure_ascii=False))
 
     diag = {"us_days_before": us_days_before, "kr_days_before": kr_days_before}
     email_html = build_email(us,kr,info,usd_krw,new_us,new_kr,diag,indices,etf_info)

@@ -58,12 +58,18 @@ def sample_data():
                          "cagr5y": None if rank % 7 == 0 else round(24.46 - rank * .67, 2),
                          "cagr10y": None if rank % 3 == 0 else round(18.33 - rank * .31, 2),
                          "cumulative_return": cumulative,
+                         "initial_adjusted_price": 100.0,
+                         "latest_adjusted_price": 100.0 + cumulative,
+                         "price_start_date": "2016-05-19", "price_end_date": "2026-10-07",
+                         "price_currency": "KRW" if korean else "USD",
+                         "price_basis": "네이버 차트 종가·배당조정 미확인" if korean else "Yahoo 제공 수정주가(auto_adjust)",
                          "lifetime_cagr": ((1 + cumulative / 100) ** (1 / lifetime_years) - 1) * 100,
                          "lifetime_years": lifetime_years,
                          "etf_index": "FnGuide 차세대 인공지능 반도체 소부장 산업 지수" if korean else
                                       "Philadelphia Semiconductor Sector Total Return Index",
                          "issuer": "신한자산운용 주식회사" if korean else "Vanguard Group, Inc.",
                          "etf_kind": "레버리지·성장주" if rank < 4 else "주식형·대표지수",
+                         "investment_area": "한국반도체" if korean else "미국반도체",
                          "inception": "2016-05-19", "first_date": "2016-05-19",
                          "last_date": "2026-10-07", "return_as_of": "2026-10-07"})
             etfs.append(item)
@@ -135,7 +141,7 @@ LAYOUT_CHECK = r"""expected => {
  const viewport=window.innerWidth,tolerance=1.5,problems=[];
  const specs=[
    ["us","us",2,11],["kr","kr",2,11],
-   ["new","new",2,10],["etf","returns",2,13]
+   ["new","new",2,10],["etf","returns",2,16]
  ];
  const getRows=id=>{
    const table=document.getElementById(id);
@@ -149,15 +155,19 @@ LAYOUT_CHECK = r"""expected => {
    const table=document.getElementById(id);
    if(table&&table.querySelector("th")?.textContent.trim()!=="No.")
      problems.push(id+" is missing the No. heading");
-   for(const heading of table?.querySelectorAll("thead th")||[])
+   if(table&&getComputedStyle(table).tableLayout!=="fixed")
+     problems.push(id+" must use fixed column widths for bounded ellipses");
+   for(const heading of table?.querySelectorAll("thead th")||[]){
      if(getComputedStyle(heading).textAlign!=="center")
        problems.push(id+" column heading must be centered: "+heading.textContent.trim());
+     const clip=heading.querySelector(".cl");
+     if(!clip||clip.textContent!==heading.textContent||getComputedStyle(heading).whiteSpace!=="nowrap")
+       problems.push(id+" heading must retain its full text in a one-line ellipsis container");
+   }
    const tickers=rows.map(row=>{
      const cell=row.cells[tickerColumn],link=cell&&cell.querySelector("a");
      if(!link){problems.push(id+" is missing a ticker link");return "";}
-     const ticker=Array.from(link.childNodes)
-       .filter(node=>node.nodeType===Node.TEXT_NODE)
-       .map(node=>node.textContent).join("").trim();
+     const ticker=link.textContent.trim();
      if(key==="new"){
        const label=row.cells[1]?.querySelector("img")?.alt||"";
        if(!["성조기","태극기"].includes(label))
@@ -193,32 +203,66 @@ LAYOUT_CHECK = r"""expected => {
  if(document.body.textContent.includes("첨부"))problems.push("Attachment-related copy remains");
  if(returns){
    const headings=Array.from(returns.querySelectorAll("thead th")).map(cell=>cell.textContent.trim());
-   if(headings.length!==13||!headings[8].includes("누적")||
-      !headings[9].includes("연평균")||!/AUM|시총/.test(headings[10])||
-      !headings[11].includes("설립")||!/연수|기간/.test(headings[12]))
-     problems.push("ETF columns must end with cumulative → lifetime CAGR → KRW AUM → inception → elapsed years");
+   if(headings.length!==16||!/업종|투자/.test(headings[4])||!headings[9].includes("누적")||
+      !/주가|가격/.test(headings[10])||!/주가|가격/.test(headings[11])||
+      !headings[12].includes("연평균")||!/AUM|시총/.test(headings[13])||
+      !headings[14].includes("설립")||!/연수|기간/.test(headings[15]))
+     problems.push("ETF columns must include area beside name, cumulative → initial price → latest price → lifetime CAGR → KRW AUM → inception → elapsed years");
  }
+ const number=text=>{
+   const cleaned=String(text||"").replace(/[^\deE.+-]/g,"");
+   return cleaned&&cleaned!=="-"?Number(cleaned):NaN;
+ };
+ const dateIn=cell=>{
+   const labels=[cell?.getAttribute("title")||"",...Array.from(cell?.querySelectorAll("[title]")||[]).map(node=>node.title)];
+   const found=labels.join(" ").match(/\d{4}-\d{2}-\d{2}/);
+   return found?Date.parse(found[0]+"T00:00:00Z"):NaN;
+ };
  let previousLifetime=Infinity;
  if(getRows("returns").length>100)problems.push("ETF comparison exceeds the top 100 limit");
  getRows("returns").forEach((row,index)=>{
    const colors=[];
-   for(const [column,cls] of [[4,"p1"],[5,"p3"],[6,"p5"],[7,"p10"]]){
+   for(const [column,cls] of [[5,"p1"],[6,"p3"],[7,"p5"],[8,"p10"]]){
      const cell=row.cells[column];
      if(!cell||!cell.classList.contains(cls))
        problems.push("ETF "+index+" is missing "+cls+" on the correct return column");
      if(cell)colors.push(getComputedStyle(cell).color);
    }
    if(new Set(colors).size!==4)problems.push("ETF "+index+" return colors are not distinct");
-   const lifetime=parseFloat(row.cells[9]?.textContent.replace(/,/g,""));
-   const years=parseFloat(row.cells[12]?.textContent.replace(/,/g,""));
+   const lifetime=number(row.cells[12]?.textContent);
+   const years=number(row.cells[15]?.textContent);
    if(!Number.isFinite(lifetime)||lifetime>previousLifetime)
      problems.push("ETF lifetime CAGR must be finite and sorted descending");
    if(!Number.isFinite(years)||years<0)
      problems.push("ETF displayed elapsed years must be nonnegative");
+   const initial=number(row.cells[10]?.textContent),latest=number(row.cells[11]?.textContent);
+   const cumulative=number(row.cells[9]?.textContent);
+   // Prices carry 12 significant digits; account only for that bounded
+   // serialization error and the returns' one-decimal display rounding.
+   const cumulativeTolerance=Math.max(.051,(Math.abs(cumulative)+100)*2e-11);
+   if(!(initial>0)||!(latest>0)||!Number.isFinite(cumulative)||
+      Math.abs((latest/initial-1)*100-cumulative)>cumulativeTolerance)
+     problems.push("ETF "+index+" cumulative return does not match its displayed starting and latest prices");
+   const start=dateIn(row.cells[10]),end=dateIn(row.cells[11]);
+   const inceptionText=row.cells[14]?.textContent.trim()||"";
+   const knownInception=/^\d{4}-\d{2}-\d{2}$/.test(inceptionText);
+   const inception=knownInception?Date.parse(inceptionText+"T00:00:00Z"):NaN;
+   const observedYears=(end-start)/(86400000*365.25);
+   if(!Number.isFinite(start)||!Number.isFinite(end)||end<=start||
+      (knownInception&&(!Number.isFinite(inception)||start<inception))||
+      (!knownInception&&!["미확인","-"].includes(inceptionText))||Math.abs(observedYears-years)>.00501)
+     problems.push("ETF "+index+" price dates, inception and elapsed years disagree");
+   if(Number.isFinite(observedYears)&&observedYears>0&&initial>0&&latest>0&&
+      Math.abs((Math.pow(latest/initial,1/observedYears)-1)*100-lifetime)>
+        Math.max(.051,(Math.abs(lifetime)+100)*2e-11/observedYears))
+     problems.push("ETF "+index+" lifetime CAGR does not match its displayed prices and dated interval");
+   for(const [column,period] of [[5,1],[6,3],[7,5],[8,10]])
+     if(Number.isFinite(number(row.cells[column]?.textContent))&&observedYears+.004<period)
+       problems.push("ETF "+index+" reports a "+period+"-year return before that much price history exists");
    previousLifetime=lifetime;
  });
  [...getRows("us"),...getRows("kr"),...getRows("new")].forEach(row=>{
-   for(const column of [6,8]){
+   for(const column of [7,8]){
      const cell=row.cells[column];
      if(!cell||getComputedStyle(cell).color!=="rgb(194, 57, 50)")
        problems.push("ATH/day-change values must be red");
@@ -238,40 +282,33 @@ LAYOUT_CHECK = r"""expected => {
    if(box.left< -tolerance||box.right>viewport+tolerance)
      problems.push("Row "+index+" exceeds the viewport");
    const tableId=row.closest("table").id;
-   const wrappingColumns=tableId==="returns"?[]:tableId==="new"?[7]:[7,10];
-   let rowWrapped=false;
    for(const [column,cell] of Array.from(row.cells).entries()){
      const style=getComputedStyle(cell),bounds=cell.getBoundingClientRect();
-     const mayWrap=wrappingColumns.includes(column);
-     if(cell.classList.contains("w")!==mayWrap)
-       problems.push("Row "+index+" has an incorrect wrapping column "+column);
-     if(style.whiteSpace!==(mayWrap?"normal":"nowrap"))
-       problems.push("Row "+index+" has an incorrect wrapping style in column "+column);
-     const expectedFont=tableId==="returns"&&column!==11?13:12.35;
+     if(style.whiteSpace!=="nowrap")
+       problems.push("Row "+index+" must keep every column on one line: "+column);
+     const expectedFont=tableId==="returns"&&column!==14?13:12.35;
      if(Math.abs(parseFloat(style.fontSize)-expectedFont)>.01)
        problems.push("Row "+index+" font differs from the enlarged design: "+style.fontSize);
-     if(tableId!=="returns"&&column===7){
-       const label=cell.querySelector(".iwc");
-       if(!cell.classList.contains("iw")||!label||label.textContent!==cell.textContent||
-          Math.abs(label.getBoundingClientRect().width-126)>.01||
-          Math.abs(parseFloat(style.maxWidth)-126)>.01)
-         problems.push("Row "+index+" industry column must retain full text at 70% width (126px)");
+     if(tableId!=="returns"&&column===4&&Math.abs(bounds.width-126)>tolerance)
+       problems.push("Row "+index+" industry column must retain the 126px width");
+     const aumColumn=tableId==="returns"?13:6;
+     if(column===aumColumn&&Math.abs(bounds.width-(tableId==="returns"?48:42))>tolerance)
+       problems.push("Row "+index+" AUM column must retain its half-width design");
+     const clip=cell.querySelector(column===3?".nm":".cl,.iwc");
+     if(!clip||clip.textContent!==cell.textContent)
+       problems.push("Row "+index+" must retain the entire field in its ellipsis container: "+column);
+     if(clip){
+       const clipStyle=getComputedStyle(clip),clipBounds=clip.getBoundingClientRect();
+       if(clipStyle.display!=="block"||clipStyle.whiteSpace!=="nowrap"||
+          clipStyle.overflowX!=="hidden"||clipStyle.textOverflow!=="ellipsis")
+         problems.push("Row "+index+" lacks the one-line ellipsis design in column "+column);
+       if(clipBounds.left<bounds.left-tolerance||clipBounds.right>bounds.right+tolerance||
+          clipBounds.top<bounds.top-tolerance||clipBounds.bottom>bounds.bottom+tolerance)
+         problems.push("Row "+index+" ellipsis container exceeds its cell: "+column);
      }
-     const name=column===3?cell.querySelector(".nm"):null;
-     if(column===3){
-       if(!name||name.textContent!==cell.textContent)
-         problems.push("Row "+index+" must retain its complete security name inside .nm");
-       if(name){
-         const nameStyle=getComputedStyle(name),nameBounds=name.getBoundingClientRect();
-         if(nameStyle.display!=="block"||nameStyle.whiteSpace!=="nowrap"||
-            nameStyle.overflowX!=="hidden"||nameStyle.textOverflow!=="ellipsis"||
-            Math.abs(parseFloat(nameStyle.width)-120)>.01||
-            Math.abs(parseFloat(nameStyle.maxWidth)-120)>.01)
-           problems.push("Row "+index+" lacks the one-line name ellipsis design");
-         if(nameBounds.left<bounds.left-tolerance||nameBounds.right>bounds.right+tolerance||
-            nameBounds.top<bounds.top-tolerance||nameBounds.bottom>bounds.bottom+tolerance)
-           problems.push("Row "+index+" name container exceeds its cell");
-       }
+     if(column<row.cells.length-1&&
+        (Math.abs(parseFloat(style.borderRightWidth)-1)>.01||style.borderRightStyle!=="solid"||style.borderRightColor!=="rgb(0, 0, 0)")){
+       problems.push("Row "+index+" requires a black vertical separator after column "+column);
      }
      const walker=document.createTreeWalker(cell,NodeFilter.SHOW_TEXT);let node;
      while((node=walker.nextNode())){
@@ -280,19 +317,33 @@ LAYOUT_CHECK = r"""expected => {
        const rects=Array.from(range.getClientRects()).filter(rect=>rect.width);
        // Ellipsis can produce visible and hidden rectangles on the same line.
        if(rects.some(rect=>Math.abs(rect.top-rects[0].top)>tolerance)){
-         if(mayWrap)rowWrapped=true;
-         else problems.push("Row "+index+" wraps a numeric or ticker field: "+node.textContent.trim());
+         problems.push("Row "+index+" wraps a field: "+node.textContent.trim());
        }
-       const intentionalEllipsis=name&&name.contains(node);
+       const intentionalEllipsis=clip&&clip.contains(node);
        for(const rect of rects)
          if((!intentionalEllipsis&&(rect.left<bounds.left-tolerance||rect.right>bounds.right+tolerance))||
             rect.top<bounds.top-tolerance||rect.bottom>bounds.bottom+tolerance)
            problems.push("Row "+index+" clips text: "+node.textContent.trim());
      }
    }
-   if(!rowWrapped&&box.height>42)
+   if(box.height>42)
      problems.push("Row "+index+" is taller than its single-line content: "+box.height);
  });
+ for(const row of document.querySelectorAll(".data-table thead tr")){
+   for(const [column,cell] of Array.from(row.cells).entries()){
+     const clip=cell.querySelector(".cl"),style=getComputedStyle(cell);
+     if(clip){
+       const clipStyle=getComputedStyle(clip),bounds=cell.getBoundingClientRect(),clipBounds=clip.getBoundingClientRect();
+       if(clipStyle.whiteSpace!=="nowrap"||clipStyle.overflowX!=="hidden"||
+          clipStyle.textOverflow!=="ellipsis"||clipStyle.textAlign!=="center"||
+          clipBounds.left<bounds.left-tolerance||clipBounds.right>bounds.right+tolerance)
+         problems.push("A heading lacks a centered and bounded one-line ellipsis: "+cell.textContent.trim());
+     }
+     if(column<row.cells.length-1&&
+        (Math.abs(parseFloat(style.borderRightWidth)-1)>.01||style.borderRightStyle!=="solid"||style.borderRightColor!=="rgb(0, 0, 0)"))
+       problems.push("A heading requires a black vertical separator: "+cell.textContent.trim());
+   }
+ }
  const broken=Array.from(document.images).filter(image=>!image.complete||!image.naturalWidth);
  if(broken.length)problems.push("Broken images: "+broken.map(image=>image.alt).join(","));
  return {
@@ -327,7 +378,9 @@ NATIVE_SNAPSHOT = r"""() => {
  const properties=["fontFamily","fontSize","fontWeight","fontStyle","lineHeight",
   "letterSpacing","fontVariantNumeric","textAlign","whiteSpace","paddingTop",
   "paddingRight","paddingBottom","paddingLeft","color","backgroundColor",
-  "borderTopWidth","borderBottomWidth","verticalAlign"];
+  "borderTopWidth","borderBottomWidth","borderLeftWidth","borderRightWidth",
+  "borderLeftColor","borderRightColor","borderLeftStyle","borderRightStyle",
+  "overflowX","textOverflow","verticalAlign"];
  const result={};
  for(const id of ["us","kr","new","returns"]){
   const table=document.getElementById(id);
@@ -336,6 +389,10 @@ NATIVE_SNAPSHOT = r"""() => {
    return {tag:cell.tagName,text:cell.textContent.trim(),
     links:Array.from(cell.querySelectorAll("a")).map(a=>[a.textContent.trim(),a.getAttribute("href")]),
     flags:Array.from(cell.querySelectorAll("img")).map(img=>[img.getAttribute("src"),img.alt]),
+    clipped:Array.from(cell.querySelectorAll(".cl,.nm,.iwc")).map(element=>{
+     const clippedStyle=getComputedStyle(element);
+     return {text:element.textContent,style:Object.fromEntries(properties.map(key=>[key,clippedStyle[key]]))};
+    }),
     style:Object.fromEntries(properties.map(key=>[key,style[key]]))};
   })):[];
  }
@@ -446,7 +503,16 @@ def verify_actual_display(browser, source, delivery, expected, output):
                         raise AssertionError("Native US ticker links changed order")
                     link.scroll_into_view_if_needed()
                     bounds=link.bounding_box()
-                    displayed.mouse.click(bounds["x"]+bounds["width"]/2,bounds["y"]+bounds["height"]/2)
+                    visible=link.evaluate("""element=>{
+                      const link=element.getBoundingClientRect(),cell=element.closest('td').getBoundingClientRect();
+                      const clip=element.closest('.cl')?.getBoundingClientRect()||cell;
+                      return {left:Math.max(link.left,cell.left,clip.left),right:Math.min(link.right,cell.right,clip.right),
+                              top:Math.max(link.top,cell.top,clip.top),bottom:Math.min(link.bottom,cell.bottom,clip.bottom)};
+                    }""")
+                    if visible["right"]<=visible["left"] or visible["bottom"]<=visible["top"]:
+                        raise AssertionError("A native US ticker link has no visible clickable text")
+                    displayed.mouse.click((visible["left"]+visible["right"])/2,
+                                          (visible["top"]+visible["bottom"])/2)
                 if displayed.evaluate("window.verifiedClicks")!=source_urls:
                     raise AssertionError("A native US ticker does not open its own Naver URL")
                 print("US_LINK_CLICK_QA:"+json.dumps({"host":host,"viewport":width,
@@ -460,6 +526,7 @@ def verify_actual_display(browser, source, delivery, expected, output):
                     for table_id,filename,marker in (
                         ("us","email-actual-native-us.png","PREVIEW_IMAGE_ACTUAL_DELIVERY_US"),
                         ("kr","email-actual-native-kr.png","PREVIEW_IMAGE_ACTUAL_DELIVERY_KR"),
+                        ("returns","email-actual-native-etf.png","PREVIEW_IMAGE_ACTUAL_DELIVERY_ETF"),
                     ):
                         cropped_table_image(displayed,table_id,output/filename,marker)
                     if displayed.locator("#us tbody tr").count() and displayed.locator("#kr tbody tr").count():
