@@ -254,6 +254,15 @@ class EmailLayoutTests(unittest.TestCase):
         self.assertIn("border-right:1px solid #000", CSS)
         self.assertIn("table-layout:fixed", CSS)
 
+    def test_column_widths_survive_repeated_html_transport_compaction(self):
+        source = render_email(**self.data)
+        expected = [node.get("style") for node in BeautifulSoup(source, "html5lib").select("col")]
+        self.assertTrue(expected)
+        self.assertTrue(all(not value.endswith("/") for value in expected if value))
+        for _ in range(3):
+            source = compact_transport_html(source)
+            self.assertEqual([node.get("style") for node in BeautifulSoup(source, "html5lib").select("col")], expected)
+
     def test_price_columns_expose_exact_values_dates_and_basis_for_verification(self):
         item = self.data["etf_info"]["rows"][0]
         item.update(initial_adjusted_price=.0000123456789012, latest_adjusted_price=123.456789012,

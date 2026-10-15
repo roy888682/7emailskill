@@ -144,8 +144,11 @@ def _transport(source):
     source = re.sub(r"</td>(?=<(?:td|th|/tr))", "", source)
     source = re.sub(r"</th>(?=<(?:td|th|/tr))", "", source)
     source = re.sub(r"</tr>(?=<(?:tr|/thead|/tbody|/tfoot))", "", source)
+    # Remove XHTML void-tag markers while attributes are still quoted. If
+    # quotes go first, the slash in <col style=width:3%/> becomes part of the
+    # style value, corrupting widths on every HTML5 parse/serialize roundtrip.
+    source = re.sub(r"(<(?:img|meta|br|col)\b[^>]*?)/>", r"\1>", source)
     source = re.sub(r'="([A-Za-z0-9_:/.,?&;%#+~-]+)"', r"=\1", source)
-    source = re.sub(r"(<(?:img|meta|br)\b[^>]*?)/>", r"\1>", source)
     source = re.sub(r"(<style[^>]*>)(.*?)(</style>)",
                     lambda match: match[1] + match[2].replace("}", "}\n") + match[3],
                     source, flags=re.DOTALL)

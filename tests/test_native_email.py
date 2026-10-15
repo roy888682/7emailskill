@@ -30,6 +30,20 @@ def fixture(count=218, long_names=False):
 
 
 class NativeEmailTests(unittest.TestCase):
+    def test_colgroup_widths_remain_exact_across_html5_transport_roundtrips(self):
+        source = ('<table><colgroup><col style="width:3%"/>'
+                  '<col style="width:126px"/><col/></colgroup>'
+                  '<tbody><tr><td>1</td><td>value</td><td>end</td></tr></tbody></table>')
+        original = BeautifulSoup(source, "html5lib")
+        for _ in range(3):
+            source = native_email._transport(source)
+            parsed = BeautifulSoup(source, "html5lib")
+            self.assertEqual([col.get("style") for col in parsed.select("col")],
+                             ["width:3%", "width:126px", None])
+            self.assertEqual(native_email.semantic_digest(parsed),
+                             native_email.semantic_digest(original))
+            source = str(parsed)
+
     def test_large_daily_reports_keep_every_native_row_and_value(self):
         for count in (240, 520):
             with self.subTest(count=count), tempfile.TemporaryDirectory() as directory:

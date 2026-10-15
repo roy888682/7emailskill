@@ -438,8 +438,9 @@ def compact_transport_html(source):
     result = re.sub(r"</td>(?=<(?:td|th|/tr))", "", result)
     result = re.sub(r"</th>(?=<(?:td|th|/tr))", "", result)
     result = re.sub(r"</tr>(?=<(?:tr|/thead|/tbody|/tfoot))", "", result)
+    # Remove XHTML slashes before unquoting: otherwise style=width:3%/ gains a slash.
+    result = re.sub(r"(<(?:img|meta|br|col)\b[^>]*?)/>", r"\1>", result)
     result = re.sub(r'="([A-Za-z0-9_:/.,?&;%#+~-]+)"', r"=\1", result)
-    result = re.sub(r"(<(?:img|meta|br)\b[^>]*?)/>", r"\1>", result)
     # 8BITMIME preserves UTF-8 without Base64 expansion. Keep SMTP lines
     # below 998 octets using whitespace at block boundaries only.
     result = re.sub(r"(<style[^>]*>)(.*?)(</style>)",
