@@ -10,15 +10,16 @@ from tools.preview_email import sample_data, make_stock
 class EmailLayoutTests(unittest.TestCase):
     def setUp(self):
         self.data = sample_data()
-        self.data["new_us"] = self.data["new_us"][:10]
-        self.data["new_kr"] = []
         self.data["us"].extend(make_stock(f"EXTRA{i}", number=i) for i in range(5))
+        self.data["new_us"] = self.data["us"][:29]
+        self.data["new_kr"] = self.data["kr"][:4]
     def test_includes_all_218_us_and_17_kr_rows(self):
         body = render_email(**self.data)
         actual = inventory(body)
         expected = {"us":[row["ticker"] for row in self.data["us"]],
                     "kr":[row["ticker"] for row in self.data["kr"]],
-                    "new":["US:"+row["ticker"] for row in self.data["new_us"]],
+                    "new":["KR:"+row["ticker"] for row in self.data["new_kr"]] +
+                          ["US:"+row["ticker"] for row in self.data["new_us"]],
                     "etf":[row["ticker"] for row in self.data["etf_info"]["rows"]]}
         self.assertEqual(validate_inventory(body, expected), expected)
         self.assertEqual((len(actual["us"]),len(actual["kr"])),(218,17))
@@ -40,7 +41,17 @@ class EmailLayoutTests(unittest.TestCase):
                                ("us", "229종목( 75종목 주식, 154종목 ETF )")):
             intro = doc.select_one("#" + country).find_previous("p", class_="intro")
             self.assertTrue(intro.get_text().startswith(label))
-        self.assertEqual(len(inventory(str(doc))["new"]), 33)
+        self.assertIsNone(doc.find("table", id="new"))
+        for table_id, items in (("new-kr", new_kr), ("new-us", new_us)):
+            rows = doc.select("#" + table_id + " tbody tr")
+            self.assertEqual(len(rows), len(items))
+            self.assertEqual([row.find_all("td", recursive=False)[0].get_text(strip=True) for row in rows],
+                             [str(rank) for rank in range(1, len(items) + 1)])
+            self.assertEqual([row.find_all("td", recursive=False)[2].get_text(strip=True) for row in rows],
+                             [item["ticker"] for item in items])
+        self.assertEqual(inventory(str(doc))["new"],
+                         ["KR:" + row["ticker"] for row in new_kr] +
+                         ["US:" + row["ticker"] for row in new_us])
 
     def test_empty_and_default_asset_count_labels(self):
         self.assertEqual(security_count([]), "0종목( 0종목 주식, 0종목 ETF )")
@@ -56,7 +67,9 @@ class EmailLayoutTests(unittest.TestCase):
         self.assertNotIn("n",doc.select("#us th")[3].get("class",[]))
     def test_new_list_is_complete_and_precedes_etf(self):
         body = render_email(**self.data)
-        self.assertEqual(inventory(body)["new"],["US:"+row["ticker"] for row in self.data["new_us"]])
+        self.assertEqual(inventory(body)["new"],
+                         ["KR:"+row["ticker"] for row in self.data["new_kr"]] +
+                         ["US:"+row["ticker"] for row in self.data["new_us"]])
         self.assertLess(body.index('id=new-stocks'),body.index('id=etf'))
         self.assertNotIn("현재가",body)
     def test_no_report_attachment_copy_or_expansion_links(self):
@@ -89,14 +102,15 @@ class EmailLayoutTests(unittest.TestCase):
         doc=BeautifulSoup(body,"html5lib")
         self.assertTrue(doc.select(".stock-table i, .new-table i"))
         self.assertTrue(doc.select(".stock-table b, .new-table b"))
-        for row in doc.select("#us tbody tr, #kr tbody tr, #new tbody tr"):
+        for row in doc.select("#us tbody tr, #kr tbody tr, #new-kr tbody tr, #new-us tbody tr"):
             cells=row.find_all("td",recursive=False)
             self.assertIn("r",cells[7].get("class",[]))
             self.assertIn("r",cells[8].get("class",[]))
     def test_every_security_table_has_sequential_no_column(self):
         body = render_email(**self.data)
         doc = BeautifulSoup(body, "html5lib")
-        for table_id, count, columns in (("us",218,11),("kr",17,11),("new",10,10),("returns",20,16)):
+        for table_id, count, columns in (("us",218,11),("kr",17,11),
+                                         ("new-kr",4,10),("new-us",29,10),("returns",20,16)):
             table = doc.find("table", id=table_id)
             self.assertEqual(table.select_one("thead th").get_text(strip=True), "No.")
             rows = table.select("tbody tr")
@@ -104,16 +118,6 @@ class EmailLayoutTests(unittest.TestCase):
             self.assertEqual([row.find_all("td",recursive=False)[0].get_text(strip=True) for row in rows],
                              [str(number) for number in range(1,count+1)])
             self.assertTrue(all(len(row.find_all("td",recursive=False)) == columns for row in rows))
-
-    def test_mixed_new_list_numbers_continue_across_countries(self):
-        body = render_email(**dict(self.data, new_kr=self.data["kr"][:2], new_us=self.data["us"][:3]))
-        doc = BeautifulSoup(body, "html5lib")
-        rows = doc.select("#new tbody tr")
-        self.assertEqual([row.find_all("td",recursive=False)[0].get_text(strip=True) for row in rows],
-                         ["1","2","3","4","5"])
-        self.assertEqual(inventory(body)["new"],
-                         ["KR:"+row["ticker"] for row in self.data["kr"][:2]] +
-                         ["US:"+row["ticker"] for row in self.data["us"][:3]])
 
     def test_optional_etf_details_also_include_sequential_numbers(self):
         doc = BeautifulSoup(etf_section_html(self.data["etf_info"], include_details=True), "html5lib")
@@ -128,7 +132,7 @@ class EmailLayoutTests(unittest.TestCase):
             expanded = render_email(**self.data)
         compact = compact_transport_html(expanded)
         before, after = (BeautifulSoup(source, "html5lib") for source in (expanded, compact))
-        for table_id in ("us","kr","new","returns"):
+        for table_id in ("us","kr","new-kr","new-us","returns"):
             def cells(document):
                 return [(cell.get_text(),[a.get("href") for a in cell.select("a")],
                          [img.get("src") for img in cell.select("img")])
@@ -184,7 +188,7 @@ class EmailLayoutTests(unittest.TestCase):
             delivery,_=native_email.prepare(source,inventory(source),directory)
         for html in (body,delivery):
             doc=BeautifulSoup(html,"html5lib")
-            for table_id,column in (("us",6),("kr",6),("new",6),("returns",13)):
+            for table_id,column in (("us",6),("kr",6),("new-kr",6),("new-us",6),("returns",13)):
                 cell=doc.select_one("#"+table_id+" tbody tr").find_all("td",recursive=False)[column]
                 self.assertEqual(cell.get_text(),"5,530억원")
                 self.assertEqual(cell.find("span",style=True)["style"],"color:#c23932")
@@ -206,7 +210,7 @@ class EmailLayoutTests(unittest.TestCase):
         for row in self.data["us"] + self.data["kr"] + self.data["etf_info"]["rows"]:
             row["name"] = name
         doc = BeautifulSoup(render_email(**self.data), "html5lib")
-        for table_id in ("us", "kr", "new", "returns"):
+        for table_id in ("us", "kr", "new-kr", "new-us", "returns"):
             for row in doc.select("#" + table_id + " tbody tr"):
                 cell = row.find_all("td", recursive=False)[3]
                 self.assertNotIn("w", cell.get("class", []))
@@ -222,7 +226,7 @@ class EmailLayoutTests(unittest.TestCase):
     def test_industry_column_uses_seventy_percent_width_and_preserves_every_label(self):
         body = render_email(**self.data)
         doc = BeautifulSoup(body, "html5lib")
-        for table_id in ("us", "kr", "new"):
+        for table_id in ("us", "kr", "new-kr", "new-us"):
             table = doc.select_one("#" + table_id)
             self.assertIn("iw", table.select("thead th")[4].get("class", []))
             for row in table.select("tbody tr"):
@@ -256,23 +260,38 @@ class EmailLayoutTests(unittest.TestCase):
 
     def test_column_widths_survive_repeated_html_transport_compaction(self):
         source = render_email(**self.data)
-        expected = [node.get("style") for node in BeautifulSoup(source, "html5lib").select("col")]
+        doc = BeautifulSoup(source, "html5lib")
+        for table_id, column, width in (("us",6,"84px"),("kr",6,"84px"),
+                                         ("new-kr",6,"84px"),("new-us",6,"84px"),("returns",13,"96px")):
+            self.assertEqual(doc.select_one("#" + table_id).select("col")[column].get("style"), "width:" + width)
+        for table_id in ("new-kr", "new-us"):
+            self.assertEqual(doc.select_one("#" + table_id).select("col")[3].get("style"), "width:19%")
+        expected = [node.get("style") for node in doc.select("col")]
         self.assertTrue(expected)
         self.assertTrue(all(not value.endswith("/") for value in expected if value))
         for _ in range(3):
             source = compact_transport_html(source)
             self.assertEqual([node.get("style") for node in BeautifulSoup(source, "html5lib").select("col")], expected)
 
-    def test_price_columns_expose_exact_values_dates_and_basis_for_verification(self):
+    def test_price_columns_show_integer_prices_and_preserve_exact_verification_values(self):
         item = self.data["etf_info"]["rows"][0]
-        item.update(initial_adjusted_price=.0000123456789012, latest_adjusted_price=123.456789012,
-                    price_start_date="2016-05-19", price_end_date="2026-10-07", price_basis="배당·분할 수정주가")
+        item.update(initial_adjusted_price=.0000123456789012, latest_adjusted_price=123456.987654,
+                    price_start_date="2016-05-19", price_end_date="2026-10-07",
+                    price_basis="Yahoo 제공 수정주가(auto_adjust)", price_currency="USD")
         doc = BeautifulSoup(render_email(**self.data), "html5lib")
+        self.assertEqual([cell.get_text() for cell in doc.select("#returns thead th")][10:12],
+                         ["최초주가", "최근주가"])
         cells = doc.select_one("#returns tbody tr").find_all("td", recursive=False)
         for index,key,date_value in ((10,"initial_adjusted_price","2016-05-19"),(11,"latest_adjusted_price","2026-10-07")):
-            self.assertEqual(float(cells[index].get_text()), item[key])
-            self.assertIn(date_value, cells[index].select_one(".cl")["title"])
-            self.assertIn("배당·분할 수정주가", cells[index]["title"])
+            self.assertEqual(cells[index].get_text(), "0" if index == 10 else "123,456")
+            expected_detail = (f'정확값 {format(item[key], ".12g")} · {date_value} · '
+                               'Yahoo 제공 수정주가(auto_adjust) · USD')
+            self.assertEqual(cells[index]["title"], expected_detail)
+            self.assertIn(expected_detail, cells[index].select_one(".cl")["title"])
+        for value, expected in ((1234.999, "1,234"), (1.999, "1"), (.999, "0")):
+            self.assertEqual(price_text(value), expected)
+        for value in (None, 0, -1, float("nan"), float("inf"), True):
+            self.assertEqual(price_text(value), "-")
         self.assertEqual(inception_text({"inception":"2026-10-02","inception_verified":False}), "미확인")
 
     def test_brief_etf_investment_labels_are_next_to_the_security_name(self):

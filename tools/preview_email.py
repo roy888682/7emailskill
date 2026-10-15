@@ -51,6 +51,7 @@ def sample_data():
             rank = len(etfs)
             cumulative = (-99.7 if rank == 0 else -42.3 if rank == 1 else
                           103383.7 if rank == 19 else round((rank - 2) * 80.43, 2))
+            initial_price = .123456789 if rank == 0 else 100.123456789 + rank
             item = make_stock(ticker, market="KOSPI" if korean else "US", number=rank, asset_type="ETF")
             item.update({"name": name, "aum": round(2.5 + rank * 1.35, 1),
                          "cagr1y": round(82.35 - rank * 3.67, 2),
@@ -58,8 +59,8 @@ def sample_data():
                          "cagr5y": None if rank % 7 == 0 else round(24.46 - rank * .67, 2),
                          "cagr10y": None if rank % 3 == 0 else round(18.33 - rank * .31, 2),
                          "cumulative_return": cumulative,
-                         "initial_adjusted_price": 100.0,
-                         "latest_adjusted_price": 100.0 + cumulative,
+                         "initial_adjusted_price": initial_price,
+                         "latest_adjusted_price": initial_price * (1 + cumulative / 100),
                          "price_start_date": "2016-05-19", "price_end_date": "2026-10-07",
                          "price_currency": "KRW" if korean else "USD",
                          "price_basis": "네이버 차트 종가·배당조정 미확인" if korean else "Yahoo 제공 수정주가(auto_adjust)",
@@ -141,7 +142,8 @@ LAYOUT_CHECK = r"""expected => {
  const viewport=window.innerWidth,tolerance=1.5,problems=[];
  const specs=[
    ["us","us",2,11],["kr","kr",2,11],
-   ["new","new",2,10],["etf","returns",2,16]
+   ["new","new-kr",2,10,"KR"],["new","new-us",2,10,"US"],
+   ["etf","returns",2,16]
  ];
  const getRows=id=>{
    const table=document.getElementById(id);
@@ -150,8 +152,8 @@ LAYOUT_CHECK = r"""expected => {
  const all=[],counts={};
  if(document.documentElement.scrollWidth>viewport+tolerance)
    problems.push("Document overflow: "+document.documentElement.scrollWidth+" > "+viewport);
- for(const [key,id,tickerColumn,cellCount] of specs){
-   const rows=getRows(id),wanted=expected[key];
+ for(const [key,id,tickerColumn,cellCount,country] of specs){
+   const rows=getRows(id),wanted=key==="new"?expected.new.filter(ticker=>ticker.startsWith(country+":")):expected[key];
    const table=document.getElementById(id);
    if(table&&table.querySelector("th")?.textContent.trim()!=="No.")
      problems.push(id+" is missing the No. heading");
@@ -172,11 +174,16 @@ LAYOUT_CHECK = r"""expected => {
        const label=row.cells[1]?.querySelector("img")?.alt||"";
        if(!["성조기","태극기"].includes(label))
          problems.push("New-security flag lacks a recognizable country label");
+       if((label==="성조기"?"US":"KR")!==country)
+         problems.push(id+" contains a security from the wrong country");
        return (label==="성조기"?"US":"KR")+":"+ticker;
      }
      return ticker;
    });
-   counts[key]={expected:wanted.length,visible:rows.length};
+   if(key==="new"){
+     counts.new=counts.new||{expected:0,visible:0};
+     counts.new.expected+=wanted.length;counts.new.visible+=rows.length;
+   }else counts[key]={expected:wanted.length,visible:rows.length};
    if(JSON.stringify(tickers)!==JSON.stringify(wanted)){
      const missing=wanted.filter(ticker=>!tickers.includes(ticker));
      const extra=tickers.filter(ticker=>!wanted.includes(ticker));
@@ -195,16 +202,25 @@ LAYOUT_CHECK = r"""expected => {
    });
    all.push(...rows);
  }
- const returns=document.getElementById("returns"),newTable=document.getElementById("new");
- if(newTable&&returns&&!(newTable.compareDocumentPosition(returns)&Node.DOCUMENT_POSITION_FOLLOWING))
-   problems.push("The new-security list must precede ETF returns");
+ const returns=document.getElementById("returns");
+ const newIds=["new-kr","new-us"],newTables=newIds.map(id=>document.getElementById(id)).filter(Boolean);
+ if(document.getElementById("new")||Array.from(document.querySelectorAll(".new-table")).some(table=>!newIds.includes(table.id)))
+   problems.push("New securities must use separate Korean and US tables");
+ for(const table of newTables)
+   if(returns&&!(table.compareDocumentPosition(returns)&Node.DOCUMENT_POSITION_FOLLOWING))
+     problems.push("Each country's new-security list must precede ETF returns");
+ if(newTables.length===2&&!(newTables[0].compareDocumentPosition(newTables[1])&Node.DOCUMENT_POSITION_FOLLOWING))
+   problems.push("The Korean new-security table must precede the US table");
+ const allNew=newIds.flatMap(id=>getRows(id).map(row=>(id==="new-kr"?"KR:":"US:")+row.cells[2]?.textContent.trim()));
+ if(JSON.stringify(allNew)!==JSON.stringify(expected.new))
+   problems.push("The combined new-security inventory or country order differs from the manifest");
  const allHeaders=Array.from(document.querySelectorAll("th")).map(cell=>cell.textContent).join(" ");
  if(allHeaders.includes("현재가"))problems.push("Current-price column remains");
  if(document.body.textContent.includes("첨부"))problems.push("Attachment-related copy remains");
  if(returns){
    const headings=Array.from(returns.querySelectorAll("thead th")).map(cell=>cell.textContent.trim());
    if(headings.length!==16||!/업종|투자/.test(headings[4])||!headings[9].includes("누적")||
-      !/주가|가격/.test(headings[10])||!/주가|가격/.test(headings[11])||
+      headings[10]!=="최초주가"||headings[11]!=="최근주가"||
       !headings[12].includes("연평균")||!/AUM|시총/.test(headings[13])||
       !headings[14].includes("설립")||!/연수|기간/.test(headings[15]))
      problems.push("ETF columns must include area beside name, cumulative → initial price → latest price → lifetime CAGR → KRW AUM → inception → elapsed years");
@@ -217,6 +233,11 @@ LAYOUT_CHECK = r"""expected => {
    const labels=[cell?.getAttribute("title")||"",...Array.from(cell?.querySelectorAll("[title]")||[]).map(node=>node.title)];
    const found=labels.join(" ").match(/\d{4}-\d{2}-\d{2}/);
    return found?Date.parse(found[0]+"T00:00:00Z"):NaN;
+ };
+ const priceTitles=cell=>[cell?.getAttribute("title")||"",...Array.from(cell?.querySelectorAll("[title]")||[]).map(node=>node.title)];
+ const exactPriceIn=cell=>{
+   const values=priceTitles(cell).map(title=>title.match(/정확값\s+([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)/)).filter(Boolean).map(match=>Number(match[1]));
+   return values.length&&values.every(value=>Number.isFinite(value)&&value===values[0])?values[0]:NaN;
  };
  let previousLifetime=Infinity;
  if(getRows("returns").length>100)problems.push("ETF comparison exceeds the top 100 limit");
@@ -235,14 +256,25 @@ LAYOUT_CHECK = r"""expected => {
      problems.push("ETF lifetime CAGR must be finite and sorted descending");
    if(!Number.isFinite(years)||years<0)
      problems.push("ETF displayed elapsed years must be nonnegative");
-   const initial=number(row.cells[10]?.textContent),latest=number(row.cells[11]?.textContent);
+   const initial=exactPriceIn(row.cells[10]),latest=exactPriceIn(row.cells[11]);
+   for(const [column,exact] of [[10,initial],[11,latest]]){
+     const cell=row.cells[column],visible=cell?.textContent.trim()||"",whole=number(visible);
+     const serializationTolerance=Math.max(1e-12,Math.abs(exact)*5e-12);
+     if(!Number.isFinite(exact)||exact<=0||!Number.isInteger(whole)||whole<0||
+        visible!==whole.toLocaleString("en-US",{useGrouping:true,maximumFractionDigits:0})||
+        whole<Math.trunc(exact-serializationTolerance)||whole>Math.trunc(exact+serializationTolerance))
+       problems.push("ETF "+index+" price must omit decimals, use comma grouping, and preserve its exact value in the title");
+     const title=priceTitles(cell).join(" ");
+     if(!/정확값\s+/.test(title)||!/\b(?:USD|KRW)\b/.test(title)||!/(?:Yahoo|네이버)/.test(title))
+       problems.push("ETF "+index+" price title must preserve the exact value, currency and provider basis");
+   }
    const cumulative=number(row.cells[9]?.textContent);
    // Prices carry 12 significant digits; account only for that bounded
    // serialization error and the returns' one-decimal display rounding.
    const cumulativeTolerance=Math.max(.051,(Math.abs(cumulative)+100)*2e-11);
    if(!(initial>0)||!(latest>0)||!Number.isFinite(cumulative)||
       Math.abs((latest/initial-1)*100-cumulative)>cumulativeTolerance)
-     problems.push("ETF "+index+" cumulative return does not match its displayed starting and latest prices");
+     problems.push("ETF "+index+" cumulative return does not match its exact starting and latest prices preserved in titles");
    const start=dateIn(row.cells[10]),end=dateIn(row.cells[11]);
    const inceptionText=row.cells[14]?.textContent.trim()||"";
    const knownInception=/^\d{4}-\d{2}-\d{2}$/.test(inceptionText);
@@ -255,13 +287,13 @@ LAYOUT_CHECK = r"""expected => {
    if(Number.isFinite(observedYears)&&observedYears>0&&initial>0&&latest>0&&
       Math.abs((Math.pow(latest/initial,1/observedYears)-1)*100-lifetime)>
         Math.max(.051,(Math.abs(lifetime)+100)*2e-11/observedYears))
-     problems.push("ETF "+index+" lifetime CAGR does not match its displayed prices and dated interval");
+     problems.push("ETF "+index+" lifetime CAGR does not match its exact prices and dated interval");
    for(const [column,period] of [[5,1],[6,3],[7,5],[8,10]])
      if(Number.isFinite(number(row.cells[column]?.textContent))&&observedYears+.004<period)
        problems.push("ETF "+index+" reports a "+period+"-year return before that much price history exists");
    previousLifetime=lifetime;
  });
- [...getRows("us"),...getRows("kr"),...getRows("new")].forEach(row=>{
+ [...getRows("us"),...getRows("kr"),...getRows("new-kr"),...getRows("new-us")].forEach(row=>{
    for(const column of [7,8]){
      const cell=row.cells[column];
      if(!cell||getComputedStyle(cell).color!=="rgb(194, 57, 50)")
@@ -291,9 +323,17 @@ LAYOUT_CHECK = r"""expected => {
        problems.push("Row "+index+" font differs from the enlarged design: "+style.fontSize);
      if(tableId!=="returns"&&column===4&&Math.abs(bounds.width-126)>tolerance)
        problems.push("Row "+index+" industry column must retain the 126px width");
+     if(newIds.includes(tableId)&&column===3){
+       const tableWidth=row.closest("table").getBoundingClientRect().width;
+       if(Math.abs(bounds.width-tableWidth*.19)>tolerance)
+         problems.push("Row "+index+" new-security name column must use 19% of table width");
+       const previousNameWidth=tableWidth*.54-168;
+       if(previousNameWidth<=0||bounds.width/previousNameWidth<.43||bounds.width/previousNameWidth>.58)
+         problems.push("Row "+index+" new-security name column must be approximately half its previous width");
+     }
      const aumColumn=tableId==="returns"?13:6;
-     if(column===aumColumn&&Math.abs(bounds.width-(tableId==="returns"?48:42))>tolerance)
-       problems.push("Row "+index+" AUM column must retain its half-width design");
+     if(column===aumColumn&&Math.abs(bounds.width-(tableId==="returns"?96:84))>tolerance)
+       problems.push("Row "+index+" AUM column must use the restored 96px ETF or 84px stock/new width");
      const clip=cell.querySelector(column===3?".nm":".cl,.iwc");
      if(!clip||clip.textContent!==cell.textContent)
        problems.push("Row "+index+" must retain the entire field in its ellipsis container: "+column);
@@ -346,8 +386,13 @@ LAYOUT_CHECK = r"""expected => {
  }
  const broken=Array.from(document.images).filter(image=>!image.complete||!image.naturalWidth);
  if(broken.length)problems.push("Broken images: "+broken.map(image=>image.alt).join(","));
+ const newNumbering=Object.fromEntries(newIds.map(id=>{
+   const rows=getRows(id),numbers=rows.map(row=>row.cells[0]?.textContent.trim());
+   return [id==="new-kr"?"kr":"us",{count:rows.length,first:numbers[0]||null,last:numbers[numbers.length-1]||null,
+     sequence_valid:numbers.every((value,index)=>value===String(index+1))}];
+ }));
  return {
-   viewport,counts,
+   viewport,counts,new_country_numbering:newNumbering,
    etfHeight:Math.round(returns?.getBoundingClientRect().height||0),
    shellFont:document.querySelector(".shell")?getComputedStyle(document.querySelector(".shell")).fontSize:null,
    problems
@@ -382,11 +427,12 @@ NATIVE_SNAPSHOT = r"""() => {
   "borderLeftColor","borderRightColor","borderLeftStyle","borderRightStyle",
   "overflowX","textOverflow","verticalAlign"];
  const result={};
- for(const id of ["us","kr","new","returns"]){
+ for(const id of ["us","kr","new-kr","new-us","returns"]){
   const table=document.getElementById(id);
   result[id]=table?Array.from(table.rows).map(row=>Array.from(row.cells).map(cell=>{
    const style=getComputedStyle(cell);
-   return {tag:cell.tagName,text:cell.textContent.trim(),
+   return {tag:cell.tagName,text:cell.textContent.trim(),title:cell.getAttribute("title"),
+    titles:Array.from(cell.querySelectorAll("[title]")).map(element=>element.getAttribute("title")),
     links:Array.from(cell.querySelectorAll("a")).map(a=>[a.textContent.trim(),a.getAttribute("href")]),
     flags:Array.from(cell.querySelectorAll("img")).map(img=>[img.getAttribute("src"),img.alt]),
     clipped:Array.from(cell.querySelectorAll(".cl,.nm,.iwc")).map(element=>{
@@ -401,10 +447,11 @@ NATIVE_SNAPSHOT = r"""() => {
 
 NATIVE_CONTENT = r"""() => {
  const result={};
- for(const id of ["us","kr","new","returns"]){
+ for(const id of ["us","kr","new-kr","new-us","returns"]){
   const table=document.getElementById(id);
   result[id]=table?Array.from(table.rows).map(row=>Array.from(row.cells).map(cell=>({
-   tag:cell.tagName,text:cell.textContent.trim(),
+   tag:cell.tagName,text:cell.textContent.trim(),title:cell.getAttribute("title"),
+   titles:Array.from(cell.querySelectorAll("[title]")).map(element=>element.getAttribute("title")),
    links:Array.from(cell.querySelectorAll("a")).map(a=>[a.textContent.trim(),a.getAttribute("href")]),
    flags:Array.from(cell.querySelectorAll("img")).map(img=>[img.getAttribute("src"),img.alt])
   }))):[];
@@ -526,6 +573,8 @@ def verify_actual_display(browser, source, delivery, expected, output):
                     for table_id,filename,marker in (
                         ("us","email-actual-native-us.png","PREVIEW_IMAGE_ACTUAL_DELIVERY_US"),
                         ("kr","email-actual-native-kr.png","PREVIEW_IMAGE_ACTUAL_DELIVERY_KR"),
+                        ("new-kr","email-actual-native-new-kr.png","PREVIEW_IMAGE_ACTUAL_DELIVERY_NEW_KR"),
+                        ("new-us","email-actual-native-new-us.png","PREVIEW_IMAGE_ACTUAL_DELIVERY_NEW_US"),
                         ("returns","email-actual-native-etf.png","PREVIEW_IMAGE_ACTUAL_DELIVERY_ETF"),
                     ):
                         cropped_table_image(displayed,table_id,output/filename,marker)
@@ -628,9 +677,12 @@ def main():
                         finally:
                             reference_page.close()
                         if host == "gmail" and width == 1600:
+                            new_numbering = result["new_country_numbering"]
+                            print("NEW_COUNTRY_NUMBERING:" + json.dumps(new_numbering, ensure_ascii=False), flush=True)
                             for table_id, filename, marker in (
                                 ("returns", "email-desktop-etf.png", "PREVIEW_IMAGE_DESKTOP_ETF"),
-                                ("new", "email-desktop-new.png", "PREVIEW_IMAGE_DESKTOP_NEW"),
+                                ("new-kr", "email-desktop-new-kr.png", "PREVIEW_IMAGE_DESKTOP_NEW_KR"),
+                                ("new-us", "email-desktop-new-us.png", "PREVIEW_IMAGE_DESKTOP_NEW_US"),
                                 ("us", "email-desktop-stocks.png", "PREVIEW_IMAGE_DESKTOP_STOCKS"),
                             ):
                                 cropped_table_image(page, table_id, args.output / filename, marker)
@@ -661,6 +713,7 @@ def main():
         "native_checked":True,"us_font_matches_kr":us_font_matches_kr,
         "high_font_matches_kr":True,
         "us_link_clicks":len(expected["us"]),"numbering_checked":True,
+        "new_country_numbering":new_numbering,"exact_price_titles_checked":True,
     }
     proof_path.write_text(json.dumps(proof, ensure_ascii=False, indent=2), encoding="utf-8")
     print("PREVIEW_PASSED:%s" % json.dumps(proof, ensure_ascii=False), flush=True)

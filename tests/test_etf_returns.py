@@ -153,7 +153,7 @@ class EtfRankingAndHtmlTests(unittest.TestCase):
     def test_footer_explains_cumulative_return_basis(self):
         row = {"ticker": "ETF", "name": "Example ETF", "cagr1y": 10.0}
         html = etf_section_html({"rows": [row], "pool": 1, "with_ret": 1})
-        self.assertIn("(최근 수정·기준주가 ÷ 최초 수정·기준주가 - 1) × 100", html)
+        self.assertIn("(최근주가 ÷ 최초주가 - 1) × 100", html)
         self.assertIn("연환산하지 않음", html)
         self.assertIn("배당조정 미확인", html)
 
@@ -261,13 +261,18 @@ class EtfLifetimeMetricTests(unittest.TestCase):
         self.assertEqual(_etf_price_performance([], [])["last_date"], None)
 
     def test_price_ratio_overrides_stale_rounded_cumulative_and_growth_metadata(self):
-        metrics = _etf_lifetime_metrics(self.example(
+        item = self.example(
             initial_adjusted_price=23.123456789, latest_adjusted_price=42.987654321,
-            cumulative_return=9999, cumulative_growth=9999))
+            cumulative_return=9999, cumulative_growth=9999)
+        metrics = _etf_lifetime_metrics(item)
         growth = 42.987654321 / 23.123456789
         years = 730 / 365.25
         self.assertEqual(metrics["cumulative_return"], round((growth - 1) * 100, 1))
         self.assertAlmostEqual(metrics["lifetime_cagr"], (growth ** (1 / years) - 1) * 100)
+        # Integer display must not replace the exact prices used for calculation.
+        self.assertNotEqual(metrics["cumulative_return"], round((42 / 23 - 1) * 100, 1))
+        self.assertEqual((item["initial_adjusted_price"], item["latest_adjusted_price"]),
+                         (23.123456789, 42.987654321))
 
     def test_one_missing_or_invalid_verification_price_does_not_rank(self):
         for changes in [{"initial_adjusted_price": 100}, {"latest_adjusted_price": 200},

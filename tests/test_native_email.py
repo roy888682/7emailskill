@@ -23,8 +23,12 @@ def fixture(count=218, long_names=False):
         row["industry"] = "반도체"
         row["investment_area"] = "반도체"
         row["index"] = ["NASDAQ"] if row.get("market") == "US" else ["KOSPI"]
-    data["new_us"] = data["us"][:10]
-    data["new_kr"] = data["kr"][:2]
+    data["new_us"] = data["us"][:29]
+    data["new_kr"] = data["kr"][:4]
+    data["etf_info"]["rows"][0].update(
+        initial_adjusted_price=.0000123456789012, latest_adjusted_price=123456.987654,
+        price_start_date="2016-05-19", price_end_date="2026-10-07",
+        price_basis="Yahoo 제공 수정주가(auto_adjust)", price_currency="USD")
     source = render_email(**data)
     return source, inventory(source)
 
@@ -90,7 +94,17 @@ class NativeEmailTests(unittest.TestCase):
                              native_email.semantic_digest(BeautifulSoup(source, "html5lib")))
             self.assertFalse(doc.select("#us-display"))
             self.assertTrue(all(image.get("src") in ("cid:u", "cid:k") for image in doc.find_all("img")))
-            self.assertEqual(set(meta["native_tables"]), {"us", "kr", "new", "returns"})
+            self.assertEqual(set(meta["native_tables"]), {"us", "kr", "new-kr", "new-us", "returns"})
+            for table_id, count in (("new-kr", 4), ("new-us", 29)):
+                rows = doc.select("#" + table_id + " tbody tr")
+                self.assertEqual([row.find("td").get_text(strip=True) for row in rows],
+                                 [str(number) for number in range(1, count + 1)])
+            prices = doc.select_one("#returns tbody tr").find_all("td", recursive=False)[10:12]
+            for cell, displayed, exact in zip(prices, ("0", "123,456"),
+                                              ("1.23456789012e-05", "123456.987654")):
+                self.assertEqual(cell.get_text(), displayed)
+                self.assertIn("정확값 " + exact, cell["title"])
+                self.assertIn("정확값 " + exact, cell.select_one(".cl")["title"])
             self.assertLess(len(delivery.encode("utf-8")), len(source.encode("utf-8")))
             self.assertLessEqual(meta["html_bytes"], native_email.MAX_HTML_BYTES)
             self.assertLessEqual(meta["canonical_bytes"], native_email.MAX_CANONICAL_BYTES)

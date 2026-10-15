@@ -131,20 +131,32 @@ def brief_investment_text(row):
 
 
 def price_text(value):
-    if not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
         return "-"
-    # Significant digits also preserve tiny split-adjusted inception prices.
+    return f"{int(value):,}"
+
+
+def price_exact_text(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+        return "-"
+    # Preserve the original precision for independent return verification.
     return format(value, ".12g")
 
 
 def table_columns(kind):
     if kind == "returns":
         widths = ("3%", "3%", "6%", None, "9%", "4.5%", "4.5%", "4.5%", "4.5%",
-                  "6%", "7%", "7%", "9%", "48px", "9%", "6%")
+                  "6%", "7%", "7%", "9%", "96px", "9%", "6%")
+    elif kind == "new":
+        # Before this change the auto name width was 54% of the table minus
+        # 168px. A fixed 19% is 46–55% of that width across 900–1920px hosts.
+        # The three final metric columns share the remaining width; Gmail
+        # only needs stable percentage/px col widths, without CSS calc().
+        widths = ("3%", "3%", "9%", "19%", "126px", "5%", "84px", None, None, None)
+    elif kind == "details":
+        widths = (None, None, None, None, None, None, "96px", None)
     else:
-        widths = ("3%", "3%", "9%", None, "126px", "5%", "42px", "9%", "9%", "8%")
-        if kind != "new":
-            widths += ("12%",)
+        widths = ("3%", "3%", "9%", None, "126px", "5%", "84px", "9%", "9%", "8%", "12%")
     return '<colgroup>' + ''.join(f'<col style="width:{width}">' if width else '<col>' for width in widths) + '</colgroup>'
 
 
@@ -183,7 +195,7 @@ def etf_section_html(etf_info, include_details=False):
     head = ('<div class="section" id="etf"><h2>ETF 수익률 비교</h2>'
             f'<p class="intro">연평균 누적수익률 내림차순 · 상위 {len(rows)}개'
             f' · 산출 가능 {etf_info.get("with_ret", 0)} / 후보 {etf_info.get("pool", 0)}개</p>'
-            '<p class="etf-caption">최근 1·3·5·10년: 연평균수익률(CAGR) · 누적: 표시된 두 기준주가의 수익률 · 연평균 누적: 같은 가격 기간을 복리 환산 · 수익률 단위: %</p>')
+            '<p class="etf-caption">최근 1·3·5·10년: 연평균수익률(CAGR) · 누적: 정확한 최초·최근주가의 수익률 · 연평균 누적: 같은 가격 기간을 복리 환산 · 수익률 단위: %</p>')
     if not rows:
         return head + '<p class="muted">해당 ETF 없음</p></div>'
     labels = (("1y", "1년", "cagr1y"), ("3y", "3년", "cagr3y"),
@@ -193,15 +205,15 @@ def etf_section_html(etf_info, include_details=False):
              '<th class="number">No.</th><th class="flag-cell">국가</th><th>티커</th><th>종목명</th><th>업종·투자분야</th>' +
              "".join(f'<th class="number {"one-year" if period == "1y" else ""}">{label}</th>'
                      for period, label, _ in labels) +
-             '<th class="number">최초 수정·기준주가</th><th class="number">최근 수정·기준주가</th>'
+             '<th class="number">최초주가</th><th class="number">최근주가</th>'
              '<th class="number">연평균 누적수익률 ↓</th>'
              '<th class="number" data-field="aum">AUM·시총(원화)</th><th data-field="inception">설립·상장일</th>'
              '<th class="number" data-field="lifetime_years">누적연수</th></tr></thead><tbody>')
     for rank, row in enumerate(rows, 1):
         country = "US" if row.get("market") == "US" else "KR"
         ticker = h(row.get("ticker"))
-        first_title = h(f'{row.get("price_start_date") or row.get("first_date") or "날짜 미확인"} · {row.get("price_basis") or "가격 기준 미확인"} · {row.get("price_currency") or ("USD" if country == "US" else "KRW")}')
-        last_title = h(f'{row.get("price_end_date") or row.get("last_date") or "날짜 미확인"} · {row.get("price_basis") or "가격 기준 미확인"} · {row.get("price_currency") or ("USD" if country == "US" else "KRW")}')
+        first_title = h(f'정확값 {price_exact_text(row.get("initial_adjusted_price"))} · {row.get("price_start_date") or row.get("first_date") or "날짜 미확인"} · {row.get("price_basis") or "가격 기준 미확인"} · {row.get("price_currency") or ("USD" if country == "US" else "KRW")}')
+        last_title = h(f'정확값 {price_exact_text(row.get("latest_adjusted_price"))} · {row.get("price_end_date") or row.get("last_date") or "날짜 미확인"} · {row.get("price_basis") or "가격 기준 미확인"} · {row.get("price_currency") or ("USD" if country == "US" else "KRW")}')
         table += (f'<tr class="etf-row" data-ticker="{ticker}"><td class="number">{rank}</td>'
                   f'<td class="flag-cell">{flag_icon(country)}</td>'
                   f'<td class="ticker-cell"><a href="{safe_url(row.get("url"))}">{ticker}</a></td>'
@@ -219,16 +231,17 @@ def etf_section_html(etf_info, include_details=False):
     table += '</tbody></table></div>'
     notes = ('<p class="notes">ATH -10% 이내 비채권 ETF 중 연평균 누적수익률 산출 가능 종목을 내림차순으로 최대 100개 표시합니다. '
              '기간 이력이 부족하면 -로 표시합니다.<br>'
-             '누적수익률 = (최근 수정·기준주가 ÷ 최초 수정·기준주가 - 1) × 100이며, 연환산하지 않음. 두 가격은 같은 제공업체·같은 조정 기준입니다.<br>'
+             '누적수익률 = (최근주가 ÷ 최초주가 - 1) × 100이며, 연환산하지 않음. 두 가격은 같은 제공업체·같은 조정 기준입니다. '
+             '최초주가·최근주가는 화면에서 소수점 이하를 버리고 천 단위 쉼표로 표시하며, 수익률 계산에는 소수점을 생략하지 않은 정확한 원값을 사용합니다.<br>'
              '연평균 누적수익률 = [(1 + 누적수익률/100)^(1/누적연수) - 1] × 100. '
              '누적연수는 표시된 최초·최근 가격의 실제 기준일 차이 ÷ 365.25이며, 계산은 반올림 전 값으로 합니다.<br>'
              '미국과 수정주가 확보 한국 ETF는 Yahoo 제공 수정주가(auto_adjust) 기준입니다. 수정주가 확보 불가 한국 ETF는 네이버 차트 종가이며 배당조정 미확인으로 구분합니다.<br>'
-             '설립일 당일 가격이 없으면 실제 최초 확보일 가격을 표시합니다. 각 가격에 마우스를 올리면 전체 값·기준일·통화·가격 기준을 확인할 수 있습니다. 설립일 출처가 불명확하면 미확인으로 표시합니다.<br>'
+             '설립일 당일 가격이 없으면 실제 최초 확보일 가격을 표시합니다. 각 가격에 마우스를 올리면 소수점이 포함된 정확값·기준일·통화·가격 기준을 확인할 수 있습니다. 설립일 출처가 불명확하면 미확인으로 표시합니다.<br>'
              'DFAC: ETF 최초상장 2021-06-14, 전신 펀드 2007-10-04, 재편 후 존속 펀드 2005-09-15, 지분종류 재편 기준일 2026-10-02. ETF 최초상장 이후 가격으로 계산하며 재편일을 최초상장일로 사용하지 않습니다. '
              'AUM 우선, 없으면 시총을 원화로 표시합니다.</p>')
     details = ""
     if include_details:
-        details = ('<div class="etf-details"><h3>ETF 상세정보</h3><table class="data-table">'
+        details = ('<div class="etf-details"><h3>ETF 상세정보</h3><table class="data-table">' + table_columns("details") +
                    '<thead><tr><th class="number">No.</th><th>티커</th><th>종목명</th><th>추종지수</th><th>ETF 성격</th>'
                    '<th>운용사</th><th class="number">AUM</th><th>설립일</th></tr></thead><tbody>')
         for rank, row in enumerate(rows, 1):
@@ -291,10 +304,14 @@ def new_summary(new_us, new_kr, totals=None, offset=0):
             '<p class="intro">직전 거래일에 없던 종목 · 누적일수는 과거 재등장을 포함합니다.</p>')
     if not count:
         return head + '<p class="muted">오늘의 신규 등장 종목이 없습니다.</p></div>'
-    numbered = [(country, row) for country, items in (("KR", new_kr), ("US", new_us)) for row in items]
-    rows = "".join(_stock_row(row, country, compact=True, number=number)
-                   for number, (country, row) in enumerate(numbered, offset + 1))
-    return head + '<table class="data-table new-table" id="new">' + _stock_head(True) + rows + '</tbody></table></div>'
+    tables = []
+    for country, label, items in (("KR", "한국", new_kr), ("US", "미국", new_us)):
+        rows = "".join(_stock_row(row, country, compact=True, number=number)
+                       for number, row in enumerate(items, 1))
+        tables.append(f'<p class="intro">{label} 신규 등장 · {security_count(items)}</p>'
+                      f'<table class="data-table new-table" id="new-{country.lower()}" aria-label="{label} 신규 등장">'
+                      + _stock_head(True) + rows + '</tbody></table>')
+    return head + "".join(tables) + '</div>'
 
 def stocks_table(stocks, title, currency, holiday, date_s, hmsg="", new_tickers=None):
     country = "US" if currency == "USD" else "KR"
@@ -469,8 +486,9 @@ def inventory(source):
         return result
     result = {"us": tickers("us", 2), "kr": tickers("kr", 2),
               "etf": tickers("returns", 2), "new": []}
-    table = doc.find("table", id="new")
-    if table:
+    # Read country tables in document order so the manifest still protects
+    # the complete Korean-then-US list after their numbering is separated.
+    for table in doc.select("table#new-kr, table#new-us"):
         for row in table.select("tbody tr"):
             cells = row.find_all("td", recursive=False)
             country = "US" if cells[1].find("img")["src"] == "cid:u" else "KR"
