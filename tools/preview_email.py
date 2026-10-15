@@ -61,343 +61,525 @@ def sample_data():
                          "lifetime_cagr": ((1 + cumulative / 100) ** (1 / lifetime_years) - 1) * 100,
                          "lifetime_years": lifetime_years,
                          "etf_index": "FnGuide 차세대 인공지능 반도체 소부장 산업 지수" if korean else
-                                      "Philadelphia Semiconductor Sec< 1:
-        return f'<span style="color:#c23932">{text}</span>'
-    return text
-
-def signal_pct(value):
-    return pct(value).replace('class="up"', 'class="signal-red" style="color:#c23932"').replace(
-        'class="down"', 'class="signal-red" style="color:#c23932"').replace(
-        'class="flat"', 'class="signal-red" style="color:#c23932"')
-
-def industry_text(row):
-    if row.get("asset_type") == "ETF":
-        area = row.get("investment_area")
-        if area:
-            return str(area)
-        kind = row.get("etf_kind")
-        return f"{kind} (명칭 기준)" if kind else "투자분야 미확인"
-    return row.get("industry") or "미확인"
+                                      "Philadelphia Semiconductor Sector Total Return Index",
+                         "issuer": "신한자산운용 주식회사" if korean else "Vanguard Group, Inc.",
+                         "etf_kind": "레버리지·성장주" if rank < 4 else "주식형·대표지수",
+                         "inception": "2016-05-19", "first_date": "2016-05-19",
+                         "last_date": "2026-10-07", "return_as_of": "2026-10-07"})
+            etfs.append(item)
+            (kr if korean else us).append(item)
+    etfs.sort(key=lambda item: item["lifetime_cagr"])
+    info = {"us_last_str": "2026년 10월 07일(수)", "kr_last_str": "2026년 10월 07일(수)",
+            "us_holiday": False, "kr_holiday": False, "us_holiday_msg": "", "kr_holiday_msg": ""}
+    return {"us": us, "kr": kr, "info": info, "usd_krw": 1343.4, "new_us": us[:119], "new_kr": kr[:1],
+            "diag": {"us_days_before": 66, "kr_days_before": 59},
+            "indices": {"sp500": 7801.77, "kospi": 6625.93, "sp500_chg": -.22, "kospi_chg": -2.62},
+            "etf_info": {"rows": etfs, "pool": 126, "with_ret": 124}}
 
 
-def flag_icon(market):
-    """Small drawn PNG flags for dense desktop table cells."""
-    icon = re.sub(r' style="[^"]*"', "", flag_html(market))
-    return icon.replace('width="30"', 'width="20"').replace('height="16"', 'height="11"').replace('height="20"', 'height="13"')
+def preview_data():
+    data = sample_data()
+    data["new_us"] = data["new_us"][:10]
+    return data
 
-def inception_text(row):
-    value = row.get("inception") or row.get("first_date")
-    if not value:
-        return "-"
-    text = str(value)
-    if re.fullmatch(r"\d{8}", text):
-        return f"{text[:4]}-{text[4:6]}-{text[6:]}"
-    return text[:10] if re.match(r"\d{4}-\d{2}-\d{2}", text) else text
+def build_preview_html():
+    from src.email_layout import render_email
+    return render_email(**preview_data())
 
-def compact_metric(period, label, value):
-    number = pct(value).replace("+", "").replace("%", "")
-    colors = {"1y": "#c23932", "3y": "#245ba6", "5y": "#087d67", "10y": "#7944b0"}
-    if period in colors:
-        number = number.replace('class="', f'style="color:{colors[period]}" class="', 1)
-    return (f'<div class="metric" data-period="{period}">'
-            f'<span class="metric-label">{label}</span><strong>{number}</strong></div>')
+def manifest_for(data):
+    return {
+        "us": [str(row["ticker"]) for row in data["us"]],
+        "kr": [str(row["ticker"]) for row in data["kr"]],
+        "new": [
+            country + ":" + str(row["ticker"])
+            for country, rows in (("KR", data["new_kr"]), ("US", data["new_us"]))
+            for row in rows
+        ],
+        "etf": [str(row["ticker"]) for row in data["etf_info"]["rows"]],
+    }
 
-def elapsed_years_text(value):
-    if not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
-        return "-"
-    return f"{value:.2f}년"
+def normalize_manifest(raw):
+    result = {}
+    for key in ("us", "kr", "new", "etf"):
+        items = raw.get(key)
+        if items is None:
+            raise ValueError("Manifest is missing %r" % key)
+        if key == "new" and isinstance(items, dict):
+            items = [
+                country + ":" + str(item["ticker"] if isinstance(item, dict) else item)
+                for country, values in (("KR", items.get("kr", [])), ("US", items.get("us", [])))
+                for item in values
+            ]
+        if not isinstance(items, list):
+            raise ValueError("Manifest %r must be a list" % key)
+        result[key] = [
+            str(item["ticker"]) if isinstance(item, dict) else str(item)
+            for item in items
+        ]
+    return result
+
+def gmail_host_html(html_source):
+    """Keep message CSS but remove its body rule to model Gmail's 16px host."""
+    html_source = re.sub(
+        r"(?<![\w.#-])body\s*\{[^}]*\}", "", html_source,
+        flags=re.IGNORECASE,
+    )
+    return re.sub(
+        r"<body\b[^>]*>",
+        '<body style="margin:0;font:16px Arial,sans-serif;line-height:normal;'
+        'background:white;color:black">',
+        html_source, count=1, flags=re.IGNORECASE,
+    )
+
+LAYOUT_CHECK = r"""expected => {
+ const viewport=window.innerWidth,tolerance=1.5,problems=[];
+ const specs=[
+   ["us","us",2,11],["kr","kr",2,11],
+   ["new","new",2,10],["etf","returns",2,13]
+ ];
+ const getRows=id=>{
+   const table=document.getElementById(id);
+   return table?Array.from(table.tBodies).flatMap(body=>Array.from(body.rows)):[];
+ };
+ const all=[],counts={};
+ if(document.documentElement.scrollWidth>viewport+tolerance)
+   problems.push("Document overflow: "+document.documentElement.scrollWidth+" > "+viewport);
+ for(const [key,id,tickerColumn,cellCount] of specs){
+   const rows=getRows(id),wanted=expected[key];
+   const table=document.getElementById(id);
+   if(table&&table.querySelector("th")?.textContent.trim()!=="No.")
+     problems.push(id+" is missing the No. heading");
+   const tickers=rows.map(row=>{
+     const cell=row.cells[tickerColumn],link=cell&&cell.querySelector("a");
+     if(!link){problems.push(id+" is missing a ticker link");return "";}
+     const ticker=Array.from(link.childNodes)
+       .filter(node=>node.nodeType===Node.TEXT_NODE)
+       .map(node=>node.textContent).join("").trim();
+     if(key==="new"){
+       const label=row.cells[1]?.querySelector("img")?.alt||"";
+       if(!["성조기","태극기"].includes(label))
+         problems.push("New-security flag lacks a recognizable country label");
+       return (label==="성조기"?"US":"KR")+":"+ticker;
+     }
+     return ticker;
+   });
+   counts[key]={expected:wanted.length,visible:rows.length};
+   if(JSON.stringify(tickers)!==JSON.stringify(wanted)){
+     const missing=wanted.filter(ticker=>!tickers.includes(ticker));
+     const extra=tickers.filter(ticker=>!wanted.includes(ticker));
+     problems.push(id+" ticker/order mismatch; missing="+missing.join(",")+" extra="+extra.join(","));
+   }
+   if(new Set(tickers).size!==tickers.length)
+     problems.push(id+" contains duplicate securities");
+   rows.forEach((row,index)=>{
+     if(row.cells.length!==cellCount)
+       problems.push(id+" row "+index+" has "+row.cells.length+" cells, expected "+cellCount);
+     if(row.cells[0]?.textContent.trim()!==String(index+1))
+       problems.push(id+" row "+index+" has a missing or incorrect No.");
+     const flag=row.cells[1]?.querySelector("img");
+     if(!flag||!flag.complete||!flag.naturalWidth)
+       problems.push(id+" row "+index+" has a missing/broken country flag");
+   });
+   all.push(...rows);
+ }
+ const returns=document.getElementById("returns"),newTable=document.getElementById("new");
+ if(newTable&&returns&&!(newTable.compareDocumentPosition(returns)&Node.DOCUMENT_POSITION_FOLLOWING))
+   problems.push("The new-security list must precede ETF returns");
+ const allHeaders=Array.from(document.querySelectorAll("th")).map(cell=>cell.textContent).join(" ");
+ if(allHeaders.includes("현재가"))problems.push("Current-price column remains");
+ if(document.body.textContent.includes("첨부"))problems.push("Attachment-related copy remains");
+ if(returns){
+   const headings=Array.from(returns.querySelectorAll("thead th")).map(cell=>cell.textContent.trim());
+   if(headings.length!==13||!headings[8].includes("누적")||
+      !headings[9].includes("연평균")||!/AUM|시총/.test(headings[10])||
+      !headings[11].includes("설립")||!/연수|기간/.test(headings[12]))
+     problems.push("ETF columns must end with cumulative → lifetime CAGR → KRW AUM → inception → elapsed years");
+ }
+ let previousLifetime=-Infinity;
+ getRows("returns").forEach((row,index)=>{
+   const colors=[];
+   for(const [column,cls] of [[4,"p1"],[5,"p3"],[6,"p5"],[7,"p10"]]){
+     const cell=row.cells[column];
+     if(!cell||!cell.classList.contains(cls))
+       problems.push("ETF "+index+" is missing "+cls+" on the correct return column");
+     if(cell)colors.push(getComputedStyle(cell).color);
+   }
+   if(new Set(colors).size!==4)problems.push("ETF "+index+" return colors are not distinct");
+   const lifetime=parseFloat(row.cells[9]?.textContent.replace(/,/g,""));
+   const years=parseFloat(row.cells[12]?.textContent.replace(/,/g,""));
+   if(!Number.isFinite(lifetime)||lifetime<previousLifetime)
+     problems.push("ETF lifetime CAGR must be finite and sorted ascending");
+   if(!Number.isFinite(years)||years<0)
+     problems.push("ETF displayed elapsed years must be nonnegative");
+   previousLifetime=lifetime;
+ });
+ [...getRows("us"),...getRows("kr"),...getRows("new")].forEach(row=>{
+   for(const column of [6,8]){
+     const cell=row.cells[column];
+     if(!cell||getComputedStyle(cell).color!=="rgb(194, 57, 50)")
+       problems.push("ATH/day-change values must be red");
+   }
+ });
+ const stockBadge=document.querySelector(".stock-table b,.new-table b"),etfBadge=document.querySelector(".stock-table i,.new-table i");
+ if(stockBadge&&etfBadge){
+   const signature=el=>{
+     const style=getComputedStyle(el);
+     return style.color+"|"+style.backgroundColor;
+   };
+   if(signature(stockBadge)===signature(etfBadge))
+     problems.push("Stock and ETF badges have identical colors");
+ }
+ all.forEach((row,index)=>{
+   const box=row.getBoundingClientRect();
+   if(box.left< -tolerance||box.right>viewport+tolerance)
+     problems.push("Row "+index+" exceeds the viewport");
+   const tableId=row.closest("table").id;
+   const wrappingColumns=tableId==="returns"?[]:tableId==="new"?[7]:[7,10];
+   let rowWrapped=false;
+   for(const [column,cell] of Array.from(row.cells).entries()){
+     const style=getComputedStyle(cell),bounds=cell.getBoundingClientRect();
+     const mayWrap=wrappingColumns.includes(column);
+     if(cell.classList.contains("w")!==mayWrap)
+       problems.push("Row "+index+" has an incorrect wrapping column "+column);
+     if(style.whiteSpace!==(mayWrap?"normal":"nowrap"))
+       problems.push("Row "+index+" has an incorrect wrapping style in column "+column);
+     const expectedFont=tableId==="returns"&&column!==11?13:12.35;
+     if(Math.abs(parseFloat(style.fontSize)-expectedFont)>.01)
+       problems.push("Row "+index+" font differs from the enlarged design: "+style.fontSize);
+     const name=column===3?cell.querySelector(".nm"):null;
+     if(column===3){
+       if(!name||name.textContent!==cell.textContent)
+         problems.push("Row "+index+" must retain its complete security name inside .nm");
+       if(name){
+         const nameStyle=getComputedStyle(name),nameBounds=name.getBoundingClientRect();
+         if(nameStyle.display!=="block"||nameStyle.whiteSpace!=="nowrap"||
+            nameStyle.overflowX!=="hidden"||nameStyle.textOverflow!=="ellipsis"||
+            Math.abs(parseFloat(nameStyle.width)-120)>.01||
+            Math.abs(parseFloat(nameStyle.maxWidth)-120)>.01)
+           problems.push("Row "+index+" lacks the one-line name ellipsis design");
+         if(nameBounds.left<bounds.left-tolerance||nameBounds.right>bounds.right+tolerance||
+            nameBounds.top<bounds.top-tolerance||nameBounds.bottom>bounds.bottom+tolerance)
+           problems.push("Row "+index+" name container exceeds its cell");
+       }
+     }
+     const walker=document.createTreeWalker(cell,NodeFilter.SHOW_TEXT);let node;
+     while((node=walker.nextNode())){
+       if(!node.textContent.trim())continue;
+       const range=document.createRange();range.selectNodeContents(node);
+       const rects=Array.from(range.getClientRects()).filter(rect=>rect.width);
+       if(rects.length>1){
+         if(mayWrap)rowWrapped=true;
+         else problems.push("Row "+index+" wraps a numeric or ticker field: "+node.textContent.trim());
+       }
+       const intentionalEllipsis=name&&name.contains(node);
+       for(const rect of rects)
+         if((!intentionalEllipsis&&(rect.left<bounds.left-tolerance||rect.right>bounds.right+tolerance))||
+            rect.top<bounds.top-tolerance||rect.bottom>bounds.bottom+tolerance)
+           problems.push("Row "+index+" clips text: "+node.textContent.trim());
+     }
+   }
+   if(!rowWrapped&&box.height>42)
+     problems.push("Row "+index+" is taller than its single-line content: "+box.height);
+ });
+ const broken=Array.from(document.images).filter(image=>!image.complete||!image.naturalWidth);
+ if(broken.length)problems.push("Broken images: "+broken.map(image=>image.alt).join(","));
+ return {
+   viewport,counts,
+   etfHeight:Math.round(returns?.getBoundingClientRect().height||0),
+   shellFont:document.querySelector(".shell")?getComputedStyle(document.querySelector(".shell")).fontSize:null,
+   problems
+ };
+}"""
+
+def cropped_table_image(page, table_id, output, marker):
+    if not page.locator("#" + table_id).count():
+        return
+    page.evaluate("(id)=>document.getElementById(id).scrollIntoView({block:'start'})", table_id)
+    box = page.locator("#" + table_id).bounding_box()
+    if not box:
+        return
+    viewport = page.viewport_size
+    clip = {
+        "x": max(0, box["x"]),
+        "y": max(0, box["y"]),
+        "width": min(box["width"], viewport["width"] - max(0, box["x"])),
+        "height": min(box["height"], 480, viewport["height"] - max(0, box["y"])),
+    }
+    if clip["width"] <= 0 or clip["height"] <= 0:
+        raise AssertionError("Screenshot target lies outside the viewport")
+    png = page.screenshot(path=str(output), clip=clip)
+    print(marker + ":" + base64.b64encode(png).decode("ascii"), flush=True)
 
 
-def etf_section_html(etf_info, include_details=False):
-    rows = etf_info.get("rows", [])
-    head = ('<div class="section" id="etf"><h2>ETF 수익률 비교</h2>'
-            f'<p class="intro">연평균 누적수익률 오름차순 · {len(rows)}개'
-            f' · 산출 가능 {etf_info.get("with_ret", 0)} / 후보 {etf_info.get("pool", 0)}개</p>'
-            '<p class="etf-caption">최근 1·3·5·10년: 연평균수익률(CAGR) · 누적: 전체 수익률 · 연평균 누적: 설립일부터 복리 환산 · 수익률 단위: %</p>')
-    if not rows:
-        return head + '<p class="muted">해당 ETF 없음</p></div>'
-    labels = (("1y", "1년", "cagr1y"), ("3y", "3년", "cagr3y"),
-              ("5y", "5년", "cagr5y"), ("10y", "10년", "cagr10y"),
-              ("cumulative", "누적", "cumulative_return"),
-              ("lifetime", "연평균 누적수익률 ↑", "lifetime_cagr"))
-    table = ('<div class="etf-comparison"><table class="data-table etf-table" id="returns"><thead><tr>'
-             '<th class="number">No.</th><th class="flag-cell">국가</th><th>티커</th><th>종목명</th>' +
-             "".join(f'<th class="number {"one-year" if period == "1y" else ""}">{label}</th>'
-                     for period, label, _ in labels) +
-             '<th class="number" data-field="aum">AUM·시총(원화)</th><th data-field="inception">설립일</th>'
-             '<th class="number" data-field="lifetime_years">누적연수</th></tr></thead><tbody>')
-    for rank, row in enumerate(rows, 1):
-        country = "US" if row.get("market") == "US" else "KR"
-        ticker = h(row.get("ticker"))
-        table += (f'<tr class="etf-row" data-ticker="{ticker}"><td class="number">{rank}</td>'
-                  f'<td class="flag-cell">{flag_icon(country)}</td>'
-                  f'<td class="ticker-cell"><a href="{safe_url(row.get("url"))}">{ticker}</a></td>'
-                  f'<td class="name-cell"><span class="nm">{h(row.get("name"))}</span></td>' +
-                  "".join(f'<td class="number {"one-year" if period == "1y" else ""}">'
-                          f'{compact_metric(period, label, row.get(key))}</td>'
-                          for period, label, key in labels) +
-                  f'<td class="number" data-field="aum">{row_size_html(dict(row, asset_type="ETF"))}</td>'
-                  f'<td class="date-cell" data-field="inception">{h(inception_text(row))}</td>'
-                  f'<td class="number" data-field="lifetime_years">{elapsed_years_text(row.get("lifetime_years"))}</td></tr>')
-    table += '</tbody></table></div>'
-    notes = ('<p class="notes">ATH -10% 이내 비채권 ETF 중 연평균 누적수익률 산출 가능 종목을 오름차순으로 최대 20개 표시합니다. '
-             '기간 이력이 부족하면 -로 표시합니다.<br>'
-             '누적수익률은 수집 가능한 최초 거래일 종가 대비 최신 종가의 전체 상승률이며, 연환산하지 않음.<br>'
-             '연평균 누적수익률 = [(1 + 누적수익률/100)^(1/누적연수) - 1] × 100. '
-             '누적연수는 설립일부터 최신 주가 기준일까지의 실제 일수 ÷ 365.25이며, 계산은 반올림 전 값으로 합니다.<br>'
-             '한국 ETF는 분배금 미반영 가격수익률, 미국 ETF는 배당 재투자 반영 수정주가 기준입니다.<br>'
-             '설립일은 유효한 운용사 공시값을 우선하고, 없으면 수집 가능한 최초 거래일을 사용합니다. '
-             '최초 가격 이력이 설립일보다 늦으면 해당 가격 이력의 누적수익률을 사용합니다. AUM 우선, 없으면 시총을 원화로 표시합니다.</p>')
-    details = ""
-    if include_details:
-        details = ('<div class="etf-details"><h3>ETF 상세정보</h3><table class="data-table">'
-                   '<thead><tr><th class="number">No.</th><th>티커</th><th>종목명</th><th>추종지수</th><th>ETF 성격</th>'
-                   '<th>운용사</th><th class="number">AUM</th><th>설립일</th></tr></thead><tbody>')
-        for rank, row in enumerate(rows, 1):
-            details += (f'<tr><td class="number">{rank}</td><td>{h(row.get("ticker"))}</td><td>{h(row.get("name"))}</td>'
-                        f'<td>{h(row.get("etf_index"))}</td><td>{h(row.get("etf_kind"))}</td>'
-                        f'<td>{h(row.get("issuer"))}</td><td class="number">{row_size_html(dict(row, asset_type="ETF"))}</td>'
-                        f'<td>{h(inception_text(row))}</td></tr>')
-        details += ('</tbody></table><p class="notes">운용사는 미확인 시 브랜드로 추정합니다.</p></div>')
+NATIVE_SNAPSHOT = r"""() => {
+ const properties=["fontFamily","fontSize","fontWeight","fontStyle","lineHeight",
+  "letterSpacing","fontVariantNumeric","textAlign","whiteSpace","paddingTop",
+  "paddingRight","paddingBottom","paddingLeft","color","backgroundColor",
+  "borderTopWidth","borderBottomWidth","verticalAlign"];
+ const result={};
+ for(const id of ["us","kr","new","returns"]){
+  const table=document.getElementById(id);
+  result[id]=table?Array.from(table.rows).map(row=>Array.from(row.cells).map(cell=>{
+   const style=getComputedStyle(cell);
+   return {tag:cell.tagName,text:cell.textContent.trim(),
+    links:Array.from(cell.querySelectorAll("a")).map(a=>[a.textContent.trim(),a.getAttribute("href")]),
+    flags:Array.from(cell.querySelectorAll("img")).map(img=>[img.getAttribute("src"),img.alt]),
+    style:Object.fromEntries(properties.map(key=>[key,style[key]]))};
+  })):[];
+ }
+ return result;
+}"""
+
+NATIVE_CONTENT = r"""() => {
+ const result={};
+ for(const id of ["us","kr","new","returns"]){
+  const table=document.getElementById(id);
+  result[id]=table?Array.from(table.rows).map(row=>Array.from(row.cells).map(cell=>({
+   tag:cell.tagName,text:cell.textContent.trim(),
+   links:Array.from(cell.querySelectorAll("a")).map(a=>[a.textContent.trim(),a.getAttribute("href")]),
+   flags:Array.from(cell.querySelectorAll("img")).map(img=>[img.getAttribute("src"),img.alt])
+  }))):[];
+ }
+ return result;
+}"""
+
+NATIVE_FONT_CHECK = r"""() => {
+ const us=document.querySelector("#us tbody tr"),kr=document.querySelector("#kr tbody tr");
+ if(!us||!kr)return {compared:false,all_match:true,measurements:[]};
+ const properties=["fontFamily","fontSize","fontWeight","fontStyle","lineHeight","letterSpacing"];
+ const measure=element=>{
+  const style=getComputedStyle(element),span=document.createElement("span");
+  for(const key of [...properties,"fontVariantNumeric"])span.style[key]=style[key];
+  Object.assign(span.style,{position:"absolute",visibility:"hidden",whiteSpace:"nowrap",padding:"0",border:"0",margin:"0"});
+  span.textContent="Ag0123456789한국";
+  element.appendChild(span);
+  const bounds=span.getBoundingClientRect();
+  const result={style:Object.fromEntries(properties.map(key=>[key,style[key]])),
+                width:bounds.width,height:bounds.height};
+  span.remove();
+  return result;
+ };
+ const pairs=Array.from(us.cells).map((cell,index)=>[cell,kr.cells[index],index]);
+ pairs.push([us.cells[2].querySelector("a"),kr.cells[2].querySelector("a"),"ticker"]);
+ const measurements=pairs.map(([first,second,column])=>{
+  const american=measure(first),korean=measure(second);
+  const match=JSON.stringify(american.style)===JSON.stringify(korean.style)&&
+    Math.abs(american.width-korean.width)<.01&&Math.abs(american.height-korean.height)<.01;
+  return {column,us:american,kr:korean,match};
+ });
+ return {compared:true,all_match:measurements.every(value=>value.match),measurements};
+}"""
+
+
+def verify_actual_display(browser, source, delivery, expected, output):
+    """Compare native text, links and pixels with the complete accepted source."""
+    from src.email_flags import inline_flag_sources
+    document = inline_flag_sources(delivery)
+    if re.search(r"cid:us-report-|id=['\"]us-display", delivery):
+        raise AssertionError("US delivery must use native HTML text")
+    for host in ("standalone", "gmail"):
+        for width in (900, 1024, 1280, 1600, 1920):
+            original = browser.new_page(viewport={"width":width,"height":1200},device_scale_factor=1)
+            displayed = browser.new_page(viewport={"width":width,"height":1200},device_scale_factor=1)
+            try:
+                original.set_content(gmail_host_html(source) if host=="gmail" else source,wait_until="load")
+                displayed.set_content(gmail_host_html(document) if host=="gmail" else document,wait_until="load")
+                for page in (original,displayed):
+                    page.evaluate("document.fonts.ready")
+                    if page.evaluate("document.documentElement.scrollWidth>window.innerWidth+1.5"):
+                        raise AssertionError("Actual native delivery overflows the desktop window")
+                    if page.evaluate("Array.from(document.images).some(img=>!img.complete||!img.naturalWidth)"):
+                        raise AssertionError("Actual native delivery contains a broken country flag")
+                content = original.evaluate(NATIVE_CONTENT)
+                if displayed.evaluate(NATIVE_CONTENT)!=content:
+                    raise AssertionError("Native delivery changed a row, number, field, flag or ticker link")
+                actual_styles=displayed.evaluate(NATIVE_SNAPSHOT)
+                original_styles=original.evaluate(NATIVE_SNAPSHOT)
+                if actual_styles!=original_styles:
+                    mismatches=[]
+                    for table_id,rows in original_styles.items():
+                        for row_index,row in enumerate(rows):
+                            for cell_index,cell in enumerate(row):
+                                actual=actual_styles[table_id][row_index][cell_index]
+                                if actual!=cell:
+                                    mismatches.append({"table":table_id,"row":row_index,"column":cell_index,
+                                        "expected":cell,"actual":actual})
+                    print("NATIVE_STYLE_MISMATCH:"+json.dumps(mismatches[:3],ensure_ascii=False),flush=True)
+                    raise AssertionError("Native delivery changed a table font, color, padding or alignment")
+                before = Image.open(io.BytesIO(original.screenshot(full_page=True))).convert("RGB")
+                after = Image.open(io.BytesIO(displayed.screenshot(full_page=True))).convert("RGB")
+                if before.size!=after.size or before.tobytes()!=after.tobytes():
+                    raise AssertionError("Native delivery differs from the accepted layout at %dpx (%s)" % (width,host))
+                font_check = displayed.evaluate(NATIVE_FONT_CHECK)
+                if not font_check["all_match"]:
+                    raise AssertionError("Native US and Korean fonts or identical sample glyphs differ")
+                links = displayed.locator("#us tbody tr td:nth-child(3) a")
+                source_urls = original.locator("#us tbody tr td:nth-child(3) a").evaluate_all(
+                    "(links)=>links.map(link=>link.getAttribute('href'))")
+                if links.count()!=len(expected["us"]) or len(source_urls)!=len(expected["us"]):
+                    raise AssertionError("Every native US row must have its own Naver ticker link")
+                if any(not re.fullmatch(r"https://m\.stock\.naver\.com/worldstock/(?:stock|etf)/[A-Za-z0-9._-]+(?:/total)?",url)
+                       for url in source_urls):
+                    raise AssertionError("A US ticker link does not target Naver")
+                displayed.evaluate("""()=>{
+                    window.verifiedClicks=[];
+                    document.addEventListener("click",event=>{
+                        const link=event.target.closest("#us tbody td a");
+                        if(link){event.preventDefault();window.verifiedClicks.push(link.getAttribute("href"));}
+                    },true);
+                }""")
+                for index,url in enumerate(source_urls):
+                    link=links.nth(index)
+                    if link.get_attribute("href")!=url:
+                        raise AssertionError("Native US ticker links changed order")
+                    link.scroll_into_view_if_needed()
+                    bounds=link.bounding_box()
+                    displayed.mouse.click(bounds["x"]+bounds["width"]/2,bounds["y"]+bounds["height"]/2)
+                if displayed.evaluate("window.verifiedClicks")!=source_urls:
+                    raise AssertionError("A native US ticker does not open its own Naver URL")
+                print("US_LINK_CLICK_QA:"+json.dumps({"host":host,"viewport":width,
+                      "clicked":len(source_urls),"all_match":True,"native":True}),flush=True)
+                print("US_FONT_MATCH_QA:"+json.dumps({"host":host,"viewport":width,
+                      "all_match":True,"native":True,"metrics":font_check}),flush=True)
+                print("DELIVERY_DISPLAY_QA:"+json.dumps({"host":host,"viewport":width,
+                      "us":len(expected["us"]),"native":True,"pixels_identical":True,
+                      "all_rows_fields_links_preserved":True}),flush=True)
+                if host=="gmail" and width==1600:
+                    for table_id,filename,marker in (
+                        ("us","email-actual-native-us.png","PREVIEW_IMAGE_ACTUAL_DELIVERY_US"),
+                        ("kr","email-actual-native-kr.png","PREVIEW_IMAGE_ACTUAL_DELIVERY_KR"),
+                    ):
+                        cropped_table_image(displayed,table_id,output/filename,marker)
+                    if displayed.locator("#us tbody tr").count() and displayed.locator("#kr tbody tr").count():
+                        kr_rows=displayed.locator("#kr tbody tr")
+                        kr=kr_rows.nth(max(0,kr_rows.count()-3)).bounding_box()
+                        us_rows=displayed.locator("#us tbody tr")
+                        us=us_rows.nth(min(4,us_rows.count()-1)).bounding_box()
+                        section=displayed.locator("#us").bounding_box()
+                        clip={"x":section["x"],"y":kr["y"],"width":section["width"],
+                              "height":us["y"]+us["height"]-kr["y"]}
+                        png=displayed.screenshot(path=str(output/"email-native-font-comparison.png"),clip=clip)
+                        print("PREVIEW_IMAGE_NATIVE_KR_US_FONTS:"+base64.b64encode(png).decode("ascii"),flush=True)
+                # Model Gmail/browser minimum-font expansion on both native tables.
+                displayed.add_style_tag(content=""".data-table td,.data-table th,
+                    .data-table td a,.data-table td b,.data-table td i{font-size:18px!important}""")
+                expanded = displayed.evaluate(NATIVE_FONT_CHECK)
+                if not expanded["all_match"] or displayed.evaluate(NATIVE_CONTENT)!=content:
+                    raise AssertionError("Native US/Korean font expansion differs or changes report content")
+                if expanded["compared"] and any(
+                    abs(float(pair[country]["style"]["fontSize"].removesuffix("px"))-18)>.001
+                    for pair in expanded["measurements"] for country in ("us","kr")
+                ):
+                    raise AssertionError("Minimum-font simulation did not expand both native tables")
+                print("NATIVE_HIGH_FONT_QA:"+json.dumps({"host":host,"viewport":width,
+                      "font_px":18,"all_match":True,"all_rows_preserved":True}),flush=True)
+            finally:
+                original.close()
+                displayed.close()
+    return True
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--html", type=Path)
+    parser.add_argument("--manifest", type=Path)
+    parser.add_argument("--reference", type=Path)
+    parser.add_argument("--output", type=Path, default=ROOT / "work")
+    args = parser.parse_args()
+    if args.html and not args.manifest:
+        parser.error("--manifest is required with --html to verify every candidate")
+    from src.email_flags import inline_flag_sources
+    from src.main import compose_email_message
+    from src import report_inline, native_email
+    from playwright.sync_api import sync_playwright
+    args.output.mkdir(parents=True, exist_ok=True)
+    proof_path = args.output / "preview-passed.json"
+    proof_path.unlink(missing_ok=True)
+    if args.html:
+        source = args.html.read_text(encoding="utf-8")
+        expected = normalize_manifest(json.loads(args.manifest.read_text(encoding="utf-8")))
     else:
-        details = ""
-    return head + table + notes + details + "</div>"
+        source = build_preview_html()
+        data = preview_data()
+        expected = manifest_for(data)
+    size = native_email.validate_source_size(source)
+    print("PREVIEW_HTML_BYTES:%d" % size, flush=True)
+    html_source = inline_flag_sources(source)
+    gmail_source = gmail_host_html(html_source)
+    if args.reference:
+        reference = inline_flag_sources(args.reference.read_text(encoding="utf-8"))
+    elif not args.html:
+        from src.email_layout import render_email
+        reference = inline_flag_sources(render_email(**preview_data(), compact=False))
+    else:
+        parser.error("--reference is required to verify the unchanged layout")
+    reference_gmail = gmail_host_html(reference)
+    (args.output / "email-preview.html").write_text(html_source, encoding="utf-8")
+    (args.output / "email-preview-gmail.html").write_text(gmail_source, encoding="utf-8")
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        try:
+            for host, document in (("standalone", html_source), ("gmail", gmail_source)):
+                for width in (900, 1024, 1280, 1600, 1920):
+                    page = browser.new_page(
+                        viewport={"width": width, "height": 1200}, device_scale_factor=1,
+                    )
+                    try:
+                        page.set_content(document, wait_until="load")
+                        page.evaluate("document.fonts.ready")
+                        result = page.evaluate(LAYOUT_CHECK, expected)
+                        result["host"] = host
+                        print("LAYOUT_QA:%s" % json.dumps(result, ensure_ascii=False), flush=True)
+                        if result["problems"]:
+                            raise AssertionError("; ".join(result["problems"]))
+                        reference_page = browser.new_page(viewport={"width":width,"height":1200},device_scale_factor=1)
+                        try:
+                            reference_page.set_content(reference_gmail if host=="gmail" else reference,wait_until="load")
+                            reference_page.evaluate("document.fonts.ready")
+                            actual_pixels = Image.open(io.BytesIO(page.screenshot(full_page=True))).convert("RGB")
+                            original_pixels = Image.open(io.BytesIO(reference_page.screenshot(full_page=True))).convert("RGB")
+                            if actual_pixels.size != original_pixels.size or actual_pixels.tobytes() != original_pixels.tobytes():
+                                raise AssertionError("Rendered layout differs from the accepted style at %dpx (%s)" % (width,host))
+                            print("LAYOUT_IDENTICAL:%s:%d" % (host,width),flush=True)
+                        finally:
+                            reference_page.close()
+                        if host == "gmail" and width == 1600:
+                            for table_id, filename, marker in (
+                                ("returns", "email-desktop-etf.png", "PREVIEW_IMAGE_DESKTOP_ETF"),
+                                ("new", "email-desktop-new.png", "PREVIEW_IMAGE_DESKTOP_NEW"),
+                                ("us", "email-desktop-stocks.png", "PREVIEW_IMAGE_DESKTOP_STOCKS"),
+                            ):
+                                cropped_table_image(page, table_id, args.output / filename, marker)
+                    finally:
+                        page.close()
+            delivery,package=native_email.prepare(source,expected,args.output)
+            assets=native_email.verify_package(source,delivery,expected,package,args.output)
+            if assets != {}:
+                raise AssertionError("Native production delivery must not contain report PNGs")
+            wire=compose_email_message(delivery,"ATH 기본표","sender@example.test","reader@example.test",
+                                       {})
+            print("DELIVERY_HTML_BYTES:%d" % len(delivery.encode("utf-8")),flush=True)
+            print("DELIVERY_CANONICAL_BYTES:%d" % native_email.validate_delivery_size(delivery)[1],flush=True)
+            print("DELIVERY_WIRE_BYTES:%d" % len(wire.as_bytes()),flush=True)
+            print("US_NATIVE_COVERAGE:%d" % len(expected["us"]),flush=True)
+            us_font_matches_kr=verify_actual_display(browser,html_source,delivery,expected,args.output)
+        finally:
+            browser.close()
+    digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
+    proof = {
+        "sha256": digest, "body_sha256": digest, "html_bytes": size,
+        "counts": {key: len(values) for key, values in expected.items()},
+        "viewports": [900, 1024, 1280, 1600, 1920],
+        "hosts": ["standalone", "gmail"], "all_passed": True, "layout_unchanged": True,
+        "delivery_sha256":hashlib.sha256(delivery.encode("utf-8")).hexdigest(),
+        "native_package_sha256":hashlib.sha256((args.output/"native-report.json").read_bytes()).hexdigest(),
+        "delivery_checked":True,"delivery_viewports":[900,1024,1280,1600,1920],
+        "native_checked":True,"us_font_matches_kr":us_font_matches_kr,
+        "high_font_matches_kr":True,
+        "us_link_clicks":len(expected["us"]),"numbering_checked":True,
+    }
+    proof_path.write_text(json.dumps(proof, ensure_ascii=False, indent=2), encoding="utf-8")
+    print("PREVIEW_PASSED:%s" % json.dumps(proof, ensure_ascii=False), flush=True)
 
-def _stock_row(row, country, new=False, compact=False, number=1):
-    ticker = h(row.get("ticker"))
-    asset = row.get("asset_type", "주식")
-    kind = "etf" if asset == "ETF" else "stock"
-    badges = " · ".join(str(x) for x in row.get("index", []) if x not in ("US", "KR")) or "-"
-    new_badge = '<span class="new">신규</span>' if new and not compact else ""
-    cls = "new-row" if compact else "stock-row"
-    source = h(row.get("investment_area_source") or "업종 데이터")
-    cells = (f'<tr class="{cls}" data-ticker="{ticker}" data-key="{country}:{ticker}">'
-             f'<td class="number">{number}</td>'
-             f'<td class="flag-cell">{flag_icon(country)}</td>'
-             f'<td class="ticker-cell"><a href="{safe_url(row.get("url"))}">{ticker}</a>{new_badge}</td>'
-             f'<td class="name-cell"><span class="nm">{h(row.get("name"))}</span></td>'
-             f'<td><span class="asset asset-{kind}">{h(asset)}</span></td>'
-             f'<td class="number" data-field="size">{row_size_html(row)}</td>'
-             f'<td class="number" data-field="gap">{signal_pct(row.get("gap"))}</td>'
-             f'<td class="w" title="{source}">{h(industry_text(row))}</td>'
-             f'<td class="number" data-field="change">{signal_pct(row.get("change"))}</td>'
-             f'<td class="number">{h(row.get("streak", 1))}일째</td>')
-    return cells + ("" if compact else f'<td class="w">{h(badges)}</td>') + "</tr>"
-
-def _stock_head(compact=False):
-    return ('<thead><tr><th class="number">No.</th><th class="flag-cell">국가</th><th>티커</th><th>종목명</th><th>구분</th>'
-            '<th class="number">시총·AUM(원화)</th><th class="number">ATH 괴리율</th>'
-            '<th>업종·투자분야</th><th class="number">전일 등락률</th><th class="number">누적일수</th>' +
-            ("" if compact else "<th>지수</th>") + "</tr></thead><tbody>")
-
-def asset_breakdown(rows):
-    """Use the same asset classification as the security rows."""
-    etfs = sum(row.get("asset_type") == "ETF" for row in rows)
-    return f"( {len(rows) - etfs}종목 주식, {etfs}종목 ETF )"
-
-
-def security_count(rows):
-    return f"{len(rows)}종목{asset_breakdown(rows)}"
-
-
-def new_summary(new_us, new_kr, totals=None, offset=0):
-    """All new securities are a dedicated visible list, never count-only badges."""
-    total_kr, total_us = totals or (len(new_kr), len(new_us))
-    count = len(new_us) + len(new_kr)
-    overall = total_kr + total_us
-    note = (f" · 전체 {overall}개 중 {offset + 1}~{offset + count}번째" if count < overall else "")
-    kr_label = security_count(new_kr) if total_kr == len(new_kr) else f"{total_kr}종목"
-    us_label = security_count(new_us) if total_us == len(new_us) else f"{total_us}종목"
-    head = (f'<div class="section new-section" id="new-stocks" data-total="{overall}" data-shown="{count}">'
-            f'<h2>오늘의 신규 등장 · 한국 {kr_label} · 미국 {us_label}{note}</h2>'
-            '<p class="intro">직전 거래일에 없던 종목 · 누적일수는 과거 재등장을 포함합니다.</p>')
-    if not count:
-        return head + '<p class="muted">오늘의 신규 등장 종목이 없습니다.</p></div>'
-    numbered = [(country, row) for country, items in (("KR", new_kr), ("US", new_us)) for row in items]
-    rows = "".join(_stock_row(row, country, compact=True, number=number)
-                   for number, (country, row) in enumerate(numbered, offset + 1))
-    return head + '<table class="data-table new-table" id="new">' + _stock_head(True) + rows + '</tbody></table></div>'
-
-def stocks_table(stocks, title, currency, holiday, date_s, hmsg="", new_tickers=None):
-    country = "US" if currency == "USD" else "KR"
-    new_tickers = set(new_tickers or [])
-    head = (f'<div class="section stock-section"><h2>{flag_html(country)}{h(title)}</h2>'
-            f'<p class="intro">{security_count(stocks)} · 기준일 {h(date_s)} · ATH 괴리율 -10%에 가까운 순</p>')
-    banner = f'<div class="notice">{h(hmsg)}</div>' if holiday and hmsg else ""
-    if not stocks:
-        return head + banner + '<p class="muted">해당 종목 없음</p></div>'
-    table = f'<table class="data-table stock-table" id="{country.lower()}">' + _stock_head()
-    table += "".join(_stock_row(row, country, row.get("ticker") in new_tickers, number=number)
-                     for number, row in enumerate(stocks, 1))
-    return head + banner + table + '</tbody></table></div>'
-
-def _summary(us, kr, info, indices):
-    def value(key):
-        v = indices.get(key)
-        return f"{v:,.1f}" if v else "-"
-    return ('<div class="summary"><table role="presentation" class="layout"><tr><td>'
-            f'<div class="market">{flag_html("KR")}한국 <span class="count">{len(kr)}<span style="font-size:15.6px">종목</span></span><span style="font-size:15.6px">{asset_breakdown(kr)}</span></div>'
-            f'<div class="muted">KOSPI {value("kospi")} {pct(indices.get("kospi_chg"))}<br>{h(info.get("kr_last_str"))}</div>'
-            '</td><td>'
-            f'<div class="market">{flag_html("US")}미국 <span class="count">{len(us)}<span style="font-size:15.6px">종목</span></span><span style="font-size:15.6px">{asset_breakdown(us)}</span></div>'
-            f'<div class="muted">S&amp;P 500 {value("sp500")} {pct(indices.get("sp500_chg"))}<br>{h(info.get("us_last_str"))}</div>'
-            '</td></tr></table></div>')
-
-def render_email(us, kr, info, usd_krw, new_us=None, new_kr=None, diag=None,
-                 indices=None, etf_info=None, compact=True):
-    """Render every candidate with the existing desktop layout."""
-    new_us, new_kr = new_us or [], new_kr or []
-    indices, etf_info = indices or {}, etf_info or {}
-    date_label = datetime.now(pytz.timezone("Asia/Seoul")).strftime("%Y.%m.%d")
-    styles = "".join(line.strip() for line in CSS.splitlines())
-    header = ('<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8">'
-              '<meta name="viewport" content="width=device-width,initial-scale=1">'
-              f'<style>{styles}</style></head><body>'
-              '<div class="shell"><div class="hero">'
-              f'<h1>오늘의 ATH &amp; ETF</h1><div class="date">{date_label} · 일일 시장 리포트</div>'
-              f'<div class="foot">All Time High −10% 이내 · 원/달러 {usd_krw:,.0f}원</div></div>')
-    html = (header + _summary(us, kr, info, indices) + new_summary(new_us, new_kr)
-            + etf_section_html(etf_info, include_details=False)
-            + '<p class="notes">업종·투자분야: 주식은 기업 업종, ETF는 제공업체 분류를 표시합니다. 분류가 없으면 명칭 기준으로 표시합니다.</p>'
-            + stocks_table(kr, "한국 ATH 후보", "KRW", info.get("kr_holiday", False),
-                           info.get("kr_last_str", "-"), info.get("kr_holiday_msg", ""),
-                           [s.get("ticker") for s in new_kr])
-            + stocks_table(us, "미국 ATH 후보", "USD", info.get("us_holiday", False),
-                           info.get("us_last_str", "-"), info.get("us_holiday_msg", ""),
-                           [s.get("ticker") for s in new_us])
-            + '<div class="footer">일일 ATH 리포트 · 가격 이력 기준 · 투자 권유 아님</div></div></body></html>')
-    return delivery_html(html, compact=compact)
-
-
-
-def delivery_html(source, compact=True):
-    """Reduce invisible markup while preserving the restored table alignment."""
-    from bs4 import BeautifulSoup
-    doc = BeautifulSoup(source, "html5lib")
-    aliases = {"number":"n", "flag-cell":"f", "ticker-cell":"t",
-               "one-year":"y", "date-cell":"d",
-               "asset-etf":"e", "asset-stock":"s"}
-    for table in doc.select("table.data-table"):
-        for rank, row in enumerate(table.select("tbody tr")):
-            row.attrs = {"class":["z"]} if rank % 2 else {}
-            for cell in row.find_all("td", recursive=False):
-                cell.attrs = {"class":cell.get("class", [])} if cell.get("class") else {}
-                metric = cell.find("div", class_="metric")
-                if metric:
-                    period = metric.get("data-period")
-                    value = metric.find("strong").find("span")
-                    replacement = doc.new_tag("b")
-                    replacement.string = value.get_text()
-                    replacement["class"] = ["m"]
-                    if period in ("1y","3y","5y","10y"):
-                        period_class = {"1y":"p1","3y":"p3","5y":"p5","10y":"p10"}[period]
-                        cell["class"] = cell.get("class", []) + [period_class]
-                    else:
-                        replacement["class"] += value.get("class", [])
-                    metric.replace_with(replacement)
-                signal = cell.find("span", class_="signal-red")
-                if signal:
-                    cell["class"] = cell.get("class", []) + ["r"]
-                    signal.unwrap()
-                for badge in cell.select("span.asset"):
-                    badge.name = "b"
-                for picture in cell.select("img"):
-                    picture.attrs = {"src":picture["src"],"alt":picture.get("alt","")}
-    for tag in doc.find_all():
-        for key in list(tag.attrs):
-            if key.startswith("data-") or key == "title":
-                del tag.attrs[key]
-        if tag.get("class"):
-            tag["class"] = [aliases.get(cls, cls) for cls in tag["class"] if cls not in ("name-cell", "etf-table")]
-            if not tag["class"]:
-                del tag["class"]
-    result = str(doc)
-    result = re.sub(r">\s+<", "><", result).strip()
-    return compact_transport_html(result) if compact else result
-
-
-def compact_transport_html(source):
-    """Omit only HTML5-optional syntax; the rendered table DOM is unchanged."""
-    # These selector aliases apply the very same declarations to shorter
-    # class lists. The uncompressed reference is pixel-compared before SMTP.
-    result = source.replace(".asset{", ".asset,.e,.s{", 1)
-    result = result.replace(".data-table .n{", ".data-table .n,.data-table .r{", 1)
-    result = result.replace('class="asset e"', 'class="e"').replace('class="asset s"', 'class="s"')
-    result = result.replace('class="n r"', 'class="r"')
-    # Every table link is a ticker; inherit the identical bold style directly.
-    result = result.replace(".data-table .t{", ".data-table .t,.data-table a{", 1)
-    result = result.replace(' class="t"', "")
-    # The two badge elements carry the same visual rules without per-row classes.
-    result = result.replace(".asset,.e,.s{", ".asset,.e,.s,.stock-table b,.stock-table i,.new-table b,.new-table i{", 1)
-    result = result.replace(".s{", ".s,.stock-table b,.new-table b{", 1)
-    result = result.replace(".e{", ".e,.stock-table i,.new-table i{", 1)
-    result = result.replace("</style>", ".stock-table i,.new-table i{font-style:normal}</style>", 1)
-    result = re.sub(r'<b class="s">(.*?)</b>', r'<b>\1</b>', result)
-    result = re.sub(r'<b class="e">(.*?)</b>', r'<i>\1</i>', result)
-    # Country flags repeat the country heading in these single-country tables.
-    # Keep them decorative there and label the table; mixed tables retain alt.
-    for country, label in (("us", "미국 종목"), ("kr", "한국 종목")):
-        pattern = r'(<table\b[^>]*\bid="' + country + r'"[^>]*>)(.*?)(</table>)'
-        def country_table(match):
-            head = match.group(1).replace(">", ' aria-label="' + label + '">', 1)
-            rows = re.sub(r'\s+alt="[^"]*"', "", match.group(2))
-            return head + rows + match.group(3)
-        result = re.sub(pattern, country_table, result, flags=re.DOTALL)
-    result = re.sub(r"</td>(?=<(?:td|th|/tr))", "", result)
-    result = re.sub(r"</th>(?=<(?:td|th|/tr))", "", result)
-    result = re.sub(r"</tr>(?=<(?:tr|/thead|/tbody|/tfoot))", "", result)
-    result = re.sub(r'="([A-Za-z0-9_:/.,?&;%#+~-]+)"', r"=\1", result)
-    result = re.sub(r"(<(?:img|meta|br)\b[^>]*?)/>", r"\1>", result)
-    # 8BITMIME preserves UTF-8 without Base64 expansion. Keep SMTP lines
-    # below 998 octets using whitespace at block boundaries only.
-    result = re.sub(r"(<style[^>]*>)(.*?)(</style>)",
-                    lambda match: match.group(1) + match.group(2).replace("}", "}\n") + match.group(3),
-                    result, flags=re.DOTALL)
-    # Whitespace inside opening tags is invisible even when td end tags are omitted.
-    result = re.sub(r"<(tr|table|thead|tbody|div|p|h1|h2|style|br)(?=[\s>])", r"<\1\n", result)
-    if max((len(line.encode("utf-8")) for line in result.splitlines()), default=0) > 998:
-        raise RuntimeError("HTML exceeds the SMTP line limit; compact markup without removing candidates")
-    return result
-
-def inventory(source):
-    """Read real table contents with the HTML5 parser, not debug attributes."""
-    from bs4 import BeautifulSoup
-    doc = BeautifulSoup(source, "html5lib")
-    def tickers(table_id, column):
-        table = doc.find("table", id=table_id)
-        result = []
-        if table:
-            for row in table.select("tbody tr"):
-                cells = row.find_all("td", recursive=False)
-                if len(cells) <= column:
-                    raise RuntimeError("Malformed report row: " + table_id)
-                anchor = cells[column].find("a")
-                result.append(str(anchor.contents[0]) if anchor else cells[column].get_text(strip=True))
-        return result
-    result = {"us": tickers("us", 2), "kr": tickers("kr", 2),
-              "etf": tickers("returns", 2), "new": []}
-    table = doc.find("table", id="new")
-    if table:
-        for row in table.select("tbody tr"):
-            cells = row.find_all("td", recursive=False)
-            country = "US" if cells[1].find("img")["src"] == "cid:u" else "KR"
-            result["new"].append(country + ":" + str(cells[2].find("a").contents[0]))
-    return result
-
-
-def validate_inventory(source, expected):
-    actual = inventory(source)
-    if actual != expected:
-        raise RuntimeError("Email tables do not exactly match collected candidates")
-    return actual
-
-
-MAX_EMAIL_BYTES = MAX_BODY_BYTES
-
-def validate_size(source):
-    size = len(source.encode("utf-8"))
-    if size > MAX_EMAIL_BYTES:
-        raise RuntimeError(f"Email HTML {size:,} bytes exceeds {MAX_EMAIL_BYTES:,}; compact markup before sending, never remove candidates")
-    return size
-
+if __name__ == "__main__":
+    main()
 
