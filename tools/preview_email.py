@@ -531,12 +531,18 @@ def verify_actual_display(browser, source, delivery, expected, output):
                         cropped_table_image(displayed,table_id,output/filename,marker)
                     if displayed.locator("#us tbody tr").count() and displayed.locator("#kr tbody tr").count():
                         kr_rows=displayed.locator("#kr tbody tr")
-                        kr=kr_rows.nth(max(0,kr_rows.count()-3)).bounding_box()
+                        first_comparison_row=kr_rows.nth(max(0,kr_rows.count()-3))
+                        first_comparison_row.evaluate("element=>element.scrollIntoView({block:'start'})")
+                        kr=first_comparison_row.bounding_box()
                         us_rows=displayed.locator("#us tbody tr")
                         us=us_rows.nth(min(4,us_rows.count()-1)).bounding_box()
                         section=displayed.locator("#us").bounding_box()
-                        clip={"x":section["x"],"y":kr["y"],"width":section["width"],
-                              "height":us["y"]+us["height"]-kr["y"]}
+                        viewport=displayed.viewport_size
+                        clip={"x":max(0,section["x"]),"y":max(0,kr["y"]),
+                              "width":min(section["width"],viewport["width"]-max(0,section["x"])),
+                              "height":min(us["y"]+us["height"],viewport["height"])-max(0,kr["y"])}
+                        if clip["width"]<=0 or clip["height"]<=0:
+                            raise AssertionError("Native font comparison target lies outside the viewport")
                         png=displayed.screenshot(path=str(output/"email-native-font-comparison.png"),clip=clip)
                         print("PREVIEW_IMAGE_NATIVE_KR_US_FONTS:"+base64.b64encode(png).decode("ascii"),flush=True)
                 # Model Gmail/browser minimum-font expansion on both native tables.
