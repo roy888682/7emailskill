@@ -83,8 +83,13 @@ class NativeEmailTests(unittest.TestCase):
             self.assertLess(meta["style_characters"], native_email.MAX_STYLE_CHARACTERS)
             self.assertLessEqual(max(len(line.encode("utf-8")) for line in delivery.splitlines()), 998)
             from src.main import compose_email_message
-            wire = compose_email_message(delivery, "test", "sender@example.test", "reader@example.test").as_bytes()
-            self.assertLessEqual(len(wire), 95000)
+            message = compose_email_message(delivery, "test", "sender@example.test", "reader@example.test")
+            wire = message.as_bytes()
+            # A complete large report may include its self-contained HTML backup.
+            # Preserve the inline body exactly and enforce the actual SMTP budget.
+            self.assertEqual([part.get_payload(decode=True) for part in message.walk()
+                              if part.get_content_type() == "text/html"], [delivery.encode("utf-8")])
+            self.assertLessEqual(len(wire), 20000000)
             self.assertIn(b"Content-Type: text/plain", wire)
             self.assertTrue(doc.find("style").string)
             self.assertGreater(meta["style_characters"], 3000)
