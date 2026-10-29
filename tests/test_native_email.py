@@ -50,12 +50,27 @@ class NativeEmailTests(unittest.TestCase):
                 self.assertEqual(validate_etf_date_proof(html, manifest, proof), proof["market_dates"])
                 for row in BeautifulSoup(html, "html5lib").select("#returns tbody tr"):
                     cells = row.find_all("td", recursive=False)
-                    self.assertEqual(len(cells), 17)
-                    self.assertEqual(cells[16].get_text(), "26-10-07")
-                    self.assertIn("2026-10-07", cells[16]["title"])
+                    self.assertEqual(len(cells), 18)
+                    self.assertEqual(cells[17].get_text(), "26-10-07")
+                    self.assertIn("2026-10-07", cells[17]["title"])
             original = BeautifulSoup(source, "html5lib").select_one("#etf-market-dates")
             delivered = BeautifulSoup(delivery, "html5lib").select_one("#etf-market-dates")
             self.assertEqual(str(delivered), str(original))
+
+    def test_native_css_centers_the_two_date_columns_and_aligns_ytd_numbers(self):
+        css = native_email._column_css()
+        for column in (16, 18):
+            self.assertIn(native_email._selectors((".v",), column) +
+                          "{text-align:center;font-variant-numeric:normal;font-size:12.35px}", css)
+        self.assertIn(native_email._selectors((".v",), 6) +
+                      "{text-align:right;font-variant-numeric:tabular-nums}", css)
+        source, expected = fixture(3)
+        with tempfile.TemporaryDirectory() as directory:
+            delivery, meta = native_email.prepare(source, expected, directory)
+            self.assertEqual(native_email.verify_package(source, delivery, expected, meta, directory), {})
+            headings = [cell.get_text() for cell in BeautifulSoup(delivery, "html5lib").select("#returns thead th")]
+            self.assertEqual(headings[5:10], ["연초", "1년", "3년", "5년", "10년"])
+            self.assertEqual(headings[13], "연평균")
 
     def test_colgroup_widths_remain_exact_across_html5_transport_roundtrips(self):
         source = ('<table><colgroup><col style="width:3%"/>'
@@ -122,7 +137,7 @@ class NativeEmailTests(unittest.TestCase):
                 rows = doc.select("#" + table_id + " tbody tr")
                 self.assertEqual([row.find("td").get_text(strip=True) for row in rows],
                                  [str(number) for number in range(1, count + 1)])
-            prices = doc.select_one("#returns tbody tr").find_all("td", recursive=False)[10:12]
+            prices = doc.select_one("#returns tbody tr").find_all("td", recursive=False)[11:13]
             for cell, displayed, exact in zip(prices, ("0", "123,456"),
                                               ("1.23456789012e-05", "123456.987654")):
                 self.assertEqual(cell.get_text(), displayed)
@@ -212,4 +227,3 @@ class NativeEmailTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

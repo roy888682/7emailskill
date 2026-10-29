@@ -252,33 +252,64 @@ def get_trading_info():
 # 첫 응답 구조를 로그([진단ETF])로 남김. 못 찾으면 "-" 또는 대체값(브랜드→운용사,
 # 최초 거래일→설립일)으로 채움.
 
+ETF_PERIOD_FIELDS = {"ytd": "return_ytd", "1y": "return1y", "3y": "return3y",
+                     "5y": "return5y", "10y": "return10y"}
+
+
+def _etf_period_targets(end):
+    """Use each ETF's actual last observation, including honest stale-date fallback."""
+    targets = {"ytd": date(end.year - 1, 12, 31)}
+    for years in (1, 3, 5, 10):
+        try:
+            targets[f"{years}y"] = end.replace(year=end.year - years)
+        except ValueError:  # February 29 has no counterpart in a non-leap year.
+            targets[f"{years}y"] = end.replace(year=end.year - years, day=28)
+    return targets
+
+
+def _etf_period_returns(dates, closes):
+    """Exact cumulative-return evidence; holidays use the last preceding close."""
+    result = {key: None for key in ETF_PERIOD_FIELDS}
+    if not dates or len(dates) != len(closes) or len(dates) < 2:
+        return result
+    end = dates[-1]
+    for key, target in _etf_period_targets(end).items():
+        index = bisect.bisect_right(dates, target) - 1
+        if index < 0:
+            continue  # An inception-year return must never be relabelled as YTD.
+        try:
+            start_price, end_price = float(closes[index]), float(closes[-1])
+            if (isinstance(closes[index], bool) or isinstance(closes[-1], bool)
+                    or not math.isfinite(start_price) or not math.isfinite(end_price)
+                    or start_price <= 0 or end_price <= 0):
+                continue
+            value = (end_price / start_price - 1) * 100
+            if not math.isfinite(value):
+                continue
+        except (TypeError, ValueError, OverflowError):
+            continue
+        result[key] = {"target_date": target.isoformat(), "start_date": dates[index].isoformat(),
+                       "end_date": end.isoformat(), "start_price": start_price,
+                       "end_price": end_price, "return_pct": value}
+    return result
+
+
 def _calc_perf(dates, closes):
-    """(1년·3년·5년·10년 CAGR%, 최초 거래일부터의 누적수익률%, 최초거래일)."""
+    """(1/3/5/10-year cumulative %, full cumulative %, first observation)."""
     if not dates or len(dates) != len(closes) or len(closes) < 2:
         return None, None, None, None, None, None
-    last_d, last_p = dates[-1], closes[-1]
-
-    def cagr(years):
-        try:
-            target = last_d.replace(year=last_d.year - years)
-        except ValueError:  # 2월 29일의 과거 기준 연도가 평년이면 2월 28일 사용
-            target = last_d.replace(year=last_d.year - years, day=28)
-        i = bisect.bisect_right(dates, target) - 1
-        if i < 0:
-            return None
-        start_p = closes[i]  # 기준일이 휴장이면 직전 거래일 종가
-        if (not math.isfinite(last_p) or not math.isfinite(start_p)
-                or last_p <= 0 or start_p <= 0):
-            return None
-        return round(((last_p / start_p) ** (1 / years) - 1) * 100, 1)
-
-    first_p = closes[0]
+    periods = _etf_period_returns(dates, closes)
+    recent = [round(periods[key]["return_pct"], 1) if periods[key] is not None else None
+              for key in ("1y", "3y", "5y", "10y")]
     cumulative = None
-    if (math.isfinite(last_p) and math.isfinite(first_p)
-            and last_p > 0 and first_p > 0):
-        cumulative = round((last_p / first_p - 1) * 100, 1)
-
-    return cagr(1), cagr(3), cagr(5), cagr(10), cumulative, dates[0]
+    try:
+        first_p, last_p = float(closes[0]), float(closes[-1])
+        if (not isinstance(closes[0], bool) and not isinstance(closes[-1], bool)
+                and math.isfinite(first_p) and math.isfinite(last_p) and first_p > 0 and last_p > 0):
+            cumulative = round((last_p / first_p - 1) * 100, 1)
+    except (TypeError, ValueError, OverflowError):
+        pass
+    return (*recent, cumulative, dates[0])
 
 
 US_ETF_VERIFIED_LAUNCH = {
@@ -305,7 +336,8 @@ def _etf_price_performance(dates, closes, *, price_basis=None, price_currency=No
                  if cutoff is not None and _performance_date(d) is not None
                  and _performance_date(d) >= cutoff]
         dates, closes = ([d for d, _ in pairs], [p for _, p in pairs])
-    c1, c3, c5, c10, cumulative, first = _calc_perf(dates, closes)
+    r1, r3, r5, r10, cumulative, first = _calc_perf(dates, closes)
+    periods = _etf_period_returns(dates, closes)
     growth = first_p = last_p = None
     if first is not None:
         try:
@@ -317,7 +349,9 @@ def _etf_price_performance(dates, closes, *, price_basis=None, price_currency=No
             pass
     first_date = first.isoformat() if first is not None else None
     last_date = dates[-1].isoformat() if first is not None else None
-    return {"cagr1y": c1, "cagr3y": c3, "cagr5y": c5, "cagr10y": c10,
+    return {"return_ytd": round(periods["ytd"]["return_pct"], 1) if periods["ytd"] else None,
+            "return1y": r1, "return3y": r3, "return5y": r5, "return10y": r10,
+            "period_returns": periods,
             "cumulative_return": cumulative, "cumulative_growth": growth,
             "first_date": first_date, "last_date": last_date,
             "initial_adjusted_price": first_p, "latest_adjusted_price": last_p,
@@ -411,9 +445,50 @@ def _etf_lifetime_metrics(item):
 
 
 ETF_CALCULATION_FIELDS = (
-    "cagr1y", "cagr3y", "cagr5y", "cagr10y", "cumulative_return", "cumulative_growth",
+    "return_ytd", "return1y", "return3y", "return5y", "return10y", "cumulative_return", "cumulative_growth",
     "lifetime_cagr", "lifetime_years", "first_date", "last_date", "price_start_date", "price_end_date",
     "return_as_of", "initial_adjusted_price", "latest_adjusted_price", "price", "change", "gap")
+
+
+def _etf_period_return_error(item, start, end):
+    """Reject annualized/mismatched period values before preparing or sending mail."""
+    periods = item.get("period_returns")
+    if not isinstance(periods, dict) or set(periods) != set(ETF_PERIOD_FIELDS):
+        return "cumulative period-return evidence is missing or incomplete"
+    if item.get("date_status") == "unavailable":
+        return ("unavailable ETF contains a claimed period return" if
+                any(value is not None for value in periods.values()) else None)
+    for key, target in _etf_period_targets(end).items():
+        field, evidence = ETF_PERIOD_FIELDS[key], periods[key]
+        if target < start:
+            if evidence is not None or item.get(field) is not None:
+                return f"{field} claims a period before the first available observation"
+            continue
+        if not isinstance(evidence, dict) or set(evidence) != {
+                "target_date", "start_date", "end_date", "start_price", "end_price", "return_pct"}:
+            return f"{field} cumulative-return price evidence is incomplete"
+        baseline = _performance_date(evidence.get("start_date"))
+        if (evidence.get("target_date") != target.isoformat()
+                or baseline is None or not start <= baseline <= target
+                or evidence.get("end_date") != end.isoformat()):
+            return f"{field} price dates contradict its actual return period"
+        try:
+            values = [evidence.get("start_price"), evidence.get("end_price"), evidence.get("return_pct")]
+            if any(isinstance(value, bool) or not math.isfinite(float(value)) for value in values):
+                return f"{field} evidence prices or return are invalid"
+            initial, latest, claimed = map(float, values)
+            if initial <= 0 or latest <= 0 or latest != float(item["latest_adjusted_price"]):
+                return f"{field} evidence prices contradict the actual latest price"
+            if baseline == start and initial != float(item["initial_adjusted_price"]):
+                return f"{field} evidence contradicts the actual initial price"
+            actual = (latest / initial - 1) * 100
+            if not math.isclose(claimed, actual, rel_tol=1e-12, abs_tol=1e-10):
+                return f"{field} must be a cumulative return, without annualization"
+            if isinstance(item.get(field), bool) or item.get(field) != round(actual, 1):
+                return f"{field} displayed cumulative return contradicts its exact prices"
+        except (TypeError, ValueError, OverflowError):
+            return f"{field} cumulative-return price evidence is invalid"
+    return None
 
 
 def _etf_market_date_error(item, anchor, country):
@@ -425,7 +500,7 @@ def _etf_market_date_error(item, anchor, country):
     if item.get("date_status") == "unavailable":
         if any(item.get(key) is not None for key in ETF_CALCULATION_FIELDS):
             return "unavailable ETF contains a claimed price, calculation, or observation date"
-        return None
+        return _etf_period_return_error(item, None, None)
     end = _performance_date(item.get("price_end_date"))
     start = _performance_date(item.get("price_start_date"))
     if end is None or end > anchor:
@@ -452,7 +527,7 @@ def _etf_market_date_error(item, anchor, country):
         return "price currency does not match its market"
     if _etf_lifetime_metrics(item) is None:
         return "the complete observed price interval cannot be annualized"
-    return None
+    return _etf_period_return_error(item, start, end)
 
 
 def validate_etf_market_dates(us, kr, info):
@@ -461,7 +536,7 @@ def validate_etf_market_dates(us, kr, info):
                "KR": _performance_date(info.get("kr_last"))}
     audit, errors, seen = [], [], set()
     keys = ("inception", "inception_source", "inception_verified", "inception_label",
-            "cagr1y", "cagr3y", "cagr5y", "cagr10y", "cumulative_return",
+            "return_ytd", "return1y", "return3y", "return5y", "return10y", "period_returns", "cumulative_return",
             "cumulative_growth", "lifetime_cagr", "lifetime_years", "return_as_of",
             "initial_adjusted_price", "latest_adjusted_price", "price_basis", "price_currency",
             "price", "change", "gap")
@@ -498,7 +573,7 @@ def validate_etf_market_dates(us, kr, info):
             status_counts[status] += 1
     if errors:
         raise RuntimeError("ETF market-date validation failed: " + "; ".join(errors))
-    return {"version": 2,
+    return {"version": 3,
             "market_dates": {country: value.isoformat() if value else None for country, value in anchors.items()},
             "etfs": audit, "counts": counts, "status_counts": status_counts}
 
@@ -610,6 +685,7 @@ def synchronize_etf_market_dates(us, kr, info, attempts=2):
             if error:
                 for key in ETF_CALCULATION_FIELDS:
                     item[key] = None
+                item["period_returns"] = {key: None for key in ETF_PERIOD_FIELDS}
                 item.pop("price_history_inception_mismatch", None)
                 item["date_status"] = "unavailable"
                 log.warning("ETF 수익률 계산불가: %s:%s · 후보 유지 · %s", country, item.get("ticker"), error)
@@ -647,6 +723,7 @@ def verify_prepared_market_dates(html, manifest, directory, preview_proof):
     proof_bytes = (Path(directory) / "market-date-proof.json").read_bytes()
     date_proof = json.loads(proof_bytes)
     if (preview_proof.get("market_dates_checked") is not True
+            or preview_proof.get("period_returns_checked") is not True
             or preview_proof.get("market_dates_sha256") != hashlib.sha256(proof_bytes).hexdigest()):
         raise RuntimeError("ETF market-date browser proof is missing or changed")
     records = date_proof.get("etfs")
@@ -1660,7 +1737,7 @@ def main(prepare_only=False):
             keys = ("inception", "inception_label", "inception_source", "inception_verified",
                     "requested_market_date", "date_status", "return_as_of",
                     "price_start_date", "price_end_date", "initial_adjusted_price", "latest_adjusted_price",
-                    "cagr5y", "cagr10y", "cumulative_return", "lifetime_years", "lifetime_cagr",
+                    "return_ytd", "return5y", "return10y", "period_returns", "cumulative_return", "lifetime_years", "lifetime_cagr",
                     "price_basis", "price_currency")
             log.info("ETF 가격 검증 DFAC: %s", json.dumps({key: audited.get(key) for key in keys}, ensure_ascii=False))
 
@@ -1745,4 +1822,3 @@ if __name__ == "__main__":
         send_prepared()
     else:
         main(prepare_only=args.prepare_only)
-

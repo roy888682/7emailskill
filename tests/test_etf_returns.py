@@ -1,22 +1,59 @@
-"""Regression tests for ETF CAGR, lifetime returns, ranking, and email columns."""
+"""Regression tests for cumulative ETF periods, lifetime CAGR, and email columns."""
 import re
 import unittest
 from datetime import date, datetime, time
 from unittest.mock import patch
 from types import SimpleNamespace
 
-from src.main import (_calc_perf, _etf_price_performance, _etf_lifetime_metrics,
+from src.main import (_calc_perf, _etf_period_returns, _etf_price_performance, _etf_lifetime_metrics,
                       _validated_etf_metadata, _kr_etf_adjusted_performance,
                       build_etf_info, etf_section_html)
 
 
 class EtfReturnTests(unittest.TestCase):
-    def test_compound_returns_for_all_four_periods(self):
+    def test_actual_mags_quotes_show_three_year_cumulative_not_cagr(self):
+        # Quotes independently retrieved in Actions audit 40840310186.
+        dates = [date(2023, 4, 11), date(2023, 10, 27), date(2025, 10, 28), date(2026, 10, 28)]
+        prices = [23.82028579711914, 27.777029037475586, 67.3808364868164, 71.26000213623047]
+        perf = _etf_price_performance(dates, prices)
+        self.assertEqual(perf["return3y"], 156.5)
+        self.assertEqual(perf["return1y"], 5.8)
+        self.assertEqual(perf["cumulative_return"], 199.2)
+        evidence = perf["period_returns"]["3y"]
+        self.assertEqual(evidence["target_date"], "2023-10-28")
+        self.assertEqual(evidence["start_date"], "2023-10-27")
+        self.assertAlmostEqual(evidence["return_pct"], 156.54292271534695)
+        self.assertNotEqual(perf["return3y"], round(((prices[-1] / prices[1]) ** (1 / 3) - 1) * 100, 1))
+
+    def test_ytd_uses_preceding_year_close_and_preserves_exact_price_evidence(self):
+        dates = [date(2024, 12, 31), date(2025, 12, 30), date(2026, 1, 2), date(2026, 10, 28)]
+        prices = [80.0, 100.123456789, 110.0, 125.987654321]
+        perf = _etf_price_performance(dates, prices)
+        self.assertEqual(perf["return_ytd"], round((prices[-1] / prices[1] - 1) * 100, 1))
+        evidence = perf["period_returns"]["ytd"]
+        self.assertEqual(evidence["target_date"], "2025-12-31")
+        self.assertEqual(evidence["start_date"], "2025-12-30")
+        self.assertEqual(evidence["end_date"], "2026-10-28")
+        self.assertEqual((evidence["start_price"], evidence["end_price"]), (prices[1], prices[-1]))
+
+    def test_ytd_does_not_substitute_inception_or_first_new_year_quote(self):
+        perf = _etf_price_performance([date(2026, 1, 2), date(2026, 10, 28)], [100, 150])
+        self.assertIsNone(perf["return_ytd"])
+        self.assertIsNone(perf["period_returns"]["ytd"])
+        self.assertEqual(perf["cumulative_return"], 50.0)
+
+    def test_stale_quote_near_year_boundary_uses_its_own_calendar_year(self):
+        periods = _etf_period_returns([date(2024, 12, 30), date(2025, 12, 30)], [100, 120])
+        self.assertEqual(periods["ytd"]["target_date"], "2024-12-31")
+        self.assertEqual(periods["ytd"]["end_date"], "2025-12-30")
+        self.assertEqual(periods["ytd"]["return_pct"], (120 / 100 - 1) * 100)
+
+    def test_cumulative_returns_for_all_four_periods(self):
         dates = [date(2016, 10, 7), date(2021, 10, 7), date(2023, 10, 7),
                  date(2025, 10, 7), date(2026, 10, 7)]
         closes = [100, 161.051, 194.87171, 235.7947691, 259.37424601]
         self.assertEqual(_calc_perf(dates, closes),
-                         (10.0, 10.0, 10.0, 10.0, 159.4, dates[0]))
+                         (10.0, 33.1, 61.1, 159.4, 159.4, dates[0]))
 
     def test_exact_one_year_history_is_eligible(self):
         dates = [date(2025, 10, 7), date(2026, 10, 7)]
@@ -26,13 +63,13 @@ class EtfReturnTests(unittest.TestCase):
     def test_exact_three_year_history_without_longer_periods(self):
         dates = [date(2023, 10, 7), date(2025, 10, 7), date(2026, 10, 7)]
         self.assertEqual(_calc_perf(dates, [100, 121, 133.1]),
-                         (10.0, 10.0, None, None, 33.1, dates[0]))
+                         (10.0, 33.1, None, None, 33.1, dates[0]))
 
     def test_exact_five_year_history_without_ten_year_history(self):
         dates = [date(2021, 10, 7), date(2023, 10, 7),
                  date(2025, 10, 7), date(2026, 10, 7)]
         self.assertEqual(_calc_perf(dates, [100, 121, 146.41, 161.051]),
-                         (10.0, 10.0, 10.0, None, 61.1, dates[0]))
+                         (10.0, 33.1, 61.1, None, 61.1, dates[0]))
 
     def test_history_under_one_year_still_has_cumulative_return(self):
         dates = [date(2026, 1, 1), date(2026, 10, 7)]
@@ -53,7 +90,7 @@ class EtfReturnTests(unittest.TestCase):
     def test_three_year_leap_day_anniversary(self):
         dates = [date(2021, 2, 28), date(2023, 2, 28), date(2024, 2, 29)]
         self.assertEqual(_calc_perf(dates, [100, 121, 133.1]),
-                         (10.0, 10.0, None, None, 33.1, dates[0]))
+                         (10.0, 33.1, None, None, 33.1, dates[0]))
 
     def test_invalid_or_missing_histories(self):
         for dates, closes in [([], []), ([date(2026, 1, 1)], [100]),
@@ -75,7 +112,7 @@ class EtfReturnTests(unittest.TestCase):
                  date(2025, 10, 7), date(2026, 10, 7)]
         closes = [0, 100, 121, 146.41, 161.051]
         self.assertEqual(_calc_perf(dates, closes),
-                         (10.0, 10.0, 10.0, None, None, dates[0]))
+                         (10.0, 33.1, 61.1, None, None, dates[0]))
 
     def test_zero_and_negative_returns_are_valid(self):
         dates = [date(2025, 10, 7), date(2026, 10, 7)]
@@ -87,7 +124,7 @@ class EtfReturnTests(unittest.TestCase):
     def test_cumulative_return_is_not_annualized(self):
         dates = [date(2016, 10, 7), date(2025, 10, 7), date(2026, 10, 7)]
         result = _calc_perf(dates, [100, 200, 200])
-        self.assertEqual(result[3], 7.2)
+        self.assertEqual(result[3], 100.0)
         self.assertEqual(result[4], 100.0)
 
 
@@ -99,16 +136,16 @@ class EtfRankingAndHtmlTests(unittest.TestCase):
 
     def test_lifetime_descending_ranking_ignores_one_year_return(self):
         us = [
-            self.dated_etf("US_LOW", 10.0, cagr1y=40.0),
-            self.dated_etf("US_HIGH", 100.0, cagr1y=-5.0),
-            {"ticker": "STOCK", "asset_type": "주식", "cagr1y": 999},
+            self.dated_etf("US_LOW", 10.0, return1y=40.0),
+            self.dated_etf("US_HIGH", 100.0, return1y=-5.0),
+            {"ticker": "STOCK", "asset_type": "주식", "return1y": 999},
         ]
         kr = [
-            self.dated_etf("KR_MID", 50.0, cagr1y=999.0),
-            self.dated_etf("KR_ZERO", 0.0, cagr1y=15.0),
-            self.dated_etf("KR_NEW", 20.0, cagr1y=None,
+            self.dated_etf("KR_MID", 50.0, return1y=999.0),
+            self.dated_etf("KR_ZERO", 0.0, return1y=15.0),
+            self.dated_etf("KR_NEW", 20.0, return1y=None,
                            inception="2025-07-01", first_date="2025-07-01"),
-            self.dated_etf("KR_MISSING", None, cagr1y=1000.0),
+            self.dated_etf("KR_MISSING", None, return1y=1000.0),
         ]
         info = build_etf_info(us, kr)
         self.assertEqual([s["ticker"] for s in info["rows"]],
@@ -123,35 +160,35 @@ class EtfRankingAndHtmlTests(unittest.TestCase):
         self.assertEqual([s["ticker"] for s in info["rows"]], list(map(str, range(124, 24, -1))))
         self.assertEqual((info["pool"], info["with_ret"]), (125, 125))
 
-    def test_comparison_shows_all_six_return_metrics_in_order(self):
+    def test_comparison_shows_all_seven_return_metrics_in_order(self):
         row = {"ticker": "ETF", "name": "Example ETF", "market": "US",
-               "cagr1y": 12.3, "cagr3y": 9.1, "cagr5y": 8.0, "cagr10y": 6.0,
+               "return_ytd": 11.5, "return1y": 12.3, "return3y": 9.1, "return5y": 8.0, "return10y": 6.0,
                "cumulative_return": 159.4, "lifetime_cagr": 10.0,
                "inception": "2016-10-07", "lifetime_years": 10.0}
         html = etf_section_html({"rows": [row], "pool": 1, "with_ret": 1})
         periods = re.findall(r'data-period="([^"]+)"', html)
-        self.assertEqual(periods, ["1y", "3y", "5y", "10y", "cumulative", "lifetime"])
-        for expected in [">12.3</span>", ">9.1</span>", ">8.0</span>", ">6.0</span>",
+        self.assertEqual(periods, ["ytd", "1y", "3y", "5y", "10y", "cumulative", "lifetime"])
+        for expected in [">11.5</span>", ">12.3</span>", ">9.1</span>", ">8.0</span>", ">6.0</span>",
                          ">159.4</span>", ">10.0</span>"]:
             self.assertIn(expected, html)
         self.assertIn("연평균 누적수익률 내림차순", html)
 
     def test_missing_long_period_returns_keep_valid_cumulative_return(self):
-        row = {"ticker": "NEW", "name": "New ETF", "cagr1y": 20.0,
+        row = {"ticker": "NEW", "name": "New ETF", "return1y": 20.0,
                "cumulative_return": 30.0, "lifetime_cagr": 15.0}
         html = etf_section_html({"rows": [row], "pool": 1, "with_ret": 1})
         self.assertIn(">20.0</span>", html)
         self.assertIn(">30.0</span>", html)
-        self.assertEqual(len(re.findall(r'<span[^>]*class="[^"]*flat[^"]*"[^>]*>-</span>', html)), 3)
+        self.assertEqual(len(re.findall(r'<span[^>]*class="[^"]*flat[^"]*"[^>]*>-</span>', html)), 4)
 
     def test_missing_cumulative_return_is_shown_as_dash(self):
-        row = {"ticker": "ETF", "name": "Example ETF", "cagr1y": 10.0}
+        row = {"ticker": "ETF", "name": "Example ETF", "return1y": 10.0}
         html = etf_section_html({"rows": [row], "pool": 1, "with_ret": 1})
         self.assertIn('data-period="cumulative"', html)
-        self.assertEqual(len(re.findall(r'<span[^>]*class="[^"]*flat[^"]*"[^>]*>-</span>', html)), 5)
+        self.assertEqual(len(re.findall(r'<span[^>]*class="[^"]*flat[^"]*"[^>]*>-</span>', html)), 6)
 
     def test_footer_explains_cumulative_return_basis(self):
-        row = {"ticker": "ETF", "name": "Example ETF", "cagr1y": 10.0}
+        row = {"ticker": "ETF", "name": "Example ETF", "return1y": 10.0}
         html = etf_section_html({"rows": [row], "pool": 1, "with_ret": 1})
         self.assertIn("(최근주가 ÷ 최초주가 - 1) × 100", html)
         self.assertIn("연환산하지 않음", html)
@@ -211,7 +248,7 @@ class EtfLifetimeMetricTests(unittest.TestCase):
 
     def test_less_than_one_year_is_annualized_and_eligible(self):
         item = self.example(inception="2025-07-01", first_date="2025-07-01",
-                            cumulative_return=10.0, cagr1y=None)
+                            cumulative_return=10.0, return1y=None)
         info = build_etf_info([item], [])
         self.assertEqual((info["pool"], info["with_ret"]), (1, 1))
         row = info["rows"][0]
@@ -329,8 +366,8 @@ class EtfLifetimeMetricTests(unittest.TestCase):
         self.assertEqual(corrected["current_portfolio_inception"], "2005-09-15")
         self.assertEqual(corrected["share_class_reorganization"], "2026-10-02")
         self.assertTrue(corrected["inception_verified"])
-        self.assertIsNotNone(perf["cagr5y"])
-        self.assertIsNone(perf["cagr10y"])
+        self.assertIsNotNone(perf["return5y"])
+        self.assertIsNone(perf["return10y"])
         self.assertEqual((perf["initial_adjusted_price"], perf["latest_adjusted_price"]), (20, 40))
         metrics = _etf_lifetime_metrics(item)
         self.assertEqual(metrics["cumulative_return"], 100.0)
@@ -389,4 +426,3 @@ class KoreanAdjustedHistoryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

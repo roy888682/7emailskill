@@ -134,7 +134,8 @@ class EmailDeliveryTests(unittest.TestCase):
                  "all_passed":True, "layout_unchanged":True, "html_bytes":len(html.encode("utf-8")),
                  "counts":{key:len(values) for key,values in manifest.items()},
                  "hosts":["standalone","gmail"], "viewports":[900,1024,1280,1600,1920],
-                 "market_dates_checked":True,"market_dates_sha256":hashlib.sha256(market_bytes).hexdigest()}
+                 "market_dates_checked":True,"period_returns_checked":True,
+                 "market_dates_sha256":hashlib.sha256(market_bytes).hexdigest()}
         with tempfile.TemporaryDirectory() as directory:
             original = os.getcwd()
             try:
@@ -151,7 +152,7 @@ class EmailDeliveryTests(unittest.TestCase):
                              delivery_checked=True,delivery_viewports=[900,1024,1280,1600,1920],
                              native_checked=True,us_font_matches_kr=True,high_font_matches_kr=True,
                              us_link_clicks=1,numbering_checked=True)
-                for change in ({"market_dates_checked":False}, {"market_dates_sha256":"bad"},
+                for change in ({"market_dates_checked":False}, {"period_returns_checked":False}, {"market_dates_sha256":"bad"},
                                {"native_checked":False}, {"high_font_matches_kr":False}, {"us_font_matches_kr":False}, {"delivery_viewports":[1600,1920]}, {"numbering_checked":False}, {"us_link_clicks":2}, {"delivery_checked":False}, {"delivery_sha256":"bad"}, {"native_package_sha256":"bad"}, {"delivery_viewports":[]}, {"all_passed":False}, {"layout_unchanged":False}, {"html_bytes":1}, {"hosts":["standalone"]},
                                {"viewports":[1024]}, {"counts":{}}, {"sha256":"bad"}):
                     with self.subTest(change=change):
@@ -160,11 +161,19 @@ class EmailDeliveryTests(unittest.TestCase):
                             with self.assertRaises(RuntimeError):
                                 send_prepared()
                             send.assert_not_called()
+                import copy
+                annualized_record = copy.deepcopy(market_proof["etfs"][0])
+                three_year = annualized_record["period_returns"]["3y"]
+                three_year["return_pct"] = ((three_year["end_price"] / three_year["start_price"]) ** (1 / 3) - 1) * 100
+                annualized_record["return3y"] = round(three_year["return_pct"], 1)
+                wrong_ytd_record = copy.deepcopy(market_proof["etfs"][0])
+                wrong_ytd_record["period_returns"]["ytd"]["target_date"] = "2026-01-01"
                 for change in ({"body_sha256":"bad"}, {"manifest_sha256":"bad"},
                                {"counts":{"US":0,"KR":0}},
                                {"market_dates":{"US":"2026-10-06","KR":"2026-10-07"}},
                                {"etfs":[dict(market_proof["etfs"][0], date_status="market_close")]},
-                               {"etfs":[dict(market_proof["etfs"][0], return_as_of="2026-10-08")]}):
+                               {"etfs":[dict(market_proof["etfs"][0], return_as_of="2026-10-08")]},
+                               {"etfs":[annualized_record]}, {"etfs":[wrong_ytd_record]}):
                     with self.subTest(market_audit=change):
                         altered_bytes = json.dumps(dict(market_proof, **change), ensure_ascii=False, indent=2).encode("utf-8")
                         Path("work/market-date-proof.json").write_bytes(altered_bytes)
@@ -225,4 +234,3 @@ class EmailDeliveryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

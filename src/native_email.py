@@ -71,14 +71,15 @@ def _column_css():
         (1, "text-align:right;font-variant-numeric:tabular-nums"),
         (2, "text-align:center;font-variant-numeric:normal"),
         (3, "text-align:left"),
-        (6, "text-align:right;font-variant-numeric:tabular-nums;background:#eaf1fb;font-weight:bold;color:#c23932"),
-        (7, "background:transparent;font-weight:normal;color:#245ba6"),
-        (8, "color:#087d67"),
-        (9, "color:#7944b0"),
-        (10, "color:#17263d"),
-        (15, "text-align:left;font-variant-numeric:normal;font-size:12.35px"),
-        (16, "text-align:right;font-variant-numeric:tabular-nums;font-size:13px"),
-        (17, "text-align:left;font-variant-numeric:normal;font-size:12.35px"),
+        (6, "text-align:right;font-variant-numeric:tabular-nums"),
+        (7, "text-align:right;font-variant-numeric:tabular-nums;background:#eaf1fb;font-weight:bold;color:#c23932"),
+        (8, "background:transparent;font-weight:normal;color:#245ba6"),
+        (9, "color:#087d67"),
+        (10, "color:#7944b0"),
+        (11, "color:#17263d"),
+        (16, "text-align:center;font-variant-numeric:normal;font-size:12.35px"),
+        (17, "text-align:right;font-variant-numeric:tabular-nums;font-size:13px"),
+        (18, "text-align:center;font-variant-numeric:normal;font-size:12.35px"),
     )
     for column, declarations in rules:
         groups.append(_selectors(etfs, column) + "{" + declarations + "}")
@@ -250,4 +251,3 @@ def verify_package(source, delivery, expected, meta, directory):
 def plain_report(source):
     doc = BeautifulSoup(source, "html5lib")
     return doc.body.get_text(" ", strip=True) if doc.body else doc.get_text(" ", strip=True)
-

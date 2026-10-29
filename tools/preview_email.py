@@ -29,6 +29,33 @@ def make_stock(ticker, market="US", number=0, asset_type="주식"):
             "url": ("https://m.stock.naver.com/domestic/stock/" + ticker + "/total" if korean else
                     "https://m.stock.naver.com/worldstock/stock/" + ticker + "/total")}
 
+
+def set_sample_period_returns(row):
+    """Build internally coherent observed-price evidence for synthetic fixtures."""
+    from src.main import _etf_period_returns
+    start = date.fromisoformat(row["price_start_date"])
+    end = date.fromisoformat(row["price_end_date"])
+    targets = [date(end.year - 1, 12, 31)]
+    for years in (1, 3, 5, 10):
+        try:
+            targets.append(end.replace(year=end.year - years))
+        except ValueError:
+            targets.append(end.replace(year=end.year - years, day=28))
+    observations = sorted({start, end, *(target for target in targets if start <= target <= end)})
+    initial, latest = row["initial_adjusted_price"], row["latest_adjusted_price"]
+    span = (end - start).days
+    prices = [initial * (latest / initial) ** ((observed - start).days / span)
+              for observed in observations]
+    # Preserve the exact endpoints rather than introducing a synthetic round trip.
+    prices[0], prices[-1] = initial, latest
+    evidence = _etf_period_returns(observations, prices)
+    row["period_returns"] = evidence
+    for key, field in (("ytd", "return_ytd"), ("1y", "return1y"), ("3y", "return3y"),
+                       ("5y", "return5y"), ("10y", "return10y")):
+        row[field] = round(evidence[key]["return_pct"], 1) if evidence[key] is not None else None
+    return row
+
+
 def sample_data():
     import math
     us = [make_stock("US%04d" % i, number=i) for i in range(203)]
@@ -57,10 +84,6 @@ def sample_data():
             growth = latest_price / initial_price
             item = make_stock(ticker, market="KOSPI" if korean else "US", number=rank, asset_type="ETF")
             item.update({"name": name, "aum": round(2.5 + rank * 1.35, 1),
-                         "cagr1y": round(82.35 - rank * 3.67, 2),
-                         "cagr3y": round(39.28 - rank * 1.5, 2),
-                         "cagr5y": None if rank % 7 == 0 else round(24.46 - rank * .67, 2),
-                         "cagr10y": None if rank % 3 == 0 else round(18.33 - rank * .31, 2),
                          "cumulative_return": round((growth - 1) * 100, 1),
                          "cumulative_growth": growth,
                          "initial_adjusted_price": initial_price,
@@ -77,6 +100,7 @@ def sample_data():
                          "investment_area": "한국반도체" if korean else "미국반도체",
                          "inception": "2016-05-19", "first_date": "2016-05-19",
                          "last_date": "2026-10-07", "return_as_of": "2026-10-07"})
+            set_sample_period_returns(item)
             etfs.append(item)
             (kr if korean else us).append(item)
     etfs.sort(key=lambda item: item["lifetime_cagr"], reverse=True)
@@ -148,7 +172,7 @@ LAYOUT_CHECK = r"""expected => {
  const specs=[
    ["us","us",2,11],["kr","kr",2,11],
    ["new","new-kr",2,10,"KR"],["new","new-us",2,10,"US"],
-   ["etf","returns",2,17]
+   ["etf","returns",2,18]
  ];
  const getRows=id=>{
    const table=document.getElementById(id);
@@ -226,10 +250,11 @@ LAYOUT_CHECK = r"""expected => {
  if(document.body.textContent.includes("첨부"))problems.push("Attachment-related copy remains");
  if(returns){
    const headings=Array.from(returns.querySelectorAll("thead th")).map(cell=>cell.textContent.trim());
-   if(headings.length!==17||!/업종|투자/.test(headings[4])||!headings[9].includes("누적")||
-      headings[10]!=="최초주가"||headings[11]!=="최근주가"||
-      !headings[12].includes("연평균")||!/AUM|시총/.test(headings[13])||
-      !headings[14].includes("설립")||!/연수|기간/.test(headings[15])||headings[16]!=="수익률 기준일")
+   if(headings.length!==18||!/업종|투자/.test(headings[4])||headings[5]!=="연초"||
+      JSON.stringify(headings.slice(6,10))!==JSON.stringify(["1년","3년","5년","10년"])||!headings[10].includes("누적")||
+      headings[11]!=="최초주가"||headings[12]!=="최근주가"||
+      headings[13]!=="연평균"||!/AUM|시총/.test(headings[14])||
+      !headings[15].includes("설립")||!/연수|기간/.test(headings[16])||headings[17]!=="수익률 기준일")
      problems.push("ETF columns must include area beside name, cumulative → initial price → latest price → lifetime CAGR → KRW AUM → inception → elapsed years");
  }
  const number=text=>{
@@ -250,21 +275,21 @@ LAYOUT_CHECK = r"""expected => {
  if(getRows("returns").length>100)problems.push("ETF comparison exceeds the top 100 limit");
  getRows("returns").forEach((row,index)=>{
    const colors=[];
-   for(const [column,cls] of [[5,"p1"],[6,"p3"],[7,"p5"],[8,"p10"]]){
+   for(const [column,cls] of [[6,"p1"],[7,"p3"],[8,"p5"],[9,"p10"]]){
      const cell=row.cells[column];
      if(!cell||!cell.classList.contains(cls))
        problems.push("ETF "+index+" is missing "+cls+" on the correct return column");
      if(cell)colors.push(getComputedStyle(cell).color);
    }
    if(new Set(colors).size!==4)problems.push("ETF "+index+" return colors are not distinct");
-   const lifetime=number(row.cells[12]?.textContent);
-   const years=number(row.cells[15]?.textContent);
+   const lifetime=number(row.cells[13]?.textContent);
+   const years=number(row.cells[16]?.textContent);
    if(!Number.isFinite(lifetime)||lifetime>previousLifetime)
      problems.push("ETF lifetime CAGR must be finite and sorted descending");
    if(!Number.isFinite(years)||years<0)
      problems.push("ETF displayed elapsed years must be nonnegative");
-   const initial=exactPriceIn(row.cells[10]),latest=exactPriceIn(row.cells[11]);
-   for(const [column,exact] of [[10,initial],[11,latest]]){
+   const initial=exactPriceIn(row.cells[11]),latest=exactPriceIn(row.cells[12]);
+   for(const [column,exact] of [[11,initial],[12,latest]]){
      const cell=row.cells[column],visible=cell?.textContent.trim()||"",whole=number(visible);
      const serializationTolerance=Math.max(1e-12,Math.abs(exact)*5e-12);
      if(!Number.isFinite(exact)||exact<=0||!Number.isInteger(whole)||whole<0||
@@ -275,15 +300,15 @@ LAYOUT_CHECK = r"""expected => {
      if(!/정확값\s+/.test(title)||!/\b(?:USD|KRW)\b/.test(title)||!/(?:Yahoo|네이버)/.test(title))
        problems.push("ETF "+index+" price title must preserve the exact value, currency and provider basis");
    }
-   const cumulative=number(row.cells[9]?.textContent);
+   const cumulative=number(row.cells[10]?.textContent);
    // Prices carry 12 significant digits; account only for that bounded
    // serialization error and the returns' one-decimal display rounding.
    const cumulativeTolerance=Math.max(.051,(Math.abs(cumulative)+100)*2e-11);
    if(!(initial>0)||!(latest>0)||!Number.isFinite(cumulative)||
       Math.abs((latest/initial-1)*100-cumulative)>cumulativeTolerance)
      problems.push("ETF "+index+" cumulative return does not match its exact starting and latest prices preserved in titles");
-   const start=dateIn(row.cells[10]),end=dateIn(row.cells[11]);
-   const inceptionText=row.cells[14]?.textContent.trim()||"";
+   const start=dateIn(row.cells[11]),end=dateIn(row.cells[12]);
+   const inceptionText=row.cells[15]?.textContent.trim()||"";
    const knownInception=/^\d{4}-\d{2}-\d{2}$/.test(inceptionText);
    const inception=knownInception?Date.parse(inceptionText+"T00:00:00Z"):NaN;
    const observedYears=(end-start)/(86400000*365.25);
@@ -295,7 +320,7 @@ LAYOUT_CHECK = r"""expected => {
       Math.abs((Math.pow(latest/initial,1/observedYears)-1)*100-lifetime)>
         Math.max(.051,(Math.abs(lifetime)+100)*2e-11/observedYears))
      problems.push("ETF "+index+" lifetime CAGR does not match its exact prices and dated interval");
-   for(const [column,period] of [[5,1],[6,3],[7,5],[8,10]])
+   for(const [column,period] of [[6,1],[7,3],[8,5],[9,10]])
      if(Number.isFinite(number(row.cells[column]?.textContent))&&observedYears+.004<period)
        problems.push("ETF "+index+" reports a "+period+"-year return before that much price history exists");
    previousLifetime=lifetime;
@@ -325,9 +350,17 @@ LAYOUT_CHECK = r"""expected => {
      const style=getComputedStyle(cell),bounds=cell.getBoundingClientRect();
      if(style.whiteSpace!=="nowrap")
        problems.push("Row "+index+" must keep every column on one line: "+column);
-     const expectedFont=tableId==="returns"&&![14,16].includes(column)?13:12.35;
+     const expectedFont=tableId==="returns"&&![15,17].includes(column)?13:12.35;
      if(Math.abs(parseFloat(style.fontSize)-expectedFont)>.01)
        problems.push("Row "+index+" font differs from the enlarged design: "+style.fontSize);
+     if(tableId==="returns"&&[15,17].includes(column)&&style.textAlign!=="center")
+       problems.push("ETF date values must be centered in column "+column);
+     if(tableId==="returns"&&[13,15,17].includes(column)){
+       const tableWidth=row.closest("table").getBoundingClientRect().width;
+       const maximum=column===13?.045:column===15?.075:.07;
+       if(bounds.width>tableWidth*maximum+tolerance)
+         problems.push("ETF shortened heading/date column has not been narrowed: "+column);
+     }
      if(tableId!=="returns"&&column===4&&Math.abs(bounds.width-126)>tolerance)
        problems.push("Row "+index+" industry column must retain the 126px width");
      if(newIds.includes(tableId)&&column===3){
@@ -338,7 +371,7 @@ LAYOUT_CHECK = r"""expected => {
        if(previousNameWidth<=0||bounds.width/previousNameWidth<.43||bounds.width/previousNameWidth>.58)
          problems.push("Row "+index+" new-security name column must be approximately half its previous width");
      }
-     const aumColumn=tableId==="returns"?13:6;
+     const aumColumn=tableId==="returns"?14:6;
      if(column===aumColumn&&Math.abs(bounds.width-(tableId==="returns"?96:84))>tolerance)
        problems.push("Row "+index+" AUM column must use the restored 96px ETF or 84px stock/new width");
      const clip=cell.querySelector(column===3?".nm":".cl,.iwc");
@@ -422,10 +455,10 @@ MARKET_DATE_CHECK = r"""expected => {
  for(const row of document.querySelectorAll('#returns tbody tr')){
    const flag=row.cells[1]?.querySelector('img');
    const country=flag?.alt==='성조기'?'US':flag?.alt==='태극기'?'KR':null;
-   const cell=row.cells[11];
+   const cell=row.cells[12];
    const titles=[cell?.getAttribute('title')||'',...Array.from(cell?.querySelectorAll('[title]')||[]).map(node=>node.title)];
    const dates=titles.map(title=>title.match(/\d{4}-\d{2}-\d{2}/)?.[0]).filter(Boolean);
-   const actual=dates[0],anchor=expected[country],dateCell=row.cells[16];
+   const actual=dates[0],anchor=expected[country],dateCell=row.cells[17];
    const shortDate=actual?.slice(2),status=actual===anchor?'market_close':'latest_available';
    const label=status==='market_close'?'시장 기준일 시세':'이전 가능 시세일';
    const detail=actual+' · '+label+' · 시장 기준일 '+anchor;
@@ -440,6 +473,55 @@ MARKET_DATE_CHECK = r"""expected => {
  return {market_dates:marketDates,etfs_checked:counts,date_status_counts:statuses,
          actual_return_dates:Object.fromEntries(Object.entries(actualDates).map(([country,dates])=>[country,Array.from(dates).sort()])),problems};
 }"""
+
+PERIOD_RETURN_CHECK = r"""proof => {
+ const problems=[],records=new Map();let checked=0,missing=0;
+ const numeric=text=>{
+   const cleaned=String(text||'').replace(/[^\deE.+-]/g,'');
+   return cleaned&&cleaned!=='-'?Number(cleaned):NaN;
+ };
+ const iso=date=>date.toISOString().slice(0,10);
+ const targetFor=(end,key)=>{
+   const year=Number(end.slice(0,4)),month=Number(end.slice(5,7)),day=Number(end.slice(8,10));
+   if(key==='ytd')return (year-1)+'-12-31';
+   const targetYear=year-Number(key.slice(0,-1));
+   const lastDay=new Date(Date.UTC(targetYear,month,0)).getUTCDate();
+   return iso(new Date(Date.UTC(targetYear,month-1,Math.min(day,lastDay))));
+ };
+ if(proof.version!==3)problems.push('ETF return evidence must use version 3');
+ for(const record of proof.etfs||[])records.set(record.country+':'+record.ticker,record);
+ for(const row of document.querySelectorAll('#returns tbody tr')){
+   const country=row.cells[1]?.querySelector('img')?.alt==='성조기'?'US':'KR';
+   const ticker=row.cells[2]?.querySelector('a')?.textContent.trim();
+   const record=records.get(country+':'+ticker);
+   if(!record){problems.push('Missing ETF period evidence for '+country+':'+ticker);continue;}
+   for(const [key,column,field] of [['ytd',5,'return_ytd'],['1y',6,'return1y'],['3y',7,'return3y'],['5y',8,'return5y'],['10y',9,'return10y']]){
+     const value=record.period_returns?.[key],visible=numeric(row.cells[column]?.textContent);
+     const target=targetFor(record.price_end_date,key);
+     const required=record.price_start_date<=target;
+     if(value==null){
+       missing++;
+       if(required||record[field]!=null||row.cells[column]?.textContent.trim()!=='-')
+         problems.push(ticker+' '+key+' is missing available cumulative-return evidence');
+       continue;
+     }
+     checked++;
+     const ratio=(value.end_price/value.start_price-1)*100;
+     const exactTolerance=Math.max(1e-9,Math.abs(ratio)*1e-11);
+     if(!required||value.target_date!==target||value.start_date>target||value.start_date<record.price_start_date||
+        value.end_date!==record.price_end_date||value.start_date>=value.end_date||
+        !Number.isFinite(value.start_price)||value.start_price<=0||
+        !Number.isFinite(value.end_price)||value.end_price<=0||
+        Math.abs(value.end_price-record.latest_adjusted_price)>Math.max(1e-12,Math.abs(value.end_price)*1e-12)||
+        !Number.isFinite(value.return_pct)||Math.abs(ratio-value.return_pct)>exactTolerance||
+        !Number.isFinite(record[field])||Math.abs(record[field]-ratio)>.050000001||
+        !Number.isFinite(visible)||Math.abs(visible-ratio)>.050000001)
+       problems.push(ticker+' '+key+' must show the simple price-ratio cumulative return at its actual dates');
+   }
+ }
+ return {periods_checked:checked,unavailable_periods:missing,problems};
+}"""
+
 
 def cropped_table_image(page, table_id, output, marker):
     if not page.locator("#" + table_id).count():
@@ -529,7 +611,7 @@ NATIVE_FONT_CHECK = r"""() => {
 }"""
 
 
-def verify_actual_display(browser, source, delivery, expected, output, market_dates):
+def verify_actual_display(browser, source, delivery, expected, output, market_dates, market_proof):
     """Compare native text, links and pixels with the complete accepted source."""
     from src.email_flags import inline_flag_sources
     document = inline_flag_sources(delivery)
@@ -545,8 +627,11 @@ def verify_actual_display(browser, source, delivery, expected, output, market_da
                 for page in (original,displayed):
                     page.evaluate("document.fonts.ready")
                     date_check=page.evaluate(MARKET_DATE_CHECK,market_dates)
+                    period_check=page.evaluate(PERIOD_RETURN_CHECK,market_proof)
                     if date_check["problems"]:
                         raise AssertionError("; ".join(date_check["problems"]))
+                    if period_check["problems"]:
+                        raise AssertionError("; ".join(period_check["problems"]))
                     if page.evaluate("document.documentElement.scrollWidth>window.innerWidth+1.5"):
                         raise AssertionError("Actual native delivery overflows the desktop window")
                     if page.evaluate("Array.from(document.images).some(img=>!img.complete||!img.naturalWidth)"):
@@ -616,6 +701,8 @@ def verify_actual_display(browser, source, delivery, expected, output, market_da
                       "all_rows_fields_links_preserved":True}),flush=True)
                 print("ETF_MARKET_DATE_QA:"+json.dumps({"host":host,"viewport":width,
                       "native":True,**date_check}),flush=True)
+                print("ETF_PERIOD_RETURN_QA:"+json.dumps({"host":host,"viewport":width,
+                      "native":True,**period_check}),flush=True)
                 if host=="gmail" and width==1600:
                     for table_id,filename,marker in (
                         ("us","email-actual-native-us.png","PREVIEW_IMAGE_ACTUAL_DELIVERY_US"),
@@ -720,8 +807,10 @@ def main():
                         page.evaluate("document.fonts.ready")
                         result = page.evaluate(LAYOUT_CHECK, expected)
                         date_check = page.evaluate(MARKET_DATE_CHECK,market_dates)
+                        period_check = page.evaluate(PERIOD_RETURN_CHECK,market_proof)
                         result["market_dates"] = date_check["market_dates"]
                         result["problems"].extend(date_check["problems"])
+                        result["problems"].extend(period_check["problems"])
                         result["host"] = host
                         print("LAYOUT_QA:%s" % json.dumps(result, ensure_ascii=False), flush=True)
                         if result["problems"]:
@@ -760,7 +849,7 @@ def main():
             print("DELIVERY_CANONICAL_BYTES:%d" % native_email.validate_delivery_size(delivery)[1],flush=True)
             print("DELIVERY_WIRE_BYTES:%d" % len(wire.as_bytes()),flush=True)
             print("US_NATIVE_COVERAGE:%d" % len(expected["us"]),flush=True)
-            us_font_matches_kr=verify_actual_display(browser,html_source,delivery,expected,args.output,market_dates)
+            us_font_matches_kr=verify_actual_display(browser,html_source,delivery,expected,args.output,market_dates,market_proof)
         finally:
             browser.close()
     digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
@@ -777,6 +866,7 @@ def main():
         "us_link_clicks":len(expected["us"]),"numbering_checked":True,
         "new_country_numbering":new_numbering,"exact_price_titles_checked":True,
         "market_dates_checked":True,"market_dates":market_dates,
+        "period_returns_checked":True,
         "market_dates_sha256":hashlib.sha256(market_proof_bytes).hexdigest(),
     }
     proof_path.write_text(json.dumps(proof, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -784,4 +874,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

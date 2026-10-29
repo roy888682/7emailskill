@@ -36,6 +36,31 @@ def yahoo_history(days, prices):
 
 
 class MarketDateValidationTests(unittest.TestCase):
+    def test_period_evidence_is_bound_to_actual_dates_prices_and_cumulative_formula(self):
+        item = etf()
+        item.update(_etf_price_performance(
+            [date(2020, 10, 13), date(2023, 10, 27), date(2025, 12, 31), date(2026, 10, 28)],
+            [100, 150, 200, 260], price_basis="Yahoo 제공 수정주가(auto_adjust)", price_currency="USD"))
+        record = validate_etf_market_dates([item], [], market_info())["etfs"][0]
+        self.assertEqual(record["return_ytd"], 30.0)
+        self.assertEqual(record["return3y"], 73.3)
+        self.assertEqual(record["period_returns"]["3y"]["start_date"], "2023-10-27")
+        mutations = [
+            lambda row: row.update(return3y=20.1),  # Prior annualized display cannot pass.
+            lambda row: row["period_returns"]["3y"].update(return_pct=20.1),
+            lambda row: row["period_returns"]["3y"].update(end_price=261),
+            lambda row: row["period_returns"]["3y"].update(end_date="2026-10-27"),
+            lambda row: row["period_returns"]["3y"].update(target_date="2023-10-29"),
+            lambda row: row["period_returns"]["3y"].update(start_date="2023-10-29"),
+            lambda row: row["period_returns"].pop("ytd"),
+            lambda row: row.update(return10y=0.0),
+        ]
+        for mutation in mutations:
+            changed = copy.deepcopy(item)
+            mutation(changed)
+            with self.subTest(changed=changed), self.assertRaises(RuntimeError):
+                validate_etf_market_dates([changed], [], market_info())
+
     def test_market_anchors_exclude_today_partial_quotes_and_respect_korean_holiday(self):
         histories = {"SPY": yahoo_history(["2026-10-27", "2026-10-28", "2026-10-29"], [100, 101, 999]),
                      "005930.KS": yahoo_history(["2026-10-26", "2026-10-27", "2026-10-29"], [100, 101, 999])}
@@ -62,7 +87,7 @@ class MarketDateValidationTests(unittest.TestCase):
         before = copy.deepcopy(item)
         proof = validate_etf_market_dates([item], [], market_info())
         record = proof["etfs"][0]
-        self.assertEqual(proof["version"], 2)
+        self.assertEqual(proof["version"], 3)
         self.assertEqual(record["date_status"], "latest_available")
         self.assertEqual(record["requested_market_date"], "2026-10-28")
         self.assertEqual(record["return_as_of"], "2026-10-27")
@@ -203,8 +228,8 @@ class MarketDateSynchronizationTests(unittest.TestCase):
         self.assertEqual(item["inception"], "2021-06-14")
         self.assertFalse(item.get("price_history_inception_mismatch", False))
         self.assertEqual((item["initial_adjusted_price"], item["latest_adjusted_price"]), (20, 40))
-        self.assertIsNotNone(item["cagr5y"])
-        self.assertIsNone(item["cagr10y"])
+        self.assertIsNotNone(item["return5y"])
+        self.assertIsNone(item["return10y"])
 
     def test_failed_retry_sends_valid_previous_prices_without_dropping_the_candidate(self):
         item = etf(end="2026-10-27", latest=254.5)
@@ -245,11 +270,12 @@ class MarketDateSynchronizationTests(unittest.TestCase):
         self.assertEqual(len(candidates), 1)
         self.assertIs(candidates[0], item)
         self.assertEqual(proof["etfs"][0]["date_status"], "unavailable")
-        for key in ("price", "change", "gap", "cagr1y", "cagr3y", "cagr5y", "cagr10y",
+        for key in ("price", "change", "gap", "return_ytd", "return1y", "return3y", "return5y", "return10y",
                     "cumulative_return", "cumulative_growth", "lifetime_cagr", "lifetime_years",
                     "price_start_date", "price_end_date", "first_date", "last_date", "return_as_of",
                     "initial_adjusted_price", "latest_adjusted_price"):
             self.assertIsNone(item.get(key), key)
+        self.assertEqual(item["period_returns"], {key:None for key in ("ytd", "1y", "3y", "5y", "10y")})
         self.assertEqual(build_etf_info(candidates, []), {"rows":[], "pool":1, "with_ret":0})
         mixed = dict(item, latest_adjusted_price=123.0)
         with self.assertRaises(RuntimeError):

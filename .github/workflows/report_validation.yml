@@ -45,7 +45,7 @@ jobs:
           import json
           from datetime import date
           from pathlib import Path
-          from tools.preview_email import sample_data, make_stock, manifest_for
+          from tools.preview_email import sample_data, make_stock, manifest_for, set_sample_period_returns
           from src.email_layout import render_email
           from src.main import validate_etf_market_dates, bind_market_date_proof, _etf_lifetime_metrics
           data = sample_data()
@@ -69,6 +69,7 @@ jobs:
               row["latest_adjusted_price"] = row["initial_adjusted_price"] * (1 + row["cumulative_return"] / 100)
               row["cumulative_growth"] = row["latest_adjusted_price"] / row["initial_adjusted_price"]
               row.update(_etf_lifetime_metrics(row))
+              set_sample_period_returns(row)
           data["etf_info"] = {"rows": [dict(row) for row in cohort[:100]], "pool": len(cohort), "with_ret": len(cohort)}
           data["new_us"] = data["us"][:5] + data["us"][75:99]
           data["new_kr"] = data["kr"][:1] + data["kr"][4:7]

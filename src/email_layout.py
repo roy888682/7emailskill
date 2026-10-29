@@ -36,7 +36,7 @@ table{border-collapse:collapse}a{color:#1260ad;text-decoration:none}
 .data-table .n{text-align:right;font-variant-numeric:tabular-nums}
 .data-table .f{text-align:center;padding-left:1px;padding-right:1px}.f img{width:20px;height:auto;vertical-align:middle}
 .data-table .t{font-weight:bold}.data-table .y{background:#eaf1fb;font-weight:bold}
-.data-table th.y{background:#2b4665;color:#fff}.data-table .d{font-size:12.35px}
+.data-table th.y{background:#2b4665;color:#fff}.data-table .d{font-size:12.35px;text-align:center}
 .etf-comparison .data-table{font-size:13px}.metric-label{display:none}.m{display:block;font-size:13px;font-weight:bold;line-height:1.25}
 .etf-details{margin-top:12px}.etf-details h3{font-size:16.9px;margin:0 0 6px}
 .up{color:#c04840}.down{color:#2862a6}.flat{color:#52677d}
@@ -145,10 +145,10 @@ def price_exact_text(value):
 
 def table_columns(kind):
     if kind == "returns":
-        # Recover 7% for the actual return date without reducing the name's
-        # existing remaining width or the fixed AUM and flag columns.
-        widths = ("3%", "3%", "6%", None, "8%", "4%", "4%", "4%", "4%",
-                  "6%", "5%", "5%", "9%", "96px", "9%", "6%", "7%")
+        # Shorter annualized/date headings fund the added YTD column while
+        # preserving fonts, price widths and the fixed AUM/flag columns.
+        widths = ("3%", "3%", "6%", None, "8%", "4%", "4%", "4%", "4%", "4%",
+                  "6%", "5%", "5%", "4%", "96px", "7%", "6%", "6.5%")
     elif kind == "new":
         # Before this change the auto name width was 54% of the table minus
         # 168px. A fixed 19% is 46–55% of that width across 900–1920px hosts.
@@ -229,28 +229,43 @@ def return_date_title(row, requested=None):
     return f"{actual} · {label} · 시장 기준일 {anchor}"
 
 
+def period_return_title(row, period):
+    evidence = row.get("period_returns") or {}
+    detail = evidence.get(period) if isinstance(evidence, dict) else None
+    if period == "cumulative":
+        detail = {"start_date": row.get("price_start_date"), "end_date": row.get("price_end_date"),
+                  "start_price": row.get("initial_adjusted_price"), "end_price": row.get("latest_adjusted_price")}
+    if not isinstance(detail, dict):
+        return "기간 시작 이전 시세 없음 · 실제 수익률 기준일 " + market_date_text(row.get("price_end_date"))
+    target = f'기간 목표일 {detail.get("target_date")} · ' if detail.get("target_date") else ""
+    currency = row.get("price_currency") or ("USD" if row.get("market") == "US" else "KRW")
+    return (f'{target}실제 {detail.get("start_date")} → {detail.get("end_date")} · '
+            f'정확값 {price_exact_text(detail.get("start_price"))} → {price_exact_text(detail.get("end_price"))} · '
+            f'{currency} · {row.get("price_basis") or "가격 기준 미확인"}')
+
+
 def etf_section_html(etf_info, include_details=False, info=None):
     rows = etf_info.get("rows", [])
     head = ('<div class="section" id="etf"><h2>ETF 수익률 비교</h2>'
             f'<p class="intro">연평균 누적수익률 내림차순 · 상위 {len(rows)}개'
             f' · 산출 가능 {etf_info.get("with_ret", 0)} / 후보 {etf_info.get("pool", 0)}개</p>'
-            '<p class="etf-caption">최근 1·3·5·10년: 연평균수익률(CAGR) · 누적: 정확한 최초·최근주가의 수익률 · 연평균 누적: 같은 가격 기간을 복리 환산 · 수익률 단위: %</p>')
+            '<p class="etf-caption">연초: 전년 마지막 시세 대비 · 1·3·5·10년: 각 기간 누적수익률 · 누적: 정확한 최초·최근주가의 수익률 · 연평균: 같은 가격 기간을 복리 환산 · 수익률 단위: %</p>')
     if info is not None:
         head += market_date_caption(info)
     if not rows:
         note = " · 유효한 가격 이력이 없는 ETF는 후보에 유지하며 수익률 계산 불가로 처리합니다." if etf_info.get("pool", 0) else ""
         return head + '<p class="muted">해당 ETF 없음' + note + '</p></div>'
-    labels = (("1y", "1년", "cagr1y"), ("3y", "3년", "cagr3y"),
-              ("5y", "5년", "cagr5y"), ("10y", "10년", "cagr10y"),
+    labels = (("ytd", "연초", "return_ytd"), ("1y", "1년", "return1y"),
+              ("3y", "3년", "return3y"), ("5y", "5년", "return5y"), ("10y", "10년", "return10y"),
               ("cumulative", "누적", "cumulative_return"))
     table = ('<div class="etf-comparison"><table class="data-table etf-table" id="returns">' + table_columns("returns") + '<thead><tr>'
              '<th class="number">No.</th><th class="flag-cell">국가</th><th>티커</th><th>종목명</th><th>업종·투자분야</th>' +
              "".join(f'<th class="number {"one-year" if period == "1y" else ""}">{label}</th>'
                      for period, label, _ in labels) +
              '<th class="number">최초주가</th><th class="number">최근주가</th>'
-             '<th class="number">연평균 누적수익률 ↓</th>'
-             '<th class="number" data-field="aum">AUM·시총(원화)</th><th data-field="inception">설립·상장일</th>'
-             '<th class="number" data-field="lifetime_years">누적연수</th><th>수익률 기준일</th></tr></thead><tbody>')
+             '<th class="number">연평균</th>'
+             '<th class="number" data-field="aum">AUM·시총(원화)</th><th class="date-cell" data-field="inception">설립·상장일</th>'
+             '<th class="number" data-field="lifetime_years">누적연수</th><th class="date-cell">수익률 기준일</th></tr></thead><tbody>')
     for rank, row in enumerate(rows, 1):
         country = "US" if row.get("market") == "US" else "KR"
         ticker = h(row.get("ticker"))
@@ -261,12 +276,12 @@ def etf_section_html(etf_info, include_details=False, info=None):
                   f'<td class="ticker-cell"><a href="{safe_url(row.get("url"))}">{ticker}</a></td>'
                   f'<td class="name-cell"><span class="nm">{h(row.get("name"))}</span></td>'
                   f'<td title="{h(row.get("etf_index") or industry_text(row))}">{h(brief_investment_text(row))}</td>' +
-                  "".join(f'<td class="number {"one-year" if period == "1y" else ""}">'
+                  "".join(f'<td class="number {"one-year" if period == "1y" else ""}" title="{h(period_return_title(row, period))}">'
                           f'{compact_metric(period, label, row.get(key))}</td>'
                           for period, label, key in labels) +
                   f'<td class="number" title="{first_title}">{price_text(row.get("initial_adjusted_price"))}</td>'
                   f'<td class="number" title="{last_title}">{price_text(row.get("latest_adjusted_price"))}</td>'
-                  f'<td class="number">{compact_metric("lifetime", "연평균 누적수익률 ↓", row.get("lifetime_cagr"))}</td>'
+                  f'<td class="number">{compact_metric("lifetime", "연평균", row.get("lifetime_cagr"))}</td>'
                   f'<td class="number" data-field="aum">{row_size_html(dict(row, asset_type="ETF"))}</td>'
                   f'<td class="date-cell" data-field="inception" title="{h(row.get("inception_source") or "설립일 출처 미확인")}">{h(inception_text(row))}</td>'
                   f'<td class="number" data-field="lifetime_years">{elapsed_years_text(row.get("lifetime_years"))}</td>'
@@ -274,7 +289,7 @@ def etf_section_html(etf_info, include_details=False, info=None):
                   f'{h(return_date_text(row))}</td></tr>')
     table += '</tbody></table></div>'
     notes = ('<p class="notes">ATH -10% 이내 비채권 ETF 중 연평균 누적수익률 산출 가능 종목을 내림차순으로 최대 100개 표시합니다. '
-             '기간 이력이 부족하면 -로 표시합니다.<br>'
+             '연초는 실제 수익률 기준일의 전년도 마지막 확보 시세부터, 1·3·5·10년은 실제 수익률 기준일에서 해당 연수 전 같은 날짜(휴장일이면 그 이전 최근 시세)부터의 누적수익률입니다. 각 기간 수익률 = (최근주가 ÷ 기간 시작주가 - 1) × 100이며 연환산하지 않습니다. 기간 이력이 부족하면 -로 표시합니다.<br>'
              '국가 시장 기준일의 시세가 없으면 재조회 후 이전 가능 시세일로 계산합니다. ETF별 실제 날짜는 오른쪽 수익률 기준일을 참고하세요. 유효한 가격을 확보하지 못한 ETF는 후보에 유지하며 수익률은 계산 불가로 처리합니다.<br>'
              '누적수익률 = (최근주가 ÷ 최초주가 - 1) × 100이며, 연환산하지 않음. 두 가격은 같은 제공업체·같은 조정 기준입니다. '
              '최초주가·최근주가는 화면에서 소수점 이하를 버리고 천 단위 쉼표로 표시하며, 수익률 계산에는 소수점을 생략하지 않은 정확한 원값을 사용합니다.<br>'
@@ -549,11 +564,60 @@ def validate_inventory(source, expected):
     return actual
 
 
+def validate_period_return_evidence(record):
+    """Independently check cumulative period math against exact price evidence."""
+    fields = {"ytd": "return_ytd", "1y": "return1y", "3y": "return3y",
+              "5y": "return5y", "10y": "return10y"}
+    evidence = record.get("period_returns")
+    label = f'{record.get("country")}:{record.get("ticker")}'
+    if not isinstance(evidence, dict) or set(evidence) != set(fields):
+        raise RuntimeError(f"ETF {label} is missing its complete period-return evidence")
+    if record.get("date_status") == "unavailable":
+        if any(item is not None for item in evidence.values()):
+            raise RuntimeError(f"Unavailable ETF {label} contains period-return evidence")
+        return
+    end = record.get("price_end_date")
+    first = record.get("price_start_date")
+    if (market_date_text(end) != end or market_date_text(first) != first or first > end):
+        raise RuntimeError(f"ETF {label} has invalid period price dates")
+    end_date = datetime.strptime(end, "%Y-%m-%d").date()
+    for period, field in fields.items():
+        if period == "ytd":
+            target = end_date.replace(year=end_date.year - 1, month=12, day=31)
+        else:
+            try:
+                target = end_date.replace(year=end_date.year - int(period[:-1]))
+            except ValueError:
+                target = end_date.replace(year=end_date.year - int(period[:-1]), day=28)
+        target = target.isoformat()
+        detail, displayed = evidence[period], record.get(field)
+        if detail is None:
+            if displayed is not None or first <= target:
+                raise RuntimeError(f"ETF {label} {period} is missing a calculable cumulative return")
+            continue
+        if not isinstance(detail, dict):
+            raise RuntimeError(f"ETF {label} {period} has malformed period-return evidence")
+        start = detail.get("start_date")
+        if (detail.get("target_date") != target or market_date_text(start) != start
+                or not first <= start <= target < end or detail.get("end_date") != end):
+            raise RuntimeError(f"ETF {label} {period} has inconsistent period dates")
+        start_price, end_price, result = (detail.get(key) for key in ("start_price", "end_price", "return_pct"))
+        if (any(isinstance(value, bool) or not isinstance(value, (int, float))
+                or not math.isfinite(value) for value in (start_price, end_price, result, displayed))
+                or start_price <= 0 or end_price <= 0
+                or end_price != record.get("latest_adjusted_price")
+                or (start == first and start_price != record.get("initial_adjusted_price"))):
+            raise RuntimeError(f"ETF {label} {period} has inconsistent period prices")
+        expected = (end_price / start_price - 1) * 100
+        if not math.isclose(result, expected, rel_tol=1e-12, abs_tol=1e-9) or displayed != round(expected, 1):
+            raise RuntimeError(f"ETF {label} {period} is not the cumulative return from its prices")
+
+
 def validate_etf_date_proof(source, manifest, proof):
     """Bind the full ETF inventory and rendered prices to their audited market dates."""
     from bs4 import BeautifulSoup
     validate_inventory(source, manifest)
-    if not isinstance(proof, dict) or type(proof.get("version")) is not int or proof["version"] != 2:
+    if not isinstance(proof, dict) or type(proof.get("version")) is not int or proof["version"] != 3:
         raise RuntimeError("ETF market-date proof has an unsupported version")
     market_dates = proof.get("market_dates", {})
     if (not isinstance(market_dates, dict) or set(market_dates) != {"US", "KR"}
@@ -566,7 +630,7 @@ def validate_etf_date_proof(source, manifest, proof):
     audits = {}
     counts = {"US": 0, "KR": 0}
     status_counts = {"market_close": 0, "latest_available": 0, "unavailable": 0}
-    calculation_fields = ("cagr1y", "cagr3y", "cagr5y", "cagr10y", "cumulative_return",
+    calculation_fields = ("return_ytd", "return1y", "return3y", "return5y", "return10y", "cumulative_return",
                           "cumulative_growth", "lifetime_cagr", "lifetime_years", "first_date", "last_date",
                           "price_start_date", "price_end_date", "return_as_of", "initial_adjusted_price",
                           "latest_adjusted_price", "price", "change", "gap")
@@ -587,6 +651,7 @@ def validate_etf_date_proof(source, manifest, proof):
               or record.get("return_as_of") != end
               or status != ("market_close" if end == anchor else "latest_available")):
             raise RuntimeError(f"ETF {country}:{ticker} actual price date or fallback status is inconsistent")
+        validate_period_return_evidence(record)
         audits[key] = record
         counts[country] += 1
         status_counts[status] += 1
@@ -628,7 +693,7 @@ def validate_etf_date_proof(source, manifest, proof):
                 raise RuntimeError("A newly appearing ETF is missing from the market-date audit")
     for row in doc.select("#returns tbody tr"):
         cells = row.find_all("td", recursive=False)
-        if len(cells) != 17:
+        if len(cells) != 18:
             raise RuntimeError("The ETF return table contains a malformed row")
         flag = cells[1].find("img")
         country = ("US" if flag and (flag.get("src") == "cid:u" or flag.get("alt") == "성조기")
@@ -639,8 +704,8 @@ def validate_etf_date_proof(source, manifest, proof):
             raise RuntimeError(f"Displayed ETF {country}:{ticker} is missing from the full market-date audit")
         if record["date_status"] == "unavailable":
             raise RuntimeError(f"Unavailable ETF {country}:{ticker} must not claim a ranked return")
-        for column, key, date_key in ((10, "initial_adjusted_price", "price_start_date"),
-                                      (11, "latest_adjusted_price", "price_end_date")):
+        for column, key, date_key in ((11, "initial_adjusted_price", "price_start_date"),
+                                      (12, "latest_adjusted_price", "price_end_date")):
             value = record.get(key)
             currency = record.get("price_currency")
             detail = (f'정확값 {price_exact_text(value)} · {record.get(date_key)} · '
@@ -651,15 +716,23 @@ def validate_etf_date_proof(source, manifest, proof):
                     or cell.get("title") != detail or clip is None
                     or clip.get("title") != price_text(value) + " · " + detail):
                 raise RuntimeError(f"Displayed ETF {country}:{ticker} price or date differs from its audit")
-        for column, key in ((5, "cagr1y"), (6, "cagr3y"), (7, "cagr5y"), (8, "cagr10y"),
-                            (9, "cumulative_return"), (12, "lifetime_cagr")):
+        for column, key in ((5, "return_ytd"), (6, "return1y"), (7, "return3y"), (8, "return5y"),
+                            (9, "return10y"), (10, "cumulative_return"), (13, "lifetime_cagr")):
             value = record.get(key)
             text = f"{value:.1f}" if isinstance(value, (int, float)) and math.isfinite(value) else "-"
             if cells[column].get_text() != text:
                 raise RuntimeError(f"Displayed ETF {country}:{ticker} {key} differs from its audited prices")
-        if cells[15].get_text() != elapsed_years_text(record.get("lifetime_years")):
+            period = {"return_ytd": "ytd", "return1y": "1y", "return3y": "3y", "return5y": "5y",
+                      "return10y": "10y", "cumulative_return": "cumulative"}.get(key)
+            if period:
+                detail = period_return_title(record, period)
+                clip = cells[column].select_one(".cl")
+                if (cells[column].get("title") != detail or clip is None
+                        or clip.get("title") != text + " · " + detail):
+                    raise RuntimeError(f"Displayed ETF {country}:{ticker} {key} period dates or prices differ from its audit")
+        if cells[16].get_text() != elapsed_years_text(record.get("lifetime_years")):
             raise RuntimeError(f"Displayed ETF {country}:{ticker} elapsed years differ from its audited dates")
-        date_cell, date_detail = cells[16], return_date_title(record, market_dates[country])
+        date_cell, date_detail = cells[17], return_date_title(record, market_dates[country])
         clip = date_cell.select_one(".cl")
         if (date_cell.get_text() != return_date_text(record) or date_cell.get("title") != date_detail
                 or clip is None or clip.get("title") != return_date_text(record) + " · " + date_detail):
@@ -674,5 +747,3 @@ def validate_size(source):
     if size > MAX_EMAIL_BYTES:
         raise RuntimeError(f"Email HTML {size:,} bytes exceeds {MAX_EMAIL_BYTES:,}; compact markup before sending, never remove candidates")
     return size
-
-
