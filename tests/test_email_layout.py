@@ -51,6 +51,7 @@ class EmailLayoutTests(unittest.TestCase):
         omitted = copy.deepcopy(proof)
         omitted["etfs"] = [row for row in omitted["etfs"] if row["ticker"] != "OUTSIDE100"]
         omitted["counts"]["US"] -= 1
+        omitted["status_counts"]["latest_available"] -= 1
         with self.assertRaisesRegex(RuntimeError, "cover every ETF"):
             validate_etf_date_proof(source, manifest, omitted)
 
