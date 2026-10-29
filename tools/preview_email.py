@@ -30,6 +30,7 @@ def make_stock(ticker, market="US", number=0, asset_type="주식"):
                     "https://m.stock.naver.com/worldstock/stock/" + ticker + "/total")}
 
 def sample_data():
+    import math
     us = [make_stock("US%04d" % i, number=i) for i in range(203)]
     kr = [make_stock("KR%04d" % i, market="KOSPI", number=i) for i in range(7)]
     us_etfs = [("SOXL", "Direxion Daily Semiconductor Bull 3X Shares"),
@@ -52,19 +53,22 @@ def sample_data():
             cumulative = (-99.7 if rank == 0 else -42.3 if rank == 1 else
                           103383.7 if rank == 19 else round((rank - 2) * 80.43, 2))
             initial_price = .123456789 if rank == 0 else 100.123456789 + rank
+            latest_price = initial_price * (1 + cumulative / 100)
+            growth = latest_price / initial_price
             item = make_stock(ticker, market="KOSPI" if korean else "US", number=rank, asset_type="ETF")
             item.update({"name": name, "aum": round(2.5 + rank * 1.35, 1),
                          "cagr1y": round(82.35 - rank * 3.67, 2),
                          "cagr3y": round(39.28 - rank * 1.5, 2),
                          "cagr5y": None if rank % 7 == 0 else round(24.46 - rank * .67, 2),
                          "cagr10y": None if rank % 3 == 0 else round(18.33 - rank * .31, 2),
-                         "cumulative_return": cumulative,
+                         "cumulative_return": round((growth - 1) * 100, 1),
+                         "cumulative_growth": growth,
                          "initial_adjusted_price": initial_price,
-                         "latest_adjusted_price": initial_price * (1 + cumulative / 100),
+                         "latest_adjusted_price": latest_price,
                          "price_start_date": "2016-05-19", "price_end_date": "2026-10-07",
                          "price_currency": "KRW" if korean else "USD",
                          "price_basis": "네이버 차트 종가·배당조정 미확인" if korean else "Yahoo 제공 수정주가(auto_adjust)",
-                         "lifetime_cagr": ((1 + cumulative / 100) ** (1 / lifetime_years) - 1) * 100,
+                         "lifetime_cagr": math.expm1(math.log(growth) / lifetime_years) * 100,
                          "lifetime_years": lifetime_years,
                          "etf_index": "FnGuide 차세대 인공지능 반도체 소부장 산업 지수" if korean else
                                       "Philadelphia Semiconductor Sector Total Return Index",

@@ -47,7 +47,7 @@ jobs:
           from pathlib import Path
           from tools.preview_email import sample_data, make_stock, manifest_for
           from src.email_layout import render_email
-          from src.main import validate_etf_market_dates, bind_market_date_proof
+          from src.main import validate_etf_market_dates, bind_market_date_proof, _etf_lifetime_metrics
           data = sample_data()
           base_etfs = data["etf_info"]["rows"]
           data["us"] = [make_stock("US%04d" % i, number=i, asset_type="주식" if i < 75 else "ETF") for i in range(229)]
@@ -68,6 +68,7 @@ jobs:
               row["initial_adjusted_price"] = .0000123456789012 if index == 0 else 100.123456789
               row["latest_adjusted_price"] = row["initial_adjusted_price"] * (1 + row["cumulative_return"] / 100)
               row["cumulative_growth"] = row["latest_adjusted_price"] / row["initial_adjusted_price"]
+              row.update(_etf_lifetime_metrics(row))
           data["etf_info"] = {"rows": [dict(row) for row in cohort[:100]], "pool": len(cohort), "with_ret": len(cohort)}
           data["new_us"] = data["us"][:5] + data["us"][75:99]
           data["new_kr"] = data["kr"][:1] + data["kr"][4:7]

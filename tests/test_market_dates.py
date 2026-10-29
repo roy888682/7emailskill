@@ -85,6 +85,18 @@ class MarketDateValidationTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             validate_etf_market_dates([item], [], market_info())
 
+    def test_past_date_status_does_not_excuse_invalid_prices_or_false_metadata(self):
+        for changed in ({"initial_adjusted_price":0}, {"latest_adjusted_price":float("nan")},
+                        {"price_basis":None}, {"price_currency":"KRW"},
+                        {"return_as_of":"2026-10-28"}, {"date_status":"market_close"},
+                        {"requested_market_date":"2026-10-29"}):
+            with self.subTest(changed=changed):
+                item = dict(etf(end="2026-10-27"), date_status="latest_available",
+                            requested_market_date="2026-10-28", return_as_of="2026-10-27")
+                item.update(changed)
+                with self.assertRaises(RuntimeError):
+                    validate_etf_market_dates([item], [], market_info())
+
     def test_every_candidate_is_checked_including_etfs_outside_the_top_hundred(self):
         candidates = [etf("ETF%03d" % index, latest=1000.0-index) for index in range(101)]
         stale = etf("STALE_OUTSIDE_TOP_100", end="2026-10-27", latest=100.01)
