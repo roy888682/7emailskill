@@ -1,0 +1,18 @@
+name: Compare full report delivery without attachment
+on:
+  push:
+    branches: [codex/report-noattachment-audit-20261030]
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Preserve full accepted report and resend without HTML attachment
+        env:
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
+        run: python tools/audit_noattachment_delivery.py
