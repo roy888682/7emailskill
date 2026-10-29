@@ -264,8 +264,8 @@ def etf_section_html(etf_info, include_details=False, info=None):
                      for period, label, _ in labels) +
              '<th class="number">최초주가</th><th class="number">최근주가</th>'
              '<th class="number">연평균</th>'
-             '<th class="number" data-field="aum">AUM·시총(원화)</th><th class="date-cell" data-field="inception">설립·상장일</th>'
-             '<th class="number" data-field="lifetime_years">누적연수</th><th class="date-cell">수익률 기준일</th></tr></thead><tbody>')
+             '<th class="number" data-field="aum">AUM·시총(원화)</th><th data-field="inception">설립·상장일</th>'
+             '<th class="number" data-field="lifetime_years">누적연수</th><th>수익률 기준일</th></tr></thead><tbody>')
     for rank, row in enumerate(rows, 1):
         country = "US" if row.get("market") == "US" else "KR"
         ticker = h(row.get("ticker"))

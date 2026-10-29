@@ -184,9 +184,12 @@ class EmailLayoutTests(unittest.TestCase):
         columns = table.select("col")
         for index, width in ((5, "4%"), (13, "4%"), (15, "7%"), (17, "6.5%")):
             self.assertEqual(columns[index].get("style"), "width:" + width)
-        for row in table.select("thead tr, tbody tr"):
+        for row in table.select("tbody tr"):
             for index in (15, 17):
-                self.assertIn("d", row.find_all(["td", "th"], recursive=False)[index].get("class", []))
+                self.assertIn("d", row.find_all("td", recursive=False)[index].get("class", []))
+        for index in (15, 17):
+            self.assertNotIn("d", table.select("thead th")[index].get("class", []))
+        self.assertRegex(CSS, r"\.data-table th\{[^}]*font-size:13px;[^}]*text-align:center!important")
         self.assertIn(".data-table .d{font-size:12.35px;text-align:center}", CSS)
         self.assertIn("각 기간 누적수익률", doc.get_text())
         self.assertNotIn("최근 1·3·5·10년: 연평균수익률", doc.get_text())
