@@ -1,0 +1,90 @@
+name: Verify ETF return dates
+on:
+  push:
+    branches: ['codex/verify-etf-dates-20261029']
+    paths: ['.github/workflows/verify_return_dates.yml']
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: d561477fff39cb5240b78921d10f44ac15ec2f63
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install report dependencies
+        run: pip install -r requirements.txt
+      - name: Reproduce captured QQQM and VGT returns with exact observation dates
+        run: |
+          python - <<'PY'
+          import bisect
+          import json
+          import math
+          from datetime import date
+          from pathlib import Path
+          import yfinance as yf
+          from src.main import _etf_price_performance, _etf_lifetime_metrics
+          
+          CUTOFF = date(2026, 10, 28)
+          EXPECTED = {
+              "QQQM": {"cagr1y": 15.4, "cagr3y": 28.6, "cagr5y": 14.4, "cagr10y": None, "cumulative_return": 154.5, "lifetime_cagr": 16.7, "lifetime_years": 6.04},
+              "VGT": {"cagr1y": 25.2, "cagr3y": 35.5, "cagr5y": 18.8, "cagr10y": 24.5, "cumulative_return": 2299.7, "lifetime_cagr": 15.0, "lifetime_years": 22.74},
+          }
+          raw = yf.download(list(EXPECTED), period="max", auto_adjust=True, group_by="ticker", progress=False, threads=False, timeout=30)
+          result = {}
+          series = {}
+          for ticker, shown in EXPECTED.items():
+              s = raw[ticker]["Close"].dropna()
+              s = s[[d.date() <= CUTOFF for d in s.index]]
+              if len(s) < 2:
+                  raise RuntimeError("Missing history: " + ticker)
+              series[ticker] = s
+              candidates = []
+              for length in range(max(2, len(s) - 9), len(s) + 1):
+                  candidate = s.iloc[:length]
+                  dates = [d.date() for d in candidate.index]
+                  prices = [float(p) for p in candidate.tolist()]
+                  perf = _etf_price_performance(dates, prices, price_basis="Yahoo provided adjusted close (auto_adjust)", price_currency="USD")
+                  metrics = _etf_lifetime_metrics({"ticker": ticker, "market": "US", **perf})
+                  if metrics is None:
+                      raise RuntimeError("Missing metrics: " + ticker)
+                  record = {**perf, **metrics}
+                  displayed = {key: (round(record[key], 2 if key == "lifetime_years" else 1) if record.get(key) is not None else None) for key in shown}
+                  mismatch = [key for key in shown if displayed[key] != shown[key]]
+                  periods = []
+                  for years in (1, 3, 5, 10):
+                      target = dates[-1].replace(year=dates[-1].year - years)
+                      index = bisect.bisect_right(dates, target) - 1
+                      periods.append({"years": years, "target": target.isoformat(), "start": dates[index].isoformat() if index >= 0 else None, "end": dates[-1].isoformat(), "initial_adjusted_price": prices[index] if index >= 0 else None, "latest_adjusted_price": prices[-1], "cagr": record["cagr" + str(years) + "y"]})
+                  entry = {"ticker": ticker, "displayed": displayed, "mismatches": mismatch, "record": record, "periods": periods}
+                  candidates.append(entry)
+                  print("DATE_CANDIDATE:" + json.dumps({"ticker": ticker, "end": dates[-1].isoformat(), "displayed": displayed, "mismatches": mismatch}), flush=True)
+              matched = [row for row in candidates if not row["mismatches"]]
+              print("RETURN_DATES_MATCH:" + json.dumps({"ticker": ticker, "matches": matched}, ensure_ascii=False), flush=True)
+              result[ticker] = {"matches": matched, "best": min(candidates, key=lambda row: len(row["mismatches"])), "freshest": candidates[-1]}
+              print("RETURN_DATES_BEST:" + json.dumps(result[ticker], ensure_ascii=False), flush=True)
+          shared_start = date(2020, 10, 13)
+          shared = []
+          for ticker, s in series.items():
+              s = s[[d.date() >= shared_start for d in s.index]]
+              dates = [d.date() for d in s.index]
+              prices = [float(p) for p in s.tolist()]
+              perf = _etf_price_performance(dates, prices, price_basis="Yahoo provided adjusted close (auto_adjust)", price_currency="USD")
+              metrics = _etf_lifetime_metrics({"ticker": ticker, "market": "US", **perf})
+              shared.append({"ticker": ticker, **perf, **metrics})
+          print("SHARED_PERIOD_AUDIT:" + json.dumps(shared), flush=True)
+          Path("return-date-audit.json").write_text(json.dumps({"expected": EXPECTED, "result": result, "shared_period": shared}, ensure_ascii=False, indent=2), encoding="utf-8")
+          
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: return-date-audit
+          path: return-date-audit.json
+          if-no-files-found: ignore
+          retention-days: 7
