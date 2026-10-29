@@ -190,12 +190,34 @@ def elapsed_years_text(value):
     return f"{value:.2f}년"
 
 
-def etf_section_html(etf_info, include_details=False):
+def market_date_text(value):
+    text = value.isoformat() if hasattr(value, "isoformat") else str(value or "")
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+        return "미확인"
+    try:
+        datetime.strptime(text, "%Y-%m-%d")
+    except ValueError:
+        return "미확인"
+    return text
+
+
+def market_date_caption(info):
+    labels = []
+    for country, label in (("KR", "한국"), ("US", "미국")):
+        value = market_date_text(info.get(country.lower() + "_last"))
+        labels.append(f'<span aria-label="{country} market date" title="{h(value)}">'
+                      f'{label} 수익률 기준일 {h(value)}</span>')
+    return '<p class="etf-caption" id="etf-market-dates">' + " · ".join(labels) + '</p>'
+
+
+def etf_section_html(etf_info, include_details=False, info=None):
     rows = etf_info.get("rows", [])
     head = ('<div class="section" id="etf"><h2>ETF 수익률 비교</h2>'
             f'<p class="intro">연평균 누적수익률 내림차순 · 상위 {len(rows)}개'
             f' · 산출 가능 {etf_info.get("with_ret", 0)} / 후보 {etf_info.get("pool", 0)}개</p>'
             '<p class="etf-caption">최근 1·3·5·10년: 연평균수익률(CAGR) · 누적: 정확한 최초·최근주가의 수익률 · 연평균 누적: 같은 가격 기간을 복리 환산 · 수익률 단위: %</p>')
+    if info is not None:
+        head += market_date_caption(info)
     if not rows:
         return head + '<p class="muted">해당 ETF 없음</p></div>'
     labels = (("1y", "1년", "cagr1y"), ("3y", "3년", "cagr3y"),
@@ -235,6 +257,7 @@ def etf_section_html(etf_info, include_details=False):
              '최초주가·최근주가는 화면에서 소수점 이하를 버리고 천 단위 쉼표로 표시하며, 수익률 계산에는 소수점을 생략하지 않은 정확한 원값을 사용합니다.<br>'
              '연평균 누적수익률 = [(1 + 누적수익률/100)^(1/누적연수) - 1] × 100. '
              '누적연수는 표시된 최초·최근 가격의 실제 기준일 차이 ÷ 365.25이며, 계산은 반올림 전 값으로 합니다.<br>'
+             '연평균 누적수익률은 누적수익률을 연수로 나눈 값이 아니라 복리 연환산(CAGR)입니다. 원금과 수익이 매년 함께 재투자된다고 가정합니다.<br>'
              '미국과 수정주가 확보 한국 ETF는 Yahoo 제공 수정주가(auto_adjust) 기준입니다. 수정주가 확보 불가 한국 ETF는 네이버 차트 종가이며 배당조정 미확인으로 구분합니다.<br>'
              '설립일 당일 가격이 없으면 실제 최초 확보일 가격을 표시합니다. 각 가격에 마우스를 올리면 소수점이 포함된 정확값·기준일·통화·가격 기준을 확인할 수 있습니다. 설립일 출처가 불명확하면 미확인으로 표시합니다.<br>'
              'DFAC: ETF 최초상장 2021-06-14, 전신 펀드 2007-10-04, 재편 후 존속 펀드 2005-09-15, 지분종류 재편 기준일 2026-10-02. ETF 최초상장 이후 가격으로 계산하며 재편일을 최초상장일로 사용하지 않습니다. '
@@ -352,7 +375,7 @@ def render_email(us, kr, info, usd_krw, new_us=None, new_kr=None, diag=None,
               f'<h1>오늘의 ATH &amp; ETF</h1><div class="date">{date_label} · 일일 시장 리포트</div>'
               f'<div class="foot">All Time High −10% 이내 · 원/달러 {usd_krw:,.0f}원</div></div>')
     html = (header + _summary(us, kr, info, indices) + new_summary(new_us, new_kr)
-            + etf_section_html(etf_info, include_details=False)
+            + etf_section_html(etf_info, include_details=False, info=info)
             + '<p class="notes">업종·투자분야: 주식은 기업 업종, ETF는 제공업체 분류를 표시합니다. 분류가 없으면 명칭 기준으로 표시합니다.</p>'
             + stocks_table(kr, "한국 ATH 후보", "KRW", info.get("kr_holiday", False),
                            info.get("kr_last_str", "-"), info.get("kr_holiday_msg", ""),
@@ -501,6 +524,101 @@ def validate_inventory(source, expected):
     if actual != expected:
         raise RuntimeError("Email tables do not exactly match collected candidates")
     return actual
+
+
+def validate_etf_date_proof(source, manifest, proof):
+    """Bind the full ETF inventory and rendered prices to their audited market dates."""
+    from bs4 import BeautifulSoup
+    validate_inventory(source, manifest)
+    if not isinstance(proof, dict) or type(proof.get("version")) is not int or proof["version"] != 1:
+        raise RuntimeError("ETF market-date proof has an unsupported version")
+    market_dates = proof.get("market_dates", {})
+    if (not isinstance(market_dates, dict) or set(market_dates) != {"US", "KR"}
+            or any(not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value)
+                   or market_date_text(value) != value for value in market_dates.values())):
+        raise RuntimeError("ETF market-date proof is missing valid country dates")
+    records = proof.get("etfs")
+    if not isinstance(records, list):
+        raise RuntimeError("ETF market-date proof has no complete ETF audit list")
+    audits = {}
+    counts = {"US": 0, "KR": 0}
+    for record in records:
+        if not isinstance(record, dict):
+            raise RuntimeError("ETF market-date proof contains a malformed audit row")
+        country, ticker = record.get("country"), str(record.get("ticker") or "")
+        key = (country, ticker)
+        if country not in counts or not ticker or key in audits or record.get("asset_type") != "ETF":
+            raise RuntimeError("ETF market-date proof has invalid or duplicate securities")
+        if record.get("price_end_date") != market_dates[country]:
+            raise RuntimeError(f"ETF {country}:{ticker} price date differs from its market date")
+        audits[key] = record
+        counts[country] += 1
+    if proof.get("counts") != counts:
+        raise RuntimeError("ETF market-date proof country counts do not match its full audit list")
+    doc = BeautifulSoup(source, "html5lib")
+    def row_ticker(cells):
+        anchor = cells[2].find("a")
+        if anchor is None or not anchor.get_text(strip=True):
+            raise RuntimeError("An audited ETF is missing its ticker link")
+        return anchor.get_text(strip=True)
+    caption = doc.find(id="etf-market-dates")
+    if caption is None:
+        raise RuntimeError("ETF report is missing its visible market-date caption")
+    for country, label in (("KR", "한국"), ("US", "미국")):
+        node = caption.find("span", attrs={"aria-label": country + " market date"})
+        value = market_dates[country]
+        if (node is None or node.get("title") != value
+                or node.get_text() != f"{label} 수익률 기준일 {value}"):
+            raise RuntimeError(f"ETF {country} report caption differs from its audited market date")
+    observed = set()
+    for country in ("US", "KR"):
+        for row in doc.select("#" + country.lower() + " tbody tr"):
+            cells = row.find_all("td", recursive=False)
+            if len(cells) != 11:
+                raise RuntimeError("An ETF country table contains a malformed row")
+            if cells[5].get_text(strip=True) == "ETF":
+                observed.add((country, row_ticker(cells)))
+    if observed != set(audits):
+        raise RuntimeError("ETF market-date proof does not cover every ETF in the country tables")
+    for country in ("KR", "US"):
+        for row in doc.select("#new-" + country.lower() + " tbody tr"):
+            cells = row.find_all("td", recursive=False)
+            if len(cells) != 10:
+                raise RuntimeError("A newly appearing ETF table contains a malformed row")
+            if cells[5].get_text(strip=True) == "ETF" and (country, row_ticker(cells)) not in audits:
+                raise RuntimeError("A newly appearing ETF is missing from the market-date audit")
+    for row in doc.select("#returns tbody tr"):
+        cells = row.find_all("td", recursive=False)
+        if len(cells) != 16:
+            raise RuntimeError("The ETF return table contains a malformed row")
+        flag = cells[1].find("img")
+        country = ("US" if flag and (flag.get("src") == "cid:u" or flag.get("alt") == "성조기")
+                   else "KR" if flag and (flag.get("src") == "cid:k" or flag.get("alt") == "태극기") else None)
+        ticker = row_ticker(cells)
+        record = audits.get((country, ticker))
+        if record is None:
+            raise RuntimeError(f"Displayed ETF {country}:{ticker} is missing from the full market-date audit")
+        for column, key, date_key in ((10, "initial_adjusted_price", "price_start_date"),
+                                      (11, "latest_adjusted_price", "price_end_date")):
+            value = record.get(key)
+            currency = record.get("price_currency")
+            detail = (f'정확값 {price_exact_text(value)} · {record.get(date_key)} · '
+                      f'{record.get("price_basis")} · {currency}')
+            cell = cells[column]
+            clip = cell.select_one(".cl")
+            if (price_exact_text(value) == "-" or cell.get_text() != price_text(value)
+                    or cell.get("title") != detail or clip is None
+                    or clip.get("title") != price_text(value) + " · " + detail):
+                raise RuntimeError(f"Displayed ETF {country}:{ticker} price or date differs from its audit")
+        for column, key in ((5, "cagr1y"), (6, "cagr3y"), (7, "cagr5y"), (8, "cagr10y"),
+                            (9, "cumulative_return"), (12, "lifetime_cagr")):
+            value = record.get(key)
+            text = f"{value:.1f}" if isinstance(value, (int, float)) and math.isfinite(value) else "-"
+            if cells[column].get_text() != text:
+                raise RuntimeError(f"Displayed ETF {country}:{ticker} {key} differs from its audited prices")
+        if cells[15].get_text() != elapsed_years_text(record.get("lifetime_years")):
+            raise RuntimeError(f"Displayed ETF {country}:{ticker} elapsed years differ from its audited dates")
+    return dict(market_dates)
 
 
 MAX_EMAIL_BYTES = MAX_BODY_BYTES

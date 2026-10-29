@@ -6,7 +6,8 @@ from email import message_from_bytes
 from pathlib import Path
 from unittest.mock import patch
 
-from src.main import compose_email_message, send_email, build_subject, main, send_prepared
+from src.main import (compose_email_message, send_email, build_subject, main, send_prepared,
+                      validate_etf_market_dates, bind_market_date_proof)
 from tools.preview_email import sample_data, make_stock
 from datetime import date
 import re
@@ -97,7 +98,7 @@ class EmailDeliveryTests(unittest.TestCase):
     def test_main_sends_all_218_us_and_17_kr_in_one_message(self):
         data = sample_data()
         data["us"].extend(make_stock(f"EXTRA{i}", number=i) for i in range(5))
-        info = dict(data["info"], us_last=date(2026,10,8), kr_last=date(2026,10,8))
+        info = dict(data["info"], us_last=date(2026,10,7), kr_last=date(2026,10,7))
         with (
             patch("src.main.get_trading_info", return_value=info),
             patch("src.main.get_usd_krw", return_value=1342),
@@ -121,12 +122,16 @@ class EmailDeliveryTests(unittest.TestCase):
     def test_prepared_delivery_requires_complete_matching_browser_proof(self):
         import hashlib, json
         data = sample_data()
-        html = render_email([], [], data["info"], 1342)
+        info = dict(data["info"], us_last=date(2026,10,7), kr_last=date(2026,10,7))
+        html = render_email([], [], info, 1342)
         manifest = inventory(html)
+        market_proof = bind_market_date_proof(html, manifest, validate_etf_market_dates([], [], info))
+        market_bytes = json.dumps(market_proof, ensure_ascii=False, indent=2).encode("utf-8")
         proof = {"sha256":hashlib.sha256(html.encode("utf-8")).hexdigest(),
                  "all_passed":True, "layout_unchanged":True, "html_bytes":len(html.encode("utf-8")),
                  "counts":{key:len(values) for key,values in manifest.items()},
-                 "hosts":["standalone","gmail"], "viewports":[900,1024,1280,1600,1920]}
+                 "hosts":["standalone","gmail"], "viewports":[900,1024,1280,1600,1920],
+                 "market_dates_checked":True,"market_dates_sha256":hashlib.sha256(market_bytes).hexdigest()}
         with tempfile.TemporaryDirectory() as directory:
             original = os.getcwd()
             try:
@@ -134,6 +139,7 @@ class EmailDeliveryTests(unittest.TestCase):
                 Path("work").mkdir()
                 Path("work/email-body.html").write_text(html, encoding="utf-8")
                 Path("work/report-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+                Path("work/market-date-proof.json").write_bytes(market_bytes)
                 Path("work/email-subject.txt").write_text("test", encoding="utf-8")
                 Path("work/pending-snapshots.json").write_text("{}", encoding="utf-8")
                 delivery,package=native_email.prepare(html,manifest,Path("work"))
@@ -142,7 +148,8 @@ class EmailDeliveryTests(unittest.TestCase):
                              delivery_checked=True,delivery_viewports=[900,1024,1280,1600,1920],
                              native_checked=True,us_font_matches_kr=True,high_font_matches_kr=True,
                              us_link_clicks=0,numbering_checked=True)
-                for change in ({"native_checked":False}, {"high_font_matches_kr":False}, {"us_font_matches_kr":False}, {"delivery_viewports":[1600,1920]}, {"numbering_checked":False}, {"us_link_clicks":1}, {"delivery_checked":False}, {"delivery_sha256":"bad"}, {"native_package_sha256":"bad"}, {"delivery_viewports":[]}, {"all_passed":False}, {"layout_unchanged":False}, {"html_bytes":1}, {"hosts":["standalone"]},
+                for change in ({"market_dates_checked":False}, {"market_dates_sha256":"bad"},
+                               {"native_checked":False}, {"high_font_matches_kr":False}, {"us_font_matches_kr":False}, {"delivery_viewports":[1600,1920]}, {"numbering_checked":False}, {"us_link_clicks":1}, {"delivery_checked":False}, {"delivery_sha256":"bad"}, {"native_package_sha256":"bad"}, {"delivery_viewports":[]}, {"all_passed":False}, {"layout_unchanged":False}, {"html_bytes":1}, {"hosts":["standalone"]},
                                {"viewports":[1024]}, {"counts":{}}, {"sha256":"bad"}):
                     with self.subTest(change=change):
                         Path("work/preview-passed.json").write_text(json.dumps(dict(proof, **change)), encoding="utf-8")
@@ -150,6 +157,22 @@ class EmailDeliveryTests(unittest.TestCase):
                             with self.assertRaises(RuntimeError):
                                 send_prepared()
                             send.assert_not_called()
+                for change in ({"body_sha256":"bad"}, {"manifest_sha256":"bad"},
+                               {"counts":{"US":1,"KR":0}},
+                               {"market_dates":{"US":"2026-10-06","KR":"2026-10-07"}}):
+                    with self.subTest(market_audit=change):
+                        altered_bytes = json.dumps(dict(market_proof, **change), ensure_ascii=False, indent=2).encode("utf-8")
+                        Path("work/market-date-proof.json").write_bytes(altered_bytes)
+                        # A matching file hash must not hide a false date, audit count,
+                        # or a proof bound to a different source/manifest.
+                        altered_proof = dict(proof, market_dates_sha256=hashlib.sha256(altered_bytes).hexdigest())
+                        Path("work/preview-passed.json").write_text(json.dumps(altered_proof), encoding="utf-8")
+                        with patch("src.main.send_email") as send, patch("src.main.smtplib.SMTP_SSL") as smtp:
+                            with self.assertRaises(RuntimeError):
+                                send_prepared()
+                            send.assert_not_called()
+                            smtp.assert_not_called()
+                Path("work/market-date-proof.json").write_bytes(market_bytes)
                 Path("work/preview-passed.json").write_text(json.dumps(proof), encoding="utf-8")
                 with patch("src.main.send_email") as send, patch("src.main.save_snapshots"):
                     send_prepared()

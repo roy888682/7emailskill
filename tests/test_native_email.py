@@ -8,8 +8,8 @@ from unittest.mock import patch
 
 from bs4 import BeautifulSoup
 from src import native_email
-from src.email_layout import inventory, render_email
-from tools.preview_email import sample_data, make_stock
+from src.email_layout import inventory, render_email, validate_etf_date_proof
+from tools.preview_email import sample_data, make_stock, manifest_for
 
 
 def fixture(count=218, long_names=False):
@@ -34,6 +34,25 @@ def fixture(count=218, long_names=False):
 
 
 class NativeEmailTests(unittest.TestCase):
+    def test_native_delivery_preserves_audited_market_dates_and_exact_price_dates(self):
+        data = sample_data()
+        data["new_us"] = [row for row in data["us"] if row.get("asset_type") == "ETF"][:2]
+        data["new_kr"] = [row for row in data["kr"] if row.get("asset_type") == "ETF"][:2]
+        source, manifest = render_email(**data), manifest_for(data)
+        records = [dict(row, country=country) for country, rows in (("US", data["us"]), ("KR", data["kr"]))
+                   for row in rows if row.get("asset_type") == "ETF"]
+        proof = {"version": 1, "market_dates": {"US": "2026-10-07", "KR": "2026-10-07"},
+                 "etfs": records,
+                 "counts": {country: sum(row["country"] == country for row in records) for country in ("US", "KR")}}
+        with tempfile.TemporaryDirectory() as directory:
+            delivery, meta = native_email.prepare(source, manifest, directory)
+            self.assertEqual(native_email.verify_package(source, delivery, manifest, meta, directory), {})
+            for html in (source, delivery):
+                self.assertEqual(validate_etf_date_proof(html, manifest, proof), proof["market_dates"])
+            original = BeautifulSoup(source, "html5lib").select_one("#etf-market-dates")
+            delivered = BeautifulSoup(delivery, "html5lib").select_one("#etf-market-dates")
+            self.assertEqual(str(delivered), str(original))
+
     def test_colgroup_widths_remain_exact_across_html5_transport_roundtrips(self):
         source = ('<table><colgroup><col style="width:3%"/>'
                   '<col style="width:126px"/><col/></colgroup>'

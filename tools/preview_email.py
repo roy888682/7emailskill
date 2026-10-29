@@ -76,7 +76,8 @@ def sample_data():
             etfs.append(item)
             (kr if korean else us).append(item)
     etfs.sort(key=lambda item: item["lifetime_cagr"], reverse=True)
-    info = {"us_last_str": "2026년 10월 07일(수)", "kr_last_str": "2026년 10월 07일(수)",
+    info = {"us_last": date(2026, 10, 7), "kr_last": date(2026, 10, 7),
+            "us_last_str": "2026년 10월 07일(수)", "kr_last_str": "2026년 10월 07일(수)",
             "us_holiday": False, "kr_holiday": False, "us_holiday_msg": "", "kr_holiday_msg": ""}
     return {"us": us, "kr": kr, "info": info, "usd_krw": 1343.4, "new_us": us[:119], "new_kr": kr[:1],
             "diag": {"us_days_before": 66, "kr_days_before": 59},
@@ -204,6 +205,8 @@ LAYOUT_CHECK = r"""expected => {
  }
  const returns=document.getElementById("returns");
  const newIds=["new-kr","new-us"],newTables=newIds.map(id=>document.getElementById(id)).filter(Boolean);
+ if(expected.new.length&&newIds.some(id=>document.querySelectorAll("#"+id).length!==1))
+   problems.push("A nonempty new-security report must contain exactly one table for each country");
  if(document.getElementById("new")||Array.from(document.querySelectorAll(".new-table")).some(table=>!newIds.includes(table.id)))
    problems.push("New securities must use separate Korean and US tables");
  for(const table of newTables)
@@ -399,6 +402,31 @@ LAYOUT_CHECK = r"""expected => {
  };
 }"""
 
+MARKET_DATE_CHECK = r"""expected => {
+ const problems=[],marketDates={},counts={US:0,KR:0};
+ const caption=document.getElementById('etf-market-dates');
+ for(const [country,label] of [['KR','한국'],['US','미국']]){
+   const node=caption?.querySelector('[aria-label="'+country+' market date"]');
+   const date=expected[country];
+   marketDates[country]=node?.getAttribute('title')||null;
+   if(!node||!/^\d{4}-\d{2}-\d{2}$/.test(date||'')||
+      node.getAttribute('title')!==date||node.textContent!==label+' 수익률 기준일 '+date||
+      !node.getClientRects().length||getComputedStyle(node).visibility!=='visible')
+     problems.push(country+' market date must be visibly labeled and match its audit');
+ }
+ for(const row of document.querySelectorAll('#returns tbody tr')){
+   const flag=row.cells[1]?.querySelector('img');
+   const country=flag?.alt==='성조기'?'US':flag?.alt==='태극기'?'KR':null;
+   const cell=row.cells[11];
+   const titles=[cell?.getAttribute('title')||'',...Array.from(cell?.querySelectorAll('[title]')||[]).map(node=>node.title)];
+   const dates=titles.map(title=>title.match(/\d{4}-\d{2}-\d{2}/)?.[0]).filter(Boolean);
+   if(!country||dates.length<2||dates.some(date=>date!==expected[country]))
+     problems.push('ETF '+row.cells[2]?.textContent.trim()+' latest price date differs from its country market date');
+   if(country)counts[country]++;
+ }
+ return {market_dates:marketDates,etfs_checked:counts,problems};
+}"""
+
 def cropped_table_image(page, table_id, output, marker):
     if not page.locator("#" + table_id).count():
         return
@@ -487,7 +515,7 @@ NATIVE_FONT_CHECK = r"""() => {
 }"""
 
 
-def verify_actual_display(browser, source, delivery, expected, output):
+def verify_actual_display(browser, source, delivery, expected, output, market_dates):
     """Compare native text, links and pixels with the complete accepted source."""
     from src.email_flags import inline_flag_sources
     document = inline_flag_sources(delivery)
@@ -502,6 +530,9 @@ def verify_actual_display(browser, source, delivery, expected, output):
                 displayed.set_content(gmail_host_html(document) if host=="gmail" else document,wait_until="load")
                 for page in (original,displayed):
                     page.evaluate("document.fonts.ready")
+                    date_check=page.evaluate(MARKET_DATE_CHECK,market_dates)
+                    if date_check["problems"]:
+                        raise AssertionError("; ".join(date_check["problems"]))
                     if page.evaluate("document.documentElement.scrollWidth>window.innerWidth+1.5"):
                         raise AssertionError("Actual native delivery overflows the desktop window")
                     if page.evaluate("Array.from(document.images).some(img=>!img.complete||!img.naturalWidth)"):
@@ -569,6 +600,8 @@ def verify_actual_display(browser, source, delivery, expected, output):
                 print("DELIVERY_DISPLAY_QA:"+json.dumps({"host":host,"viewport":width,
                       "us":len(expected["us"]),"native":True,"pixels_identical":True,
                       "all_rows_fields_links_preserved":True}),flush=True)
+                print("ETF_MARKET_DATE_QA:"+json.dumps({"host":host,"viewport":width,
+                      "native":True,**date_check}),flush=True)
                 if host=="gmail" and width==1600:
                     for table_id,filename,marker in (
                         ("us","email-actual-native-us.png","PREVIEW_IMAGE_ACTUAL_DELIVERY_US"),
@@ -622,8 +655,8 @@ def main():
     if args.html and not args.manifest:
         parser.error("--manifest is required with --html to verify every candidate")
     from src.email_flags import inline_flag_sources
-    from src.main import compose_email_message
-    from src import report_inline, native_email
+    from src.main import compose_email_message, validate_etf_market_dates, bind_market_date_proof
+    from src import report_inline, native_email, email_layout
     from playwright.sync_api import sync_playwright
     args.output.mkdir(parents=True, exist_ok=True)
     proof_path = args.output / "preview-passed.json"
@@ -631,10 +664,21 @@ def main():
     if args.html:
         source = args.html.read_text(encoding="utf-8")
         expected = normalize_manifest(json.loads(args.manifest.read_text(encoding="utf-8")))
+        market_proof_bytes = (args.html.parent / "market-date-proof.json").read_bytes()
+        market_proof = json.loads(market_proof_bytes.decode("utf-8"))
     else:
-        source = build_preview_html()
         data = preview_data()
+        source = email_layout.render_email(**data)
         expected = manifest_for(data)
+        market_proof = bind_market_date_proof(source,expected,
+            validate_etf_market_dates(data["us"],data["kr"],data["info"]))
+        market_proof_bytes = json.dumps(market_proof,ensure_ascii=False,sort_keys=True).encode("utf-8")
+        (args.output / "market-date-proof.json").write_bytes(market_proof_bytes)
+    bound_market_proof = bind_market_date_proof(source,expected,market_proof)
+    if any(market_proof.get(key) != bound_market_proof.get(key)
+           for key in ("body_sha256", "manifest_sha256")):
+        raise RuntimeError("ETF market-date proof is not bound to this report body and manifest")
+    market_dates = email_layout.validate_etf_date_proof(source,expected,market_proof)
     size = native_email.validate_source_size(source)
     print("PREVIEW_HTML_BYTES:%d" % size, flush=True)
     html_source = inline_flag_sources(source)
@@ -661,6 +705,9 @@ def main():
                         page.set_content(document, wait_until="load")
                         page.evaluate("document.fonts.ready")
                         result = page.evaluate(LAYOUT_CHECK, expected)
+                        date_check = page.evaluate(MARKET_DATE_CHECK,market_dates)
+                        result["market_dates"] = date_check["market_dates"]
+                        result["problems"].extend(date_check["problems"])
                         result["host"] = host
                         print("LAYOUT_QA:%s" % json.dumps(result, ensure_ascii=False), flush=True)
                         if result["problems"]:
@@ -689,6 +736,7 @@ def main():
                     finally:
                         page.close()
             delivery,package=native_email.prepare(source,expected,args.output)
+            email_layout.validate_etf_date_proof(delivery,expected,market_proof)
             assets=native_email.verify_package(source,delivery,expected,package,args.output)
             if assets != {}:
                 raise AssertionError("Native production delivery must not contain report PNGs")
@@ -698,7 +746,7 @@ def main():
             print("DELIVERY_CANONICAL_BYTES:%d" % native_email.validate_delivery_size(delivery)[1],flush=True)
             print("DELIVERY_WIRE_BYTES:%d" % len(wire.as_bytes()),flush=True)
             print("US_NATIVE_COVERAGE:%d" % len(expected["us"]),flush=True)
-            us_font_matches_kr=verify_actual_display(browser,html_source,delivery,expected,args.output)
+            us_font_matches_kr=verify_actual_display(browser,html_source,delivery,expected,args.output,market_dates)
         finally:
             browser.close()
     digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
@@ -714,6 +762,8 @@ def main():
         "high_font_matches_kr":True,
         "us_link_clicks":len(expected["us"]),"numbering_checked":True,
         "new_country_numbering":new_numbering,"exact_price_titles_checked":True,
+        "market_dates_checked":True,"market_dates":market_dates,
+        "market_dates_sha256":hashlib.sha256(market_proof_bytes).hexdigest(),
     }
     proof_path.write_text(json.dumps(proof, ensure_ascii=False, indent=2), encoding="utf-8")
     print("PREVIEW_PASSED:%s" % json.dumps(proof, ensure_ascii=False), flush=True)

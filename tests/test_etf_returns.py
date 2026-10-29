@@ -177,6 +177,16 @@ class EtfLifetimeMetricTests(unittest.TestCase):
         self.assertNotEqual(metrics["lifetime_cagr"], 100 / metrics["lifetime_years"])
         self.assertEqual(metrics["return_as_of"], "2026-01-01")
 
+    def test_qqqm_displayed_lifetime_return_uses_exact_observed_days(self):
+        item = self.example(first_date="2020-10-13", last_date="2026-10-27",
+                            inception="2020-10-13", initial_adjusted_price=116.67774200439453,
+                            latest_adjusted_price=296.9599914550781, cumulative_return=154.5)
+        metrics = _etf_lifetime_metrics(item)
+        self.assertEqual(metrics["lifetime_years"], 2205 / 365.25)
+        self.assertAlmostEqual(metrics["lifetime_cagr"], 16.73587187, places=8)
+        self.assertEqual(metrics["cumulative_return"], 154.5)
+        self.assertNotEqual(metrics["lifetime_cagr"], 154.5 / metrics["lifetime_years"])
+
     def test_earlier_official_inception_does_not_inflate_actual_price_interval(self):
         metrics = _etf_lifetime_metrics(self.example(inception="2020-01-01"))
         expected_years = (date(2026, 1, 1) - date(2024, 1, 2)).days / 365.25

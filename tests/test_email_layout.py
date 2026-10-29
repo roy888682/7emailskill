@@ -1,11 +1,14 @@
 """Regressions for the restored 38-security desktop table and direct delivery."""
+import copy
 import unittest
+from datetime import date
 from bs4 import BeautifulSoup
 from src.email_layout import (render_email, etf_section_html, inception_text,
                               row_size, row_size_html, aum, industry_text, inventory, validate_size,
                               validate_inventory, MAX_EMAIL_BYTES, CSS, compact_transport_html, security_count,
-                              elapsed_years_text, price_text, brief_investment_text)
-from tools.preview_email import sample_data, make_stock
+                              elapsed_years_text, price_text, brief_investment_text,
+                              validate_etf_date_proof)
+from tools.preview_email import sample_data, make_stock, manifest_for
 
 class EmailLayoutTests(unittest.TestCase):
     def setUp(self):
@@ -13,6 +16,68 @@ class EmailLayoutTests(unittest.TestCase):
         self.data["us"].extend(make_stock(f"EXTRA{i}", number=i) for i in range(5))
         self.data["new_us"] = self.data["us"][:29]
         self.data["new_kr"] = self.data["kr"][:4]
+
+    def market_proof(self, data=None):
+        data = data or self.data
+        records = [dict(row, country=country) for country, items in (("US", data["us"]), ("KR", data["kr"]))
+                   for row in items if row.get("asset_type") == "ETF"]
+        return {"version": 1, "market_dates": {"US": "2026-10-07", "KR": "2026-10-07"},
+                "etfs": records,
+                "counts": {country: sum(row["country"] == country for row in records) for country in ("US", "KR")}}
+
+    def test_country_market_dates_are_visible_and_survive_compaction(self):
+        self.data["info"]["kr_last"] = date(2026, 10, 8)
+        doc = BeautifulSoup(render_email(**self.data), "html5lib")
+        for country, label, expected in (("KR", "한국", "2026-10-08"), ("US", "미국", "2026-10-07")):
+            node = doc.select_one('#etf-market-dates [aria-label="' + country + ' market date"]')
+            self.assertEqual(node["title"], expected)
+            self.assertEqual(node.get_text(), f"{label} 수익률 기준일 {expected}")
+        self.assertIn("복리 연환산(CAGR)", doc.get_text())
+        self.assertIn("원금과 수익이 매년 함께 재투자", doc.get_text())
+
+    def test_full_etf_market_proof_covers_even_funds_outside_the_comparison(self):
+        extra = dict(next(row for row in self.data["us"] if row.get("asset_type") == "ETF"), ticker="OUTSIDE100")
+        self.data["us"].append(extra)
+        source = render_email(**self.data)
+        manifest = manifest_for(self.data)
+        proof = self.market_proof()
+        self.assertNotIn("OUTSIDE100", manifest["etf"])
+        self.assertEqual(validate_etf_date_proof(source, manifest, proof), proof["market_dates"])
+        stale = copy.deepcopy(proof)
+        next(row for row in stale["etfs"] if row["ticker"] == "OUTSIDE100")["price_end_date"] = "2026-10-06"
+        with self.assertRaisesRegex(RuntimeError, "price date differs"):
+            validate_etf_date_proof(source, manifest, stale)
+        omitted = copy.deepcopy(proof)
+        omitted["etfs"] = [row for row in omitted["etfs"] if row["ticker"] != "OUTSIDE100"]
+        omitted["counts"]["US"] -= 1
+        with self.assertRaisesRegex(RuntimeError, "cover every ETF"):
+            validate_etf_date_proof(source, manifest, omitted)
+
+    def test_new_badges_do_not_change_audited_etf_ticker_membership(self):
+        self.data["new_us"] = [next(row for row in self.data["us"] if row.get("asset_type") == "ETF")]
+        self.data["new_kr"] = [next(row for row in self.data["kr"] if row.get("asset_type") == "ETF")]
+        source = render_email(**self.data)
+        self.assertIn("신규", BeautifulSoup(source, "html5lib").select_one("#us tbody").get_text())
+        proof = self.market_proof()
+        self.assertEqual(validate_etf_date_proof(source, manifest_for(self.data), proof), proof["market_dates"])
+
+    def test_market_proof_rejects_changed_caption_price_date_or_precise_price(self):
+        source = render_email(**self.data)
+        manifest, proof = manifest_for(self.data), self.market_proof()
+        for field in ("caption", "date", "price"):
+            with self.subTest(field=field):
+                doc = BeautifulSoup(source, "html5lib")
+                if field == "caption":
+                    node = doc.select_one('#etf-market-dates [aria-label="US market date"]')
+                    node["title"] = "2026-10-06"
+                else:
+                    cell = doc.select_one("#returns tbody tr").find_all("td", recursive=False)[11]
+                    if field == "date":
+                        cell["title"] = cell["title"].replace("2026-10-07", "2026-10-06")
+                    else:
+                        cell["title"] = cell["title"].replace("정확값 ", "정확값 9", 1)
+                with self.assertRaises(RuntimeError):
+                    validate_etf_date_proof(str(doc), manifest, proof)
     def test_includes_all_218_us_and_17_kr_rows(self):
         body = render_email(**self.data)
         actual = inventory(body)

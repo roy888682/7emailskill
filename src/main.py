@@ -226,12 +226,11 @@ def get_trading_info():
     today=datetime.now(KST).date(); expected=prev_weekday(today)
     def lt(sym):
         try:
-            today_kst=datetime.now(KST).date()
             h=yf.Ticker(sym).history(period="10d",auto_adjust=True)
             if h.empty: return None
-            # 오늘 날짜 제외 — yfinance가 오늘 날짜를 포함해서 반환하는 경우 방지
+            # 수동 재발송이 장중이어도 직전 평일을 넘는 미완성 거래일은 기준일로 쓰지 않음.
             dates=[d.date() if hasattr(d,"date") else d for d in h.index]
-            past=[d for d in dates if d<today_kst]
+            past=[d for d in dates if d<=expected]
             return max(past) if past else None
         except: return None
     us_last=lt("SPY"); kr_last=lt("005930.KS")
@@ -341,6 +340,7 @@ def _performance_date(value):
 def _validated_etf_metadata(item):
     """Reject inception metadata contradicted by actual earlier price history."""
     result = dict(item)
+    result.pop("price_history_inception_mismatch", None)
     if item.get("market") == "US" and item.get("ticker") in US_ETF_VERIFIED_LAUNCH:
         result.update(US_ETF_VERIFIED_LAUNCH[item["ticker"]])
         result["inception_verified"] = True
@@ -408,6 +408,186 @@ def _etf_lifetime_metrics(item):
             "inception": item.get("inception"),
             "inception_source": item.get("inception_source"),
             "inception_verified": item.get("inception_verified", False)}
+
+
+def _etf_market_date_error(item, anchor, country):
+    if anchor is None:
+        return "market reference date is missing or invalid"
+    end = _performance_date(item.get("price_end_date"))
+    start = _performance_date(item.get("price_start_date"))
+    if end != anchor:
+        return f"price_end_date={item.get('price_end_date')} expected={anchor.isoformat()}"
+    if start is None or start >= end:
+        return "initial price date is missing, invalid, or not before the market date"
+    for key, actual in (("first_date", start), ("last_date", end)):
+        if item.get(key) is not None and _performance_date(item[key]) != actual:
+            return f"{key} contradicts the observed price date"
+    try:
+        prices = [item.get("initial_adjusted_price"), item.get("latest_adjusted_price")]
+        if any(isinstance(value, bool) or not math.isfinite(float(value)) or float(value) <= 0 for value in prices):
+            return "initial/latest prices must be finite and positive"
+    except (TypeError, ValueError, OverflowError):
+        return "initial/latest prices are missing or invalid"
+    if not isinstance(item.get("price_basis"), str) or not item["price_basis"].strip():
+        return "price provider/basis is missing"
+    if item.get("price_currency") != ("USD" if country == "US" else "KRW"):
+        return "price currency does not match its market"
+    if _etf_lifetime_metrics(item) is None:
+        return "the complete observed price interval cannot be annualized"
+    return None
+
+
+def validate_etf_market_dates(us, kr, info):
+    """Audit every collected ETF, including those outside the comparison's top 100."""
+    anchors = {"US": _performance_date(info.get("us_last")),
+               "KR": _performance_date(info.get("kr_last"))}
+    audit, errors, seen = [], [], set()
+    keys = ("inception", "inception_source", "inception_verified", "inception_label",
+            "cagr1y", "cagr3y", "cagr5y", "cagr10y", "cumulative_return",
+            "cumulative_growth", "lifetime_cagr", "lifetime_years", "return_as_of",
+            "initial_adjusted_price", "latest_adjusted_price", "price_basis", "price_currency")
+    counts = {"US": 0, "KR": 0}
+    for country, rows in (("US", us), ("KR", kr)):
+        for item in rows:
+            if item.get("asset_type") != "ETF":
+                continue
+            ticker = str(item.get("ticker") or "")
+            identity = (country, ticker)
+            reason = _etf_market_date_error(item, anchors[country], country)
+            if not ticker or identity in seen:
+                reason = "missing or duplicate ETF identity"
+            seen.add(identity)
+            if reason:
+                errors.append(f"{country}:{ticker}: {reason}")
+                continue
+            complete = {**_validated_etf_metadata(item), **_etf_lifetime_metrics(item)}
+            start, end = complete["price_start_date"], complete["price_end_date"]
+            audit.append({"country": country, "ticker": ticker, "asset_type": "ETF",
+                          "market": item.get("market") or country,
+                          "first_date": start, "last_date": end,
+                          "price_start_date": start, "price_end_date": end,
+                          **{key: complete.get(key) for key in keys}})
+            counts[country] += 1
+    if errors:
+        raise RuntimeError("ETF market-date validation failed: " + "; ".join(errors))
+    return {"version": 1,
+            "market_dates": {country: value.isoformat() if value else None for country, value in anchors.items()},
+            "etfs": audit, "counts": counts}
+
+
+def _refresh_etf_market_history(item, country, anchor):
+    """Fetch one complete same-provider series and discard observations after the anchor."""
+    ticker = str(item["ticker"])
+    yahoo = country == "US" or str(item.get("price_basis") or "").startswith("Yahoo")
+    if yahoo:
+        symbol = ticker if country == "US" else ticker + (".KQ" if item.get("market") == "KOSDAQ" else ".KS")
+        history = yf.Ticker(symbol).history(period="max", end=(anchor + timedelta(days=1)).isoformat(),
+                                             auto_adjust=True, timeout=12)
+        series = history["Close"].dropna()
+        dates = [_performance_date(stamp) for stamp in series.index]
+        prices = [float(value) for value in series.tolist()]
+        basis = "Yahoo 제공 수정주가(auto_adjust)"
+    else:
+        dates, prices = _kr_price_history_dated(ticker, count=8000)
+        dates = [_performance_date(value) for value in dates]
+        prices = [float(value) for value in prices]
+        basis = "네이버 차트 종가·배당조정 미확인"
+    if len(dates) != len(prices):
+        raise RuntimeError("refetched price dates and values have different lengths")
+    cutoff = _performance_date(US_ETF_VERIFIED_LAUNCH.get(ticker, {}).get("inception")) if country == "US" else None
+    pairs = [(day, price) for day, price in zip(dates, prices)
+             if day is not None and day <= anchor and (cutoff is None or day >= cutoff)]
+    if len(pairs) < 2 or pairs[-1][0] != anchor:
+        raise RuntimeError("complete price history does not contain the required market close")
+    if any(not math.isfinite(price) or price <= 0 for _, price in pairs):
+        raise RuntimeError("refetched price history contains an invalid price")
+    if any(pairs[index][0] >= pairs[index + 1][0] for index in range(len(pairs) - 1)):
+        raise RuntimeError("refetched price dates are not strictly increasing")
+    original_first = _performance_date(item.get("price_start_date") or item.get("first_date"))
+    if cutoff is not None and original_first is not None and original_first < cutoff:
+        original_first = cutoff  # The explicitly excluded predecessor NAV is not ETF price history.
+    if original_first is not None and pairs[0][0] > original_first:
+        raise RuntimeError("refetched history would discard previously available initial prices")
+    dates, prices = [day for day, _ in pairs], [price for _, price in pairs]
+    perf = _etf_price_performance(dates, prices, price_basis=basis,
+                                  price_currency="USD" if country == "US" else "KRW")
+    latest, previous, peak = prices[-1], prices[-2], max(prices)
+    perf.update({"price": round(latest, 2) if country == "US" else int(latest),
+                 "change": round((latest / previous - 1) * 100, 2),
+                 "gap": round((latest / peak - 1) * 100, 2)})
+    return perf
+
+
+def synchronize_etf_market_dates(us, kr, info, attempts=2):
+    """Repair stale/future ETF histories without dropping a single collected candidate."""
+    if not isinstance(attempts, int) or isinstance(attempts, bool) or not 1 <= attempts <= 2:
+        raise ValueError("ETF market-date retries must be 1 or 2")
+    anchors = {"US": _performance_date(info.get("us_last")),
+               "KR": _performance_date(info.get("kr_last"))}
+    if any(anchors[country] is None and any(item.get("asset_type") == "ETF" for item in rows)
+           for country, rows in (("US", us), ("KR", kr))):
+        return validate_etf_market_dates(us, kr, info)
+    for attempt in range(1, attempts + 1):
+        pending = [(country, item) for country, rows in (("US", us), ("KR", kr)) for item in rows
+                   if item.get("asset_type") == "ETF" and _etf_market_date_error(item, anchors[country], country)]
+        if not pending:
+            break
+        log.info("ETF 기준일 재조회: 시도 %s/%s · %s종목", attempt, attempts, len(pending))
+        with ThreadPoolExecutor(max_workers=min(8, len(pending))) as executor:
+            futures = {executor.submit(_refresh_etf_market_history, item, country, anchors[country]): (country, item)
+                       for country, item in pending}
+            for future in as_completed(futures):
+                country, item = futures[future]
+                before = item.get("price_end_date")
+                try:
+                    refreshed = future.result()
+                    updated = _validated_etf_metadata({**item, **refreshed})
+                    error = _etf_market_date_error(updated, anchors[country], country)
+                    if error:
+                        raise RuntimeError(error)
+                    item.pop("price_history_inception_mismatch", None)
+                    item.update(updated)
+                    log.info("ETF 기준일 재조회 성공: %s:%s %s → %s · 최초 %s · %s",
+                             country, item["ticker"], before, item["price_end_date"], item["price_start_date"], item["price_basis"])
+                except Exception as error:
+                    log.warning("ETF 기준일 재조회 실패: %s:%s · 기대 %s · %s", country, item.get("ticker"), anchors[country], error)
+        if attempt < attempts:
+            time.sleep(1)
+    proof = validate_etf_market_dates(us, kr, info)
+    log.info("ETF_MARKET_DATES_VERIFIED: %s", json.dumps({"market_dates": proof["market_dates"], "counts": proof["counts"]}, ensure_ascii=False))
+    return proof
+
+
+def bind_market_date_proof(html, manifest, date_proof):
+    """Bind the full ETF date audit to the exact prepared body and inventory."""
+    import hashlib
+    manifest_bytes = json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return {**date_proof, "body_sha256": hashlib.sha256(html.encode("utf-8")).hexdigest(),
+            "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest()}
+
+
+def verify_prepared_market_dates(html, manifest, directory, preview_proof):
+    """Recheck every collected ETF and the browser's exact market-proof file before SMTP."""
+    import hashlib
+    proof_bytes = (Path(directory) / "market-date-proof.json").read_bytes()
+    date_proof = json.loads(proof_bytes)
+    if (preview_proof.get("market_dates_checked") is not True
+            or preview_proof.get("market_dates_sha256") != hashlib.sha256(proof_bytes).hexdigest()):
+        raise RuntimeError("ETF market-date browser proof is missing or changed")
+    records = date_proof.get("etfs")
+    anchors = date_proof.get("market_dates")
+    if not isinstance(records, list) or not isinstance(anchors, dict):
+        raise RuntimeError("ETF market-date audit is incomplete")
+    if any(not isinstance(item, dict) or item.get("country") not in ("US", "KR") for item in records):
+        raise RuntimeError("ETF market-date audit contains an invalid market")
+    checked = validate_etf_market_dates([item for item in records if item["country"] == "US"],
+                                        [item for item in records if item["country"] == "KR"],
+                                        {"us_last": anchors.get("US"), "kr_last": anchors.get("KR")})
+    bound = bind_market_date_proof(html, manifest, checked)
+    if date_proof != bound:
+        raise RuntimeError("ETF market-date audit, prepared body or inventory changed")
+    email_layout.validate_etf_date_proof(html, manifest, date_proof)
+    return date_proof
 
 
 def _flatten(d, prefix="", depth=0):
@@ -1368,13 +1548,14 @@ def send_email(html, subject, inline_images=None, source_html=None):
         smtp.sendmail(user,to,msg.as_bytes(),mail_options=("BODY=8BITMIME",))
     log.info(f"✅ 발송→{to}")
 
-CODE_VERSION = "2026-10-15-reliable-complete-report-delivery"
+CODE_VERSION = "2026-10-29-etf-market-date-integrity"
 
 def main(prepare_only=False):
     log.info(f"=== ATH 리포트 시작 (코드버전: {CODE_VERSION}) ===")
     info=get_trading_info(); usd_krw=get_usd_krw(); indices=get_market_indices()
     us=get_us_ath(usd_krw)
     kr=get_kr_ath(usd_krw, info.get("kr_last"))
+    market_dates = synchronize_etf_market_dates(us, kr, info)
 
     # 거래일 기준 스냅샷 비교 (같은 거래일 재실행해도 항상 동일 결과)
     us_date_key = info["us_last"].isoformat() if info.get("us_last") else datetime.now(KST).strftime("%Y-%m-%d")
@@ -1413,6 +1594,8 @@ def main(prepare_only=False):
                 "new": ["KR:" + s["ticker"] for s in new_kr] + ["US:" + s["ticker"] for s in new_us],
                 "etf": [s["ticker"] for s in etf_info["rows"]]}
     email_layout.validate_inventory(email_html, expected)
+    market_dates = bind_market_date_proof(email_html, expected, market_dates)
+    email_layout.validate_etf_date_proof(email_html, expected, market_dates)
     log.info(f"기본 표 검증: 미국 {len(expected['us'])} · 한국 {len(kr)} · "
              f"신규 {len(new_us) + len(new_kr)}개 / 단일 메일")
     subject = build_subject(info) + " · 전체종목 기본표 " + datetime.now(KST).strftime("%H:%M:%S")
@@ -1425,6 +1608,7 @@ def main(prepare_only=False):
         (directory / "email-reference.html").write_text(reference, encoding="utf-8")
         (directory / "email-preview.html").write_text(email_flags.inline_flag_sources(email_html), encoding="utf-8")
         (directory / "report-manifest.json").write_text(json.dumps(expected), encoding="utf-8")
+        (directory / "market-date-proof.json").write_text(json.dumps(market_dates, ensure_ascii=False, indent=2), encoding="utf-8")
         (directory / "email-subject.txt").write_text(subject, encoding="utf-8")
         (directory / "pending-snapshots.json").write_text(json.dumps(snapshots, default=str), encoding="utf-8")
         log.info(f"발송 전 본문 준비 완료: {size:,}바이트 · 아직 발송하지 않음")
@@ -1442,6 +1626,7 @@ def send_prepared():
     email_layout.validate_inventory(html, manifest)
     html_bytes = native_email.validate_source_size(html)
     proof = json.loads((directory / "preview-passed.json").read_text(encoding="utf-8"))
+    verify_prepared_market_dates(html, manifest, directory, proof)
     import hashlib
     if (
         proof.get("sha256") != hashlib.sha256(html.encode("utf-8")).hexdigest()

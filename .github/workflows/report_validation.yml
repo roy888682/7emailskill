@@ -46,21 +46,24 @@ jobs:
           from pathlib import Path
           from tools.preview_email import sample_data, make_stock, manifest_for
           from src.email_layout import render_email
+          from src.main import validate_etf_market_dates, bind_market_date_proof
           data = sample_data()
           base_etfs = data["etf_info"]["rows"]
-          hundred_etfs = []
-          for index in range(100):
-              row = dict(base_etfs[index % len(base_etfs)])
-              row["ticker"] = ("UE" if row["market"] == "US" else "KE") + ("%04d" % index)
-              row["url"] = make_stock(row["ticker"], market=row["market"])["url"]
-              row["lifetime_cagr"] = 100.0 - index
-              row["cumulative_return"] = ((1 + row["lifetime_cagr"] / 100) ** row["lifetime_years"] - 1) * 100
-              row["initial_adjusted_price"] = 100.0
-              row["latest_adjusted_price"] = 100.0 * (1 + row["cumulative_return"] / 100)
-              hundred_etfs.append(row)
-          data["etf_info"] = {"rows": hundred_etfs, "pool": 125, "with_ret": 125}
           data["us"] = [make_stock("US%04d" % i, number=i, asset_type="주식" if i < 75 else "ETF") for i in range(229)]
           data["kr"] = [make_stock("KR%04d" % i, market="KOSPI", number=i, asset_type="주식" if i < 4 else "ETF") for i in range(11)]
+          cohort = [row for row in data["kr"] + data["us"] if row["asset_type"] == "ETF"]
+          for index, row in enumerate(cohort):
+              identity = dict(row)
+              row.update(base_etfs[index % len(base_etfs)])
+              row.update(identity)
+              row["price_currency"] = "USD" if row["market"] == "US" else "KRW"
+              row["price_basis"] = "Yahoo 제공 수정주가(auto_adjust)" if row["market"] == "US" else "네이버 차트 종가·배당조정 미확인"
+              row["lifetime_cagr"] = 100.0 - index * .5
+              row["cumulative_return"] = ((1 + row["lifetime_cagr"] / 100) ** row["lifetime_years"] - 1) * 100
+              row["initial_adjusted_price"] = .0000123456789012 if index == 0 else 100.123456789
+              row["latest_adjusted_price"] = row["initial_adjusted_price"] * (1 + row["cumulative_return"] / 100)
+              row["cumulative_growth"] = row["latest_adjusted_price"] / row["initial_adjusted_price"]
+          data["etf_info"] = {"rows": [dict(row) for row in cohort[:100]], "pool": len(cohort), "with_ret": len(cohort)}
           data["new_us"] = data["us"][:5] + data["us"][75:99]
           data["new_kr"] = data["kr"][:1] + data["kr"][4:7]
           for row in data["us"] + data["kr"] + data["etf_info"]["rows"]:
@@ -69,9 +72,13 @@ jobs:
               row["index"] = ["S&P500", "NASDAQ"] if row["market"] == "US" else ["KOSPI"]
           directory = Path("work")
           directory.mkdir(exist_ok=True)
-          (directory / "email-body.html").write_text(render_email(**data), encoding="utf-8")
+          html = render_email(**data)
+          manifest = manifest_for(data)
+          (directory / "email-body.html").write_text(html, encoding="utf-8")
           (directory / "email-reference.html").write_text(render_email(**data, compact=False), encoding="utf-8")
-          (directory / "report-manifest.json").write_text(json.dumps(manifest_for(data)), encoding="utf-8")
+          (directory / "report-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+          market_proof = bind_market_date_proof(html, manifest, validate_etf_market_dates(data["us"], data["kr"], data["info"]))
+          (directory / "market-date-proof.json").write_text(json.dumps(market_proof, ensure_ascii=False), encoding="utf-8")
           PY
       - name: Verify complete native body at all desktop widths
         run: python tools/preview_email.py --html work/email-body.html --manifest work/report-manifest.json --reference work/email-reference.html
