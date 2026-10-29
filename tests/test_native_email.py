@@ -10,6 +10,7 @@ from bs4 import BeautifulSoup
 from src import native_email
 from src.email_layout import inventory, render_email, validate_etf_date_proof
 from tools.preview_email import sample_data, make_stock, manifest_for
+from src.main import validate_etf_market_dates
 
 
 def fixture(count=218, long_names=False):
@@ -38,17 +39,20 @@ class NativeEmailTests(unittest.TestCase):
         data = sample_data()
         data["new_us"] = [row for row in data["us"] if row.get("asset_type") == "ETF"][:2]
         data["new_kr"] = [row for row in data["kr"] if row.get("asset_type") == "ETF"][:2]
+        data["info"]["us_last"] = "2026-10-08"
         source, manifest = render_email(**data), manifest_for(data)
-        records = [dict(row, country=country) for country, rows in (("US", data["us"]), ("KR", data["kr"]))
-                   for row in rows if row.get("asset_type") == "ETF"]
-        proof = {"version": 1, "market_dates": {"US": "2026-10-07", "KR": "2026-10-07"},
-                 "etfs": records,
-                 "counts": {country: sum(row["country"] == country for row in records) for country in ("US", "KR")}}
+        proof = validate_etf_market_dates(data["us"], data["kr"], data["info"])
+        self.assertTrue(all(row["date_status"] == "latest_available" for row in proof["etfs"] if row["country"] == "US"))
         with tempfile.TemporaryDirectory() as directory:
             delivery, meta = native_email.prepare(source, manifest, directory)
             self.assertEqual(native_email.verify_package(source, delivery, manifest, meta, directory), {})
             for html in (source, delivery):
                 self.assertEqual(validate_etf_date_proof(html, manifest, proof), proof["market_dates"])
+                for row in BeautifulSoup(html, "html5lib").select("#returns tbody tr"):
+                    cells = row.find_all("td", recursive=False)
+                    self.assertEqual(len(cells), 17)
+                    self.assertEqual(cells[16].get_text(), "26-10-07")
+                    self.assertIn("2026-10-07", cells[16]["title"])
             original = BeautifulSoup(source, "html5lib").select_one("#etf-market-dates")
             delivered = BeautifulSoup(delivery, "html5lib").select_one("#etf-market-dates")
             self.assertEqual(str(delivered), str(original))

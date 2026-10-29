@@ -144,7 +144,7 @@ LAYOUT_CHECK = r"""expected => {
  const specs=[
    ["us","us",2,11],["kr","kr",2,11],
    ["new","new-kr",2,10,"KR"],["new","new-us",2,10,"US"],
-   ["etf","returns",2,16]
+   ["etf","returns",2,17]
  ];
  const getRows=id=>{
    const table=document.getElementById(id);
@@ -222,10 +222,10 @@ LAYOUT_CHECK = r"""expected => {
  if(document.body.textContent.includes("첨부"))problems.push("Attachment-related copy remains");
  if(returns){
    const headings=Array.from(returns.querySelectorAll("thead th")).map(cell=>cell.textContent.trim());
-   if(headings.length!==16||!/업종|투자/.test(headings[4])||!headings[9].includes("누적")||
+   if(headings.length!==17||!/업종|투자/.test(headings[4])||!headings[9].includes("누적")||
       headings[10]!=="최초주가"||headings[11]!=="최근주가"||
       !headings[12].includes("연평균")||!/AUM|시총/.test(headings[13])||
-      !headings[14].includes("설립")||!/연수|기간/.test(headings[15]))
+      !headings[14].includes("설립")||!/연수|기간/.test(headings[15])||headings[16]!=="수익률 기준일")
      problems.push("ETF columns must include area beside name, cumulative → initial price → latest price → lifetime CAGR → KRW AUM → inception → elapsed years");
  }
  const number=text=>{
@@ -321,7 +321,7 @@ LAYOUT_CHECK = r"""expected => {
      const style=getComputedStyle(cell),bounds=cell.getBoundingClientRect();
      if(style.whiteSpace!=="nowrap")
        problems.push("Row "+index+" must keep every column on one line: "+column);
-     const expectedFont=tableId==="returns"&&column!==14?13:12.35;
+     const expectedFont=tableId==="returns"&&![14,16].includes(column)?13:12.35;
      if(Math.abs(parseFloat(style.fontSize)-expectedFont)>.01)
        problems.push("Row "+index+" font differs from the enlarged design: "+style.fontSize);
      if(tableId!=="returns"&&column===4&&Math.abs(bounds.width-126)>tolerance)
@@ -404,13 +404,14 @@ LAYOUT_CHECK = r"""expected => {
 
 MARKET_DATE_CHECK = r"""expected => {
  const problems=[],marketDates={},counts={US:0,KR:0};
+ const statuses={market_close:0,latest_available:0},actualDates={US:new Set(),KR:new Set()};
  const caption=document.getElementById('etf-market-dates');
  for(const [country,label] of [['KR','한국'],['US','미국']]){
    const node=caption?.querySelector('[aria-label="'+country+' market date"]');
    const date=expected[country];
    marketDates[country]=node?.getAttribute('title')||null;
    if(!node||!/^\d{4}-\d{2}-\d{2}$/.test(date||'')||
-      node.getAttribute('title')!==date||node.textContent!==label+' 수익률 기준일 '+date||
+      node.getAttribute('title')!==date||node.textContent!==label+' 시장 기준일 '+date||
       !node.getClientRects().length||getComputedStyle(node).visibility!=='visible')
      problems.push(country+' market date must be visibly labeled and match its audit');
  }
@@ -420,11 +421,20 @@ MARKET_DATE_CHECK = r"""expected => {
    const cell=row.cells[11];
    const titles=[cell?.getAttribute('title')||'',...Array.from(cell?.querySelectorAll('[title]')||[]).map(node=>node.title)];
    const dates=titles.map(title=>title.match(/\d{4}-\d{2}-\d{2}/)?.[0]).filter(Boolean);
-   if(!country||dates.length<2||dates.some(date=>date!==expected[country]))
-     problems.push('ETF '+row.cells[2]?.textContent.trim()+' latest price date differs from its country market date');
-   if(country)counts[country]++;
+   const actual=dates[0],anchor=expected[country],dateCell=row.cells[16];
+   const shortDate=actual?.slice(2),status=actual===anchor?'market_close':'latest_available';
+   const label=status==='market_close'?'시장 기준일 시세':'이전 가능 시세일';
+   const detail=actual+' · '+label+' · 시장 기준일 '+anchor;
+   const clip=dateCell?.querySelector('.cl');
+   if(!country||dates.length<2||dates.some(date=>date!==actual)||!anchor||actual>anchor||
+      !Number.isFinite(Date.parse(actual+'T00:00:00Z'))||
+      dateCell?.textContent!==shortDate||dateCell?.getAttribute('title')!==detail||
+      clip?.getAttribute('title')!==shortDate+' · '+detail)
+     problems.push('ETF '+row.cells[2]?.textContent.trim()+' actual return date or fallback label is invalid or future-dated');
+   if(country){counts[country]++;actualDates[country].add(actual);statuses[status]++;}
  }
- return {market_dates:marketDates,etfs_checked:counts,problems};
+ return {market_dates:marketDates,etfs_checked:counts,date_status_counts:statuses,
+         actual_return_dates:Object.fromEntries(Object.entries(actualDates).map(([country,dates])=>[country,Array.from(dates).sort()])),problems};
 }"""
 
 def cropped_table_image(page, table_id, output, marker):

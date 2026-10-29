@@ -410,13 +410,31 @@ def _etf_lifetime_metrics(item):
             "inception_verified": item.get("inception_verified", False)}
 
 
+ETF_CALCULATION_FIELDS = (
+    "cagr1y", "cagr3y", "cagr5y", "cagr10y", "cumulative_return", "cumulative_growth",
+    "lifetime_cagr", "lifetime_years", "first_date", "last_date", "price_start_date", "price_end_date",
+    "return_as_of", "initial_adjusted_price", "latest_adjusted_price", "price", "change", "gap")
+
+
 def _etf_market_date_error(item, anchor, country):
     if anchor is None:
         return "market reference date is missing or invalid"
+    requested = item.get("requested_market_date")
+    if requested is not None and _performance_date(requested) != anchor:
+        return "requested market date contradicts the market reference"
+    if item.get("date_status") == "unavailable":
+        if any(item.get(key) is not None for key in ETF_CALCULATION_FIELDS):
+            return "unavailable ETF contains a claimed price, calculation, or observation date"
+        return None
     end = _performance_date(item.get("price_end_date"))
     start = _performance_date(item.get("price_start_date"))
-    if end != anchor:
-        return f"price_end_date={item.get('price_end_date')} expected={anchor.isoformat()}"
+    if end is None or end > anchor:
+        return f"price_end_date={item.get('price_end_date')} must not exceed {anchor.isoformat()}"
+    status = "market_close" if end == anchor else "latest_available"
+    if item.get("date_status") is not None and item["date_status"] != status:
+        return "ETF date status contradicts its actual observation date"
+    if item.get("return_as_of") is not None and _performance_date(item["return_as_of"]) != end:
+        return "return_as_of contradicts its actual observation date"
     if start is None or start >= end:
         return "initial price date is missing, invalid, or not before the market date"
     for key, actual in (("first_date", start), ("last_date", end)):
@@ -445,8 +463,10 @@ def validate_etf_market_dates(us, kr, info):
     keys = ("inception", "inception_source", "inception_verified", "inception_label",
             "cagr1y", "cagr3y", "cagr5y", "cagr10y", "cumulative_return",
             "cumulative_growth", "lifetime_cagr", "lifetime_years", "return_as_of",
-            "initial_adjusted_price", "latest_adjusted_price", "price_basis", "price_currency")
+            "initial_adjusted_price", "latest_adjusted_price", "price_basis", "price_currency",
+            "price", "change", "gap")
     counts = {"US": 0, "KR": 0}
+    status_counts = {"market_close": 0, "latest_available": 0, "unavailable": 0}
     for country, rows in (("US", us), ("KR", kr)):
         for item in rows:
             if item.get("asset_type") != "ETF":
@@ -460,19 +480,27 @@ def validate_etf_market_dates(us, kr, info):
             if reason:
                 errors.append(f"{country}:{ticker}: {reason}")
                 continue
-            complete = {**_validated_etf_metadata(item), **_etf_lifetime_metrics(item)}
-            start, end = complete["price_start_date"], complete["price_end_date"]
+            unavailable = item.get("date_status") == "unavailable"
+            if unavailable:
+                complete, start, end = dict(item), None, None
+                status = "unavailable"
+            else:
+                complete = {**_validated_etf_metadata(item), **_etf_lifetime_metrics(item)}
+                start, end = complete["price_start_date"], complete["price_end_date"]
+                status = "market_close" if end == anchors[country].isoformat() else "latest_available"
             audit.append({"country": country, "ticker": ticker, "asset_type": "ETF",
                           "market": item.get("market") or country,
                           "first_date": start, "last_date": end,
                           "price_start_date": start, "price_end_date": end,
+                          "requested_market_date": anchors[country].isoformat(), "date_status": status,
                           **{key: complete.get(key) for key in keys}})
             counts[country] += 1
+            status_counts[status] += 1
     if errors:
         raise RuntimeError("ETF market-date validation failed: " + "; ".join(errors))
-    return {"version": 1,
+    return {"version": 2,
             "market_dates": {country: value.isoformat() if value else None for country, value in anchors.items()},
-            "etfs": audit, "counts": counts}
+            "etfs": audit, "counts": counts, "status_counts": status_counts}
 
 
 def _refresh_etf_market_history(item, country, anchor):
@@ -497,8 +525,8 @@ def _refresh_etf_market_history(item, country, anchor):
     cutoff = _performance_date(US_ETF_VERIFIED_LAUNCH.get(ticker, {}).get("inception")) if country == "US" else None
     pairs = [(day, price) for day, price in zip(dates, prices)
              if day is not None and day <= anchor and (cutoff is None or day >= cutoff)]
-    if len(pairs) < 2 or pairs[-1][0] != anchor:
-        raise RuntimeError("complete price history does not contain the required market close")
+    if len(pairs) < 2:
+        raise RuntimeError("complete price history has fewer than two observations on or before the market date")
     if any(not math.isfinite(price) or price <= 0 for _, price in pairs):
         raise RuntimeError("refetched price history contains an invalid price")
     if any(pairs[index][0] >= pairs[index + 1][0] for index in range(len(pairs) - 1)):
@@ -519,7 +547,7 @@ def _refresh_etf_market_history(item, country, anchor):
 
 
 def synchronize_etf_market_dates(us, kr, info, attempts=2):
-    """Repair stale/future ETF histories without dropping a single collected candidate."""
+    """Prefer the market close, retaining the latest honest past observations on failure."""
     if not isinstance(attempts, int) or isinstance(attempts, bool) or not 1 <= attempts <= 2:
         raise ValueError("ETF market-date retries must be 1 or 2")
     anchors = {"US": _performance_date(info.get("us_last")),
@@ -527,9 +555,20 @@ def synchronize_etf_market_dates(us, kr, info, attempts=2):
     if any(anchors[country] is None and any(item.get("asset_type") == "ETF" for item in rows)
            for country, rows in (("US", us), ("KR", kr))):
         return validate_etf_market_dates(us, kr, info)
+    # Transient status belongs to this requested market date. Preserve price data;
+    # the actual observation dates, never a renamed reference date, determine it.
+    for country, rows in (("US", us), ("KR", kr)):
+        for item in rows:
+            if item.get("asset_type") != "ETF":
+                continue
+            item.pop("requested_market_date", None)
+            if item.get("date_status") != "unavailable":
+                item.pop("date_status", None)
     for attempt in range(1, attempts + 1):
         pending = [(country, item) for country, rows in (("US", us), ("KR", kr)) for item in rows
-                   if item.get("asset_type") == "ETF" and _etf_market_date_error(item, anchors[country], country)]
+                   if item.get("asset_type") == "ETF" and (
+                       _etf_market_date_error(item, anchors[country], country)
+                       or _performance_date(item.get("price_end_date")) != anchors[country])]
         if not pending:
             break
         log.info("ETF 기준일 재조회: 시도 %s/%s · %s종목", attempt, attempts, len(pending))
@@ -542,10 +581,20 @@ def synchronize_etf_market_dates(us, kr, info, attempts=2):
                 try:
                     refreshed = future.result()
                     updated = _validated_etf_metadata({**item, **refreshed})
+                    updated.pop("date_status", None)
+                    updated.pop("requested_market_date", None)
+                    updated["return_as_of"] = updated.get("price_end_date")
                     error = _etf_market_date_error(updated, anchors[country], country)
                     if error:
                         raise RuntimeError(error)
+                    if (item.get("date_status") != "unavailable"
+                            and _etf_market_date_error(item, anchors[country], country) is None
+                            and _performance_date(updated["price_end_date"]) < _performance_date(item["price_end_date"])):
+                        log.info("ETF 기준일 기존 자료 유지: %s:%s · 기존 %s · 재조회 %s",
+                                 country, item["ticker"], item["price_end_date"], updated["price_end_date"])
+                        continue
                     item.pop("price_history_inception_mismatch", None)
+                    item.pop("date_status", None)
                     item.update(updated)
                     log.info("ETF 기준일 재조회 성공: %s:%s %s → %s · 최초 %s · %s",
                              country, item["ticker"], before, item["price_end_date"], item["price_start_date"], item["price_basis"])
@@ -553,8 +602,34 @@ def synchronize_etf_market_dates(us, kr, info, attempts=2):
                     log.warning("ETF 기준일 재조회 실패: %s:%s · 기대 %s · %s", country, item.get("ticker"), anchors[country], error)
         if attempt < attempts:
             time.sleep(1)
+    for country, rows in (("US", us), ("KR", kr)):
+        for item in rows:
+            if item.get("asset_type") != "ETF":
+                continue
+            error = _etf_market_date_error(item, anchors[country], country)
+            if error:
+                for key in ETF_CALCULATION_FIELDS:
+                    item[key] = None
+                item.pop("price_history_inception_mismatch", None)
+                item["date_status"] = "unavailable"
+                log.warning("ETF 수익률 계산불가: %s:%s · 후보 유지 · %s", country, item.get("ticker"), error)
+            else:
+                end = _performance_date(item.get("price_end_date"))
+                item["date_status"] = ("unavailable" if end is None else
+                                       "market_close" if end == anchors[country] else "latest_available")
+                item["return_as_of"] = end.isoformat() if end else None
+                if item["date_status"] == "latest_available":
+                    log.warning("ETF 과거 가용일 사용: %s:%s · 시장 기준 %s · 실제 수익률 기준 %s",
+                                country, item.get("ticker"), anchors[country], item["price_end_date"])
+            item["requested_market_date"] = anchors[country].isoformat()
     proof = validate_etf_market_dates(us, kr, info)
-    log.info("ETF_MARKET_DATES_VERIFIED: %s", json.dumps({"market_dates": proof["market_dates"], "counts": proof["counts"]}, ensure_ascii=False))
+    actual_dates = {}
+    for country in ("US", "KR"):
+        values = [row["price_end_date"] for row in proof["etfs"]
+                  if row["country"] == country and row["price_end_date"] is not None]
+        actual_dates[country] = {"oldest": min(values) if values else None, "latest": max(values) if values else None}
+    log.info("ETF_MARKET_DATES_VERIFIED: %s", json.dumps({"market_dates": proof["market_dates"], "counts": proof["counts"],
+             "date_status_counts": proof["status_counts"], "actual_dates": actual_dates}, ensure_ascii=False))
     return proof
 
 
@@ -1548,7 +1623,7 @@ def send_email(html, subject, inline_images=None, source_html=None):
         smtp.sendmail(user,to,msg.as_bytes(),mail_options=("BODY=8BITMIME",))
     log.info(f"✅ 발송→{to}")
 
-CODE_VERSION = "2026-10-29-etf-market-date-integrity"
+CODE_VERSION = "2026-10-29-etf-latest-available-dates"
 
 def main(prepare_only=False):
     log.info(f"=== ATH 리포트 시작 (코드버전: {CODE_VERSION}) ===")
@@ -1583,6 +1658,7 @@ def main(prepare_only=False):
         if item.get("ticker") == "DFAC" and item.get("asset_type") == "ETF":
             audited = {**item, **(_etf_lifetime_metrics(item) or {})}
             keys = ("inception", "inception_label", "inception_source", "inception_verified",
+                    "requested_market_date", "date_status", "return_as_of",
                     "price_start_date", "price_end_date", "initial_adjusted_price", "latest_adjusted_price",
                     "cagr5y", "cagr10y", "cumulative_return", "lifetime_years", "lifetime_cagr",
                     "price_basis", "price_currency")

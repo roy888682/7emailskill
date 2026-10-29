@@ -9,6 +9,7 @@ from src.email_layout import (render_email, etf_section_html, inception_text,
                               elapsed_years_text, price_text, brief_investment_text,
                               validate_etf_date_proof)
 from tools.preview_email import sample_data, make_stock, manifest_for
+from src.main import validate_etf_market_dates
 
 class EmailLayoutTests(unittest.TestCase):
     def setUp(self):
@@ -19,11 +20,7 @@ class EmailLayoutTests(unittest.TestCase):
 
     def market_proof(self, data=None):
         data = data or self.data
-        records = [dict(row, country=country) for country, items in (("US", data["us"]), ("KR", data["kr"]))
-                   for row in items if row.get("asset_type") == "ETF"]
-        return {"version": 1, "market_dates": {"US": "2026-10-07", "KR": "2026-10-07"},
-                "etfs": records,
-                "counts": {country: sum(row["country"] == country for row in records) for country in ("US", "KR")}}
+        return validate_etf_market_dates(data["us"], data["kr"], data["info"])
 
     def test_country_market_dates_are_visible_and_survive_compaction(self):
         self.data["info"]["kr_last"] = date(2026, 10, 8)
@@ -31,22 +28,26 @@ class EmailLayoutTests(unittest.TestCase):
         for country, label, expected in (("KR", "한국", "2026-10-08"), ("US", "미국", "2026-10-07")):
             node = doc.select_one('#etf-market-dates [aria-label="' + country + ' market date"]')
             self.assertEqual(node["title"], expected)
-            self.assertEqual(node.get_text(), f"{label} 수익률 기준일 {expected}")
+            self.assertEqual(node.get_text(), f"{label} 시장 기준일 {expected}")
         self.assertIn("복리 연환산(CAGR)", doc.get_text())
         self.assertIn("원금과 수익이 매년 함께 재투자", doc.get_text())
 
     def test_full_etf_market_proof_covers_even_funds_outside_the_comparison(self):
         extra = dict(next(row for row in self.data["us"] if row.get("asset_type") == "ETF"), ticker="OUTSIDE100")
+        extra.update(price_end_date="2026-10-06", last_date="2026-10-06", return_as_of="2026-10-06")
         self.data["us"].append(extra)
         source = render_email(**self.data)
         manifest = manifest_for(self.data)
         proof = self.market_proof()
         self.assertNotIn("OUTSIDE100", manifest["etf"])
+        record = next(row for row in proof["etfs"] if row["ticker"] == "OUTSIDE100")
+        self.assertEqual(record["date_status"], "latest_available")
+        self.assertEqual(record["requested_market_date"], "2026-10-07")
         self.assertEqual(validate_etf_date_proof(source, manifest, proof), proof["market_dates"])
-        stale = copy.deepcopy(proof)
-        next(row for row in stale["etfs"] if row["ticker"] == "OUTSIDE100")["price_end_date"] = "2026-10-06"
-        with self.assertRaisesRegex(RuntimeError, "price date differs"):
-            validate_etf_date_proof(source, manifest, stale)
+        future = copy.deepcopy(proof)
+        next(row for row in future["etfs"] if row["ticker"] == "OUTSIDE100")["price_end_date"] = "2026-10-08"
+        with self.assertRaises(RuntimeError):
+            validate_etf_date_proof(source, manifest, future)
         omitted = copy.deepcopy(proof)
         omitted["etfs"] = [row for row in omitted["etfs"] if row["ticker"] != "OUTSIDE100"]
         omitted["counts"]["US"] -= 1
@@ -64,12 +65,15 @@ class EmailLayoutTests(unittest.TestCase):
     def test_market_proof_rejects_changed_caption_price_date_or_precise_price(self):
         source = render_email(**self.data)
         manifest, proof = manifest_for(self.data), self.market_proof()
-        for field in ("caption", "date", "price"):
+        for field in ("caption", "date", "price", "return_date"):
             with self.subTest(field=field):
                 doc = BeautifulSoup(source, "html5lib")
                 if field == "caption":
                     node = doc.select_one('#etf-market-dates [aria-label="US market date"]')
                     node["title"] = "2026-10-06"
+                elif field == "return_date":
+                    cell = doc.select_one("#returns tbody tr").find_all("td", recursive=False)[16]
+                    cell.select_one(".cl").string = "26-10-06"
                 else:
                     cell = doc.select_one("#returns tbody tr").find_all("td", recursive=False)[11]
                     if field == "date":
@@ -151,7 +155,7 @@ class EmailLayoutTests(unittest.TestCase):
         self.assertEqual(len(rows),20)
         for item,row in zip(self.data["etf_info"]["rows"],rows):
             cells=row.find_all("td",recursive=False)
-            self.assertEqual(len(cells),16)
+            self.assertEqual(len(cells),17)
             for index,key in zip((5,6,7,8,9,12),("cagr1y","cagr3y","cagr5y","cagr10y","cumulative_return","lifetime_cagr")):
                 value=item.get(key)
                 self.assertEqual(cells[index].get_text(),f"{value:.1f}" if value is not None else "-")
@@ -161,6 +165,9 @@ class EmailLayoutTests(unittest.TestCase):
             self.assertEqual(cells[13].get_text(),row_size(dict(item,asset_type="ETF")))
             self.assertEqual(cells[14].get_text(),inception_text(item))
             self.assertEqual(cells[15].get_text(),elapsed_years_text(item.get("lifetime_years")))
+            self.assertEqual(cells[16].get_text(), item["price_end_date"][2:])
+            self.assertIn(item["price_end_date"], cells[16]["title"])
+            self.assertIn(item["price_end_date"], cells[16].select_one(".cl")["title"])
             self.assertEqual([cells[i].get("class",[])[-1] for i in range(5,9)],["p1","p3","p5","p10"])
     def test_signed_values_and_different_asset_badges_are_preserved(self):
         body = render_email(**self.data)
@@ -175,7 +182,7 @@ class EmailLayoutTests(unittest.TestCase):
         body = render_email(**self.data)
         doc = BeautifulSoup(body, "html5lib")
         for table_id, count, columns in (("us",218,11),("kr",17,11),
-                                         ("new-kr",4,10),("new-us",29,10),("returns",20,16)):
+                                         ("new-kr",4,10),("new-us",29,10),("returns",20,17)):
             table = doc.find("table", id=table_id)
             self.assertEqual(table.select_one("thead th").get_text(strip=True), "No.")
             rows = table.select("tbody tr")
@@ -300,7 +307,7 @@ class EmailLayoutTests(unittest.TestCase):
                 self.assertEqual(cell.select_one(".iwc").get_text(), cell.get_text())
         self.assertIn(".data-table .iw{width:126px;max-width:126px}", CSS)
 
-    def test_top_hundred_table_keeps_the_last_rank_and_all_sixteen_columns(self):
+    def test_top_hundred_table_keeps_the_last_rank_and_all_seventeen_columns(self):
         base = self.data["etf_info"]["rows"][0]
         rows = [dict(base, ticker=f"ETF{index:03d}", lifetime_cagr=100-index)
                 for index in range(100)]
@@ -308,7 +315,7 @@ class EmailLayoutTests(unittest.TestCase):
         doc = BeautifulSoup(render_email(**data), "html5lib")
         rendered = doc.select("#returns tbody tr")
         self.assertEqual(len(rendered), 100)
-        self.assertTrue(all(len(row.find_all("td", recursive=False)) == 16 for row in rendered))
+        self.assertTrue(all(len(row.find_all("td", recursive=False)) == 17 for row in rendered))
         self.assertEqual(rendered[-1].find_all("td", recursive=False)[0].get_text(), "100")
         self.assertEqual(inventory(str(doc))["etf"], [row["ticker"] for row in rows])
         self.assertIn("내림차순 · 상위 100개", doc.get_text())
@@ -346,6 +353,7 @@ class EmailLayoutTests(unittest.TestCase):
         doc = BeautifulSoup(render_email(**self.data), "html5lib")
         self.assertEqual([cell.get_text() for cell in doc.select("#returns thead th")][10:12],
                          ["최초주가", "최근주가"])
+        self.assertEqual(doc.select("#returns thead th")[16].get_text(), "수익률 기준일")
         cells = doc.select_one("#returns tbody tr").find_all("td", recursive=False)
         for index,key,date_value in ((10,"initial_adjusted_price","2016-05-19"),(11,"latest_adjusted_price","2026-10-07")):
             self.assertEqual(cells[index].get_text(), "0" if index == 10 else "123,456")

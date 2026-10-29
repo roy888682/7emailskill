@@ -57,8 +57,21 @@ class MarketDateValidationTests(unittest.TestCase):
         self.assertIsInstance(proof, dict)
         self.assertEqual((us, kr), before)
 
-    def test_stale_missing_invalid_and_future_observation_dates_are_rejected(self):
-        for value in ("2026-10-27", None, "2026-02-30", "not-a-date", "2026-10-29"):
+    def test_latest_available_price_date_is_truthfully_audited_without_forward_dating(self):
+        item = etf(end="2026-10-27", latest=254.5)
+        before = copy.deepcopy(item)
+        proof = validate_etf_market_dates([item], [], market_info())
+        record = proof["etfs"][0]
+        self.assertEqual(proof["version"], 2)
+        self.assertEqual(record["date_status"], "latest_available")
+        self.assertEqual(record["requested_market_date"], "2026-10-28")
+        self.assertEqual(record["return_as_of"], "2026-10-27")
+        self.assertEqual(record["price_end_date"], "2026-10-27")
+        self.assertEqual(record["lifetime_years"], 2205 / 365.25)
+        self.assertEqual(item, before)
+
+    def test_missing_invalid_and_future_observation_dates_are_rejected(self):
+        for value in (None, "2026-02-30", "not-a-date", "2026-10-29"):
             with self.subTest(price_end_date=value):
                 item = etf()
                 item["price_end_date"] = value
@@ -66,11 +79,22 @@ class MarketDateValidationTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     validate_etf_market_dates([item], [], market_info())
 
+    def test_copying_the_requested_date_over_an_older_observation_is_rejected(self):
+        item = etf(end="2026-10-27")
+        item["price_end_date"] = "2026-10-28"
+        with self.assertRaises(RuntimeError):
+            validate_etf_market_dates([item], [], market_info())
+
     def test_every_candidate_is_checked_including_etfs_outside_the_top_hundred(self):
         candidates = [etf("ETF%03d" % index, latest=1000.0-index) for index in range(101)]
         stale = etf("STALE_OUTSIDE_TOP_100", end="2026-10-27", latest=100.01)
         candidates.append(stale)
         self.assertNotIn(stale["ticker"], [row["ticker"] for row in build_etf_info(candidates, [])["rows"]])
+        proof = validate_etf_market_dates(candidates, [], market_info())
+        self.assertEqual(len(proof["etfs"]), 102)
+        audited = next(row for row in proof["etfs"] if row["ticker"] == stale["ticker"])
+        self.assertEqual((audited["date_status"], audited["price_end_date"]), ("latest_available", "2026-10-27"))
+        stale.update(price_end_date="2026-10-29", last_date="2026-10-29")
         with self.assertRaises(RuntimeError):
             validate_etf_market_dates(candidates, [], market_info())
         self.assertEqual(len(candidates), 102)
@@ -112,18 +136,22 @@ class MarketDateSynchronizationTests(unittest.TestCase):
         with patch("src.main.yf.Ticker") as ticker:
             synchronize_etf_market_dates(us, kr, market_info(), attempts=2)
             ticker.assert_not_called()
-        self.assertEqual((us, kr), before)
+        for current, original in zip(us + kr, before[0] + before[1]):
+            for key, value in original.items():
+                self.assertEqual(current[key], value)
         self.assertEqual(build_etf_info(us, kr)["rows"][0]["lifetime_cagr"], expected_cagr)
 
-    def test_two_stale_provider_replies_fail_without_mutating_the_candidate(self):
+    def test_two_older_provider_replies_keep_the_newer_existing_history(self):
         item = etf(end="2026-10-27", latest=254.5)
         before = copy.deepcopy(item)
         with patch("src.main.yf.Ticker") as ticker, patch("src.main.time.sleep"):
-            ticker.return_value.history.return_value = yahoo_history(["2020-10-13", "2026-10-27"], [100, 254.5])
-            with self.assertRaises(RuntimeError):
-                synchronize_etf_market_dates([item], [], market_info(), attempts=2)
+            ticker.return_value.history.return_value = yahoo_history(["2020-10-13", "2026-10-26"], [100, 200])
+            proof = synchronize_etf_market_dates([item], [], market_info(), attempts=2)
             self.assertEqual(ticker.return_value.history.call_count, 2)
-        self.assertEqual(item, before)
+        for key, value in before.items():
+            self.assertEqual(item[key], value)
+        self.assertEqual(proof["etfs"][0]["date_status"], "latest_available")
+        self.assertEqual(proof["etfs"][0]["price_end_date"], "2026-10-27")
 
     def test_korean_naver_history_keeps_its_provider_and_excludes_future_partial_prices(self):
         item = etf("123456", "KOSPI", end="2026-10-27", latest=254.5)
@@ -143,10 +171,11 @@ class MarketDateSynchronizationTests(unittest.TestCase):
         before = copy.deepcopy(item)
         with patch("src.main.yf.Ticker") as ticker, patch("src.main.time.sleep"):
             ticker.return_value.history.return_value = yahoo_history(["2021-10-13", "2026-10-28"], [100, 260])
-            with self.assertRaises(RuntimeError):
-                synchronize_etf_market_dates([item], [], market_info(), attempts=2)
+            proof = synchronize_etf_market_dates([item], [], market_info(), attempts=2)
             self.assertEqual(ticker.return_value.history.call_count, 2)
-        self.assertEqual(item, before)
+        for key, value in before.items():
+            self.assertEqual(item[key], value)
+        self.assertEqual(proof["etfs"][0]["date_status"], "latest_available")
 
     def test_dfac_refetch_filters_pre_etf_observations_and_clears_obsolete_mismatch_flag(self):
         item = etf("DFAC", end="2026-10-27", latest=35.0)
@@ -165,7 +194,7 @@ class MarketDateSynchronizationTests(unittest.TestCase):
         self.assertIsNotNone(item["cagr5y"])
         self.assertIsNone(item["cagr10y"])
 
-    def test_failed_retry_cannot_drop_the_candidate_or_reach_smtp(self):
+    def test_failed_retry_sends_valid_previous_prices_without_dropping_the_candidate(self):
         item = etf(end="2026-10-27", latest=254.5)
         candidates, before = [item], copy.deepcopy(item)
         with (patch("src.main.get_trading_info", return_value=market_info()),
@@ -177,21 +206,42 @@ class MarketDateSynchronizationTests(unittest.TestCase):
               patch("src.main.time.sleep"),
               patch("src.main.send_email") as send,
               patch("src.main.smtplib.SMTP_SSL") as smtp,
-              patch("src.main.load_snapshots") as load,
+              patch("src.main.load_snapshots", return_value={}) as load,
               patch("src.main.save_snapshots") as save):
             ticker.return_value.history.side_effect = RuntimeError("price provider unavailable")
-            with self.assertRaises(RuntimeError):
-                main()
+            main()
             self.assertGreaterEqual(ticker.return_value.history.call_count, 2)
-            send.assert_not_called()
+            send.assert_called_once()
             smtp.assert_not_called()
-            load.assert_not_called()
-            save.assert_not_called()
+            load.assert_called_once()
+            save.assert_called_once()
+            self.assertIn("26-10-27", send.call_args.args[0])
+            self.assertIn("2026-10-27", send.call_args.args[0])
         self.assertEqual(len(candidates), 1)
         self.assertIs(candidates[0], item)
         for key in ("ticker", "price_start_date", "price_end_date", "initial_adjusted_price",
                     "latest_adjusted_price", "cumulative_return"):
             self.assertEqual(item[key], before[key])
+
+    def test_no_usable_history_preserves_candidate_but_never_fabricates_a_return(self):
+        item = {"ticker":"NO_HISTORY", "asset_type":"ETF", "market":"US", "name":"No history",
+                "price":123.0, "change":1.0, "gap":-2.0, "mcap":1.0}
+        candidates = [item]
+        with patch("src.main.yf.Ticker") as ticker, patch("src.main.time.sleep"):
+            ticker.return_value.history.side_effect = RuntimeError("provider unavailable")
+            proof = synchronize_etf_market_dates(candidates, [], market_info(), attempts=2)
+        self.assertEqual(len(candidates), 1)
+        self.assertIs(candidates[0], item)
+        self.assertEqual(proof["etfs"][0]["date_status"], "unavailable")
+        for key in ("price", "change", "gap", "cagr1y", "cagr3y", "cagr5y", "cagr10y",
+                    "cumulative_return", "cumulative_growth", "lifetime_cagr", "lifetime_years",
+                    "price_start_date", "price_end_date", "first_date", "last_date", "return_as_of",
+                    "initial_adjusted_price", "latest_adjusted_price"):
+            self.assertIsNone(item.get(key), key)
+        self.assertEqual(build_etf_info(candidates, []), {"rows":[], "pool":1, "with_ret":0})
+        mixed = dict(item, latest_adjusted_price=123.0)
+        with self.assertRaises(RuntimeError):
+            validate_etf_market_dates([mixed], [], market_info())
 
 
 if __name__ == "__main__":

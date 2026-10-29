@@ -43,6 +43,7 @@ jobs:
         run: |
           python - <<'PY'
           import json
+          from datetime import date
           from pathlib import Path
           from tools.preview_email import sample_data, make_stock, manifest_for
           from src.email_layout import render_email
@@ -58,6 +59,10 @@ jobs:
               row.update(identity)
               row["price_currency"] = "USD" if row["market"] == "US" else "KRW"
               row["price_basis"] = "Yahoo 제공 수정주가(auto_adjust)" if row["market"] == "US" else "네이버 차트 종가·배당조정 미확인"
+              if index in (0, 7, 160):
+                  actual_end = "2026-10-02" if index == 160 else "2026-10-06"
+                  row["price_end_date"] = row["last_date"] = row["return_as_of"] = actual_end
+                  row["lifetime_years"] = (date.fromisoformat(actual_end) - date.fromisoformat(row["price_start_date"])).days / 365.25
               row["lifetime_cagr"] = 100.0 - index * .5
               row["cumulative_return"] = ((1 + row["lifetime_cagr"] / 100) ** row["lifetime_years"] - 1) * 100
               row["initial_adjusted_price"] = .0000123456789012 if index == 0 else 100.123456789
