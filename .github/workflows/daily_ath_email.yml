@@ -1,6 +1,12 @@
 name: 📈 Daily ATH Stock Email
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'tools/**'
   schedule:
     - cron: '0 22 * * 1-5'   # UTC 월~금 22:00 = KST 화~토 07:00 (일·월 발송 없음)
   workflow_dispatch:
@@ -110,3 +116,12 @@ jobs:
             work/*.png
           if-no-files-found: ignore
           retention-days: 7
+
+      - name: 📬 SMTP 접수 식별자 보관 (수신함 도착 확인과 별도)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smtp-acceptance-${{ github.run_id }}
+          path: work/smtp-accepted.json
+          if-no-files-found: ignore
+          retention-days: 14

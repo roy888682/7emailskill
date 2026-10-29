@@ -1,4 +1,6 @@
-"""Delivery regressions: complete native bodies and large-report backups."""
+"""Delivery regressions: complete native bodies and explicit HTML backups."""
+import hashlib
+import json
 import os
 import tempfile
 import unittest
@@ -32,6 +34,7 @@ class EmailDeliveryTests(unittest.TestCase):
         self.assertTrue(any(part.get_content_type() == "text/plain" for part in parts))
         self.assertTrue(message["Date"])
         self.assertTrue(message["Message-ID"])
+        self.assertTrue(message["Message-ID"].endswith("@example.test>"))
         self.assertLessEqual(len(message.as_bytes()), 95000)
 
     def test_actual_serialized_size_and_smtp_lines_are_bounded(self):
@@ -58,7 +61,7 @@ class EmailDeliveryTests(unittest.TestCase):
                     send_email(html, "test")
                 smtp.assert_not_called()
 
-    def test_large_live_sized_report_reaches_smtp_with_every_row_and_standalone_backup(self):
+    def test_large_live_sized_report_reaches_smtp_with_every_row_without_attachment(self):
         data = sample_data()
         data["us"] = [make_stock("US%04d" % number, number=number) for number in range(240)]
         for row in data["us"]:
@@ -75,7 +78,9 @@ class EmailDeliveryTests(unittest.TestCase):
                 os.chdir(directory)
                 with patch.dict(os.environ, {"GMAIL_USER": "sender@example.test",
                                              "GMAIL_APP_PASSWORD": "test-password",
-                                             "RECIPIENT_EMAIL": "reader@example.test"}), patch("src.main.smtplib.SMTP_SSL") as smtp:
+                                             "RECIPIENT_EMAIL": "reader@example.test",
+                                             "ATTACH_FULL_REPORT_HTML": "0"}), patch("src.main.smtplib.SMTP_SSL") as smtp:
+                    smtp.return_value.__enter__.return_value.sendmail.return_value = {}
                     send_email(delivery, "large daily report")
                     smtp.return_value.__enter__.return_value.sendmail.assert_called_once()
                     sent = smtp.return_value.__enter__.return_value.sendmail.call_args.args[2]
@@ -85,13 +90,102 @@ class EmailDeliveryTests(unittest.TestCase):
                     self.assertEqual(body_html, delivery.replace("\r\n", "\n"))
                     self.assertEqual(inventory(body_html), expected)
                     attachments = [part for part in message.walk() if part.get_content_disposition() == "attachment"]
-                    self.assertEqual(len(attachments), 1)
-                    self.assertEqual(attachments[0].get_filename(), "ath-full-report.html")
-                    attached_html = attachments[0].get_payload(decode=True).decode("utf-8")
-                    self.assertEqual(attached_html, email_flags.inline_flag_sources(delivery))
-                    self.assertIn("data:image/png;base64,", attached_html)
-                    self.assertNotIn("cid:", attached_html)
+                    self.assertEqual(attachments, [])
+                    receipt = json.loads(Path("work/smtp-accepted.json").read_text(encoding="utf-8"))
+                    self.assertEqual(receipt["status"], "smtp_accepted")
+                    self.assertEqual(receipt["attachment_count"], 0)
+                    self.assertEqual(receipt["body_sha256"], hashlib.sha256(delivery.encode("utf-8")).hexdigest())
+                    self.assertEqual(receipt["wire_sha256"], hashlib.sha256(sent).hexdigest())
+                    self.assertEqual(receipt["wire_bytes"], len(sent))
                     self.assertLessEqual(max(map(len, sent.split(b"\r\n"))), 998)
+            finally:
+                os.chdir(original)
+
+    def test_html_backup_requires_explicit_opt_in_and_preserves_complete_body(self):
+        html = '<img src="cid:u">' + '<p>전체 종목 백업</p>\n' * 3500
+        self.assertTrue(native_email.clipping_risk(html))
+        plain = compose_email_message(html, "test", "a@example.test", "b@example.test")
+        opted_in = compose_email_message(html, "test", "a@example.test", "b@example.test",
+                                         attach_full_report=True)
+        self.assertFalse(any(part.get_content_disposition() == "attachment" for part in plain.walk()))
+        attachments = [part for part in opted_in.walk() if part.get_content_disposition() == "attachment"]
+        self.assertEqual(len(attachments), 1)
+        self.assertEqual(attachments[0].get_filename(), "ath-full-report.html")
+        attached_html = attachments[0].get_payload(decode=True).decode("utf-8")
+        self.assertEqual(attached_html, email_flags.inline_flag_sources(html))
+        self.assertNotIn("cid:", attached_html)
+        for message in (plain, opted_in):
+            body = next(part for part in message.walk() if part.get_content_type() == "text/html")
+            self.assertEqual(body.get_payload(decode=True).decode("utf-8").replace("\r\n", "\n"), html)
+        self.assertLess(len(plain.as_bytes()), len(opted_in.as_bytes()))
+
+    def test_smtp_receipt_identifies_acceptance_without_claiming_inbox_delivery(self):
+        html = "<p>receipt identity</p>"
+        with tempfile.TemporaryDirectory() as directory:
+            original = os.getcwd()
+            try:
+                os.chdir(directory)
+                with patch.dict(os.environ, {"GMAIL_USER": "sender@example.test",
+                                             "GMAIL_APP_PASSWORD": "private-password",
+                                             "RECIPIENT_EMAIL": "Receiver <ykhan@dacpole.com>",
+                                             "ATTACH_FULL_REPORT_HTML": "0"}), patch("src.main.smtplib.SMTP_SSL") as smtp:
+                    smtp.return_value.__enter__.return_value.sendmail.return_value = {}
+                    send_email(html, "receipt test")
+                    sent = smtp.return_value.__enter__.return_value.sendmail.call_args.args[2]
+                    message = message_from_bytes(sent)
+                    raw_receipt = Path("work/smtp-accepted.json").read_text(encoding="utf-8")
+                    receipt = json.loads(raw_receipt)
+                    self.assertEqual(receipt["message_id"], message["Message-ID"])
+                    self.assertTrue(receipt["message_id"].endswith("@example.test>"))
+                    self.assertEqual(message["From"], "sender@example.test")
+                    self.assertEqual(message["To"], "ykhan@dacpole.com")
+                    self.assertEqual(receipt["recipient_count"], 1)
+                    self.assertTrue(receipt["recipient_matches_expected"])
+                    self.assertEqual(receipt["refused_recipient_count"], 0)
+                    self.assertFalse(receipt["inbox_delivery_verified"])
+                    self.assertRegex(receipt["accepted_at_utc"], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+                    self.assertEqual(receipt["body_bytes"], len(html.encode("utf-8")))
+                    self.assertEqual(receipt["body_sha256"], hashlib.sha256(html.encode("utf-8")).hexdigest())
+                    self.assertEqual(receipt["wire_sha256"], hashlib.sha256(sent).hexdigest())
+                    self.assertNotIn("private-password", raw_receipt)
+                    self.assertNotIn(html, raw_receipt)
+                    self.assertNotIn("sender@example.test", raw_receipt)
+            finally:
+                os.chdir(original)
+
+    def test_smtp_refusal_never_creates_or_leaves_an_acceptance_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            original = os.getcwd()
+            try:
+                os.chdir(directory)
+                Path("work").mkdir()
+                receipt = Path("work/smtp-accepted.json")
+                receipt.write_text('{"status":"smtp_accepted"}', encoding="utf-8")
+                with patch.dict(os.environ, {"GMAIL_USER": "sender@example.test",
+                                             "GMAIL_APP_PASSWORD": "private-password",
+                                             "RECIPIENT_EMAIL": "ykhan@dacpole.com"}), patch("src.main.smtplib.SMTP_SSL") as smtp:
+                    smtp.return_value.__enter__.return_value.sendmail.return_value = {"ykhan@dacpole.com": (550, b"rejected")}
+                    with self.assertRaisesRegex(RuntimeError, "did not accept every recipient"):
+                        send_email("<p>test</p>", "refusal test")
+                    self.assertFalse(receipt.exists())
+                    smtp.return_value.__enter__.return_value.sendmail.assert_called_once()
+            finally:
+                os.chdir(original)
+
+    def test_empty_multiple_or_invalid_recipients_fail_before_smtp(self):
+        with tempfile.TemporaryDirectory() as directory:
+            original = os.getcwd()
+            try:
+                os.chdir(directory)
+                for recipient in ("", "not-an-email", "a@@example.test",
+                                  "a@example.test,b@example.test", "a@example.test\r\nBcc: b@example.test"):
+                    with self.subTest(recipient=recipient), patch.dict(os.environ, {
+                            "GMAIL_USER": "sender@example.test", "GMAIL_APP_PASSWORD": "private-password",
+                            "RECIPIENT_EMAIL": recipient}), patch("src.main.smtplib.SMTP_SSL") as smtp:
+                        with self.assertRaisesRegex(RuntimeError, "one valid email address"):
+                            send_email("<p>test</p>", "invalid recipient")
+                        smtp.assert_not_called()
+                        self.assertFalse(Path("work/smtp-accepted.json").exists())
             finally:
                 os.chdir(original)
 
@@ -212,6 +306,7 @@ class EmailDeliveryTests(unittest.TestCase):
                                              "GMAIL_APP_PASSWORD": "test-password",
                                              "RECIPIENT_EMAIL": "b@example.test"}):
                     with patch("src.main.smtplib.SMTP_SSL") as smtp:
+                        smtp.return_value.__enter__.return_value.sendmail.return_value = {}
                         send_email(html, "test")
                         sent = smtp.return_value.__enter__.return_value.sendmail.call_args.args[2]
                         message = message_from_bytes(sent)

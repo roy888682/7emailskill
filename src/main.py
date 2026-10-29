@@ -5,7 +5,7 @@ from email.mime.text import MIMEText
 from email.mime.image import MIMEImage
 from email.mime.application import MIMEApplication
 from email.policy import SMTP
-from email.utils import formatdate, make_msgid
+from email.utils import formatdate, make_msgid, getaddresses
 from pathlib import Path
 
 if __package__:
@@ -1619,13 +1619,15 @@ def build_subject(info):
     return f"ATH & ETF | 미국 {info['us_last_str']}{ut} / 한국 {info['kr_last_str']}{kt}"
 
 
-def compose_email_message(html, subject, user, to, inline_images=None, plain_text=None):
-    """Keep every row inline; back up large reports with a complete HTML file."""
+def compose_email_message(html, subject, user, to, inline_images=None, plain_text=None,
+                          attach_full_report=False):
+    """Keep every row inline; add an HTML backup only when explicitly requested."""
     native_email.validate_delivery_size(html)
     inline_images=inline_images or {}
     msg = MIMEMultipart("related", policy=SMTP)
     msg["Subject"], msg["From"], msg["To"] = subject, user, to
-    msg["Date"], msg["Message-ID"] = formatdate(localtime=True), make_msgid()
+    message_domain = user.rsplit("@", 1)[-1] if "@" in user else "gmail.com"
+    msg["Date"], msg["Message-ID"] = formatdate(localtime=True), make_msgid(domain=message_domain)
     alternative = MIMEMultipart("alternative")
     alternative.attach(MIMEText(plain_text or "오늘의 ATH & ETF 전체 리포트입니다. HTML 보기에서 모든 후보와 ETF 수익률을 확인하세요.", "plain", "utf-8"))
     body = MIMEText("", "html", "utf-8")
@@ -1647,8 +1649,9 @@ def compose_email_message(html, subject, user, to, inline_images=None, plain_tex
         asset.add_header("Content-Disposition","inline")
         msg.attach(asset)
     # Gmail clipping is a display concern, not a reason to skip the daily email.
-    # Preserve the complete native body and supply a standalone copy on large days.
-    if native_email.clipping_risk(html) or (not inline_images and len(msg.as_bytes()) > 95000):
+    # HTML attachments can be filtered downstream; the complete body is the default.
+    if attach_full_report and (native_email.clipping_risk(html)
+                               or (not inline_images and len(msg.as_bytes()) > 95000)):
         full_report = email_flags.inline_flag_sources(report_inline.inline_sources(html, inline_images))
         attachment = MIMEApplication(full_report.encode("utf-8"), _subtype="octet-stream")
         attachment.add_header("Content-Disposition", "attachment", filename="ath-full-report.html")
@@ -1672,35 +1675,58 @@ def compose_email_message(html, subject, user, to, inline_images=None, plain_tex
 
 
 def send_email(html, subject, inline_images=None, source_html=None):
+    import hashlib
     user=os.environ["GMAIL_USER"]; pwd=os.environ["GMAIL_APP_PASSWORD"]
-    to=os.environ.get("RECIPIENT_EMAIL","ykhan@dacpole.com")
-    msg = compose_email_message(html, subject, user, to, inline_images,
-                                report_inline.plain_report(source_html) if source_html and inline_images else None)
+    raw_to=os.environ.get("RECIPIENT_EMAIL","ykhan@dacpole.com")
     preview_dir = Path("work")
     preview_dir.mkdir(exist_ok=True)
+    receipt_path = preview_dir / "smtp-accepted.json"
+    receipt_path.unlink(missing_ok=True)
+    recipients = getaddresses([raw_to])
+    if (re.search(r"[\r\n]", raw_to) or len(recipients) != 1
+            or not re.fullmatch(r"[^\s<>@,;]+@[^\s<>@,;]+", recipients[0][1])):
+        raise RuntimeError("RECIPIENT_EMAIL must contain one valid email address")
+    to = recipients[0][1]
+    msg = compose_email_message(html, subject, user, to, inline_images,
+                                report_inline.plain_report(source_html) if source_html and inline_images else None,
+                                attach_full_report=os.environ.get("ATTACH_FULL_REPORT_HTML", "0") == "1")
+    wire = msg.as_bytes()
     (preview_dir / "email-preview.html").write_text(report_inline.inline_sources(html, inline_images or {}), encoding="utf-8")
     tables = email_layout.inventory(source_html or html)
     us_rows, kr_rows = len(tables["us"]), len(tables["kr"])
     attachment_count = sum(part.get_content_disposition() == "attachment" for part in msg.walk())
     log.info(f"메일 전체 본문: 미국 {us_rows}종목 / 한국 {kr_rows}종목 / "
-             f"{len(html.encode('utf-8')):,}바이트 / 전송 {len(msg.as_bytes()):,}바이트 / 첨부 {attachment_count}개 / 추가 본문 이미지 {len(inline_images or {})}개")
+             f"{len(html.encode('utf-8')):,}바이트 / 전송 {len(wire):,}바이트 / 첨부 {attachment_count}개 / 추가 본문 이미지 {len(inline_images or {})}개")
     bodies = [part for part in msg.walk() if part.get_content_type() == "text/html"]
     if len(bodies) != 1 or bodies[0].get_payload(decode=True).decode("utf-8").replace("\r\n", "\n") != html.replace("\r\n", "\n"):
         raise RuntimeError("MIME body failed delivery validation")
     attachments = [part for part in msg.walk() if part.get_content_disposition() == "attachment"]
-    expected_report = email_flags.inline_flag_sources(report_inline.inline_sources(html, inline_images or {}))
-    if attachments and (len(attachments) != 1 or attachments[0].get_filename() != "ath-full-report.html"
-                        or attachments[0].get_payload(decode=True) != expected_report.encode("utf-8")):
-        raise RuntimeError("Complete report attachment failed delivery validation")
+    if attachments:
+        expected_report = email_flags.inline_flag_sources(report_inline.inline_sources(html, inline_images or {}))
+        if (len(attachments) != 1 or attachments[0].get_filename() != "ath-full-report.html"
+                or attachments[0].get_payload(decode=True) != expected_report.encode("utf-8")):
+            raise RuntimeError("Complete report attachment failed delivery validation")
     with smtplib.SMTP_SSL("smtp.gmail.com",465) as smtp:
         smtp.ehlo()
         if not smtp.has_extn("8bitmime"):
             raise RuntimeError("SMTP server does not advertise 8BITMIME")
         smtp.login(user,pwd)
-        smtp.sendmail(user,to,msg.as_bytes(),mail_options=("BODY=8BITMIME",))
-    log.info(f"✅ 발송→{to}")
+        refused = smtp.sendmail(user,to,wire,mail_options=("BODY=8BITMIME",))
+        if not isinstance(refused, dict) or refused:
+            raise RuntimeError("SMTP did not accept every recipient; no complete acceptance receipt")
+    receipt = {"status": "smtp_accepted", "message_id": str(msg["Message-ID"]),
+               "accepted_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+               "recipient_count": len(recipients), "recipient_matches_expected": to.casefold() == "ykhan@dacpole.com",
+               "refused_recipient_count": 0, "attachment_count": attachment_count,
+               "body_sha256": hashlib.sha256(html.encode("utf-8")).hexdigest(),
+               "body_bytes": len(html.encode("utf-8")),
+               "wire_sha256": hashlib.sha256(wire).hexdigest(), "wire_bytes": len(wire),
+               "inbox_delivery_verified": False}
+    receipt_path.write_text(json.dumps(receipt, ensure_ascii=False, indent=2), encoding="utf-8")
+    log.info("SMTP_ACCEPTED: %s", json.dumps(receipt, ensure_ascii=False))
+    log.info("✅ SMTP 접수 성공 · 수신함 도착 여부는 별도 확인")
 
-CODE_VERSION = "2026-10-29-etf-latest-available-dates"
+CODE_VERSION = "2026-10-30-email-without-html-attachment"
 
 def main(prepare_only=False):
     log.info(f"=== ATH 리포트 시작 (코드버전: {CODE_VERSION}) ===")

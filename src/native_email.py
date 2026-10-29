@@ -10,7 +10,7 @@ else:
     import email_layout
 
 # Gmail may shorten its inline view at these conservative margins. They are
-# delivery hints: the complete report can also travel as an HTML attachment.
+# display hints only; an HTML backup is attached only when explicitly enabled.
 CLIPPING_HTML_BYTES = 75000
 CLIPPING_CANONICAL_BYTES = 90000
 # Bound resource usage separately from a mail client's display threshold.
@@ -26,7 +26,7 @@ def validate_source_size(html):
     return size
 
 def clipping_risk(html):
-    """Whether the complete inline report needs a full-report backup."""
+    """Whether a mail client may clip the complete inline report's initial view."""
     if len(html.encode("utf-8")) > CLIPPING_HTML_BYTES:
         return True
     canonical = len(str(BeautifulSoup(html, "html5lib")).encode("utf-8"))

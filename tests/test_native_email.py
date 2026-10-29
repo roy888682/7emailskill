@@ -151,7 +151,8 @@ class NativeEmailTests(unittest.TestCase):
             from src.main import compose_email_message
             message = compose_email_message(delivery, "test", "sender@example.test", "reader@example.test")
             wire = message.as_bytes()
-            # A complete large report may include its self-contained HTML backup.
+            # Large reports stay complete inline without an automatic HTML file.
+            self.assertFalse(any(part.get_content_disposition() == "attachment" for part in message.walk()))
             # Preserve the inline body exactly and enforce the actual SMTP budget.
             self.assertEqual([part.get_payload(decode=True).decode("utf-8").replace("\r\n", "\n")
                               for part in message.walk() if part.get_content_type() == "text/html"],

@@ -4,6 +4,8 @@ For every requested change to this repository, finish implementation and appropr
 
 Scheduled reports must run Tuesday through Saturday at 07:00 Asia/Seoul for Monday through Friday market results (`0 22 * * 1-5` in UTC). Do not schedule Sunday or Monday sends. Explicit post-change verification sends requested by the maintainer are separate from that schedule.
 
+Preserve the complete native report inline and do not automatically attach an HTML file, even for large reports. The maintainer confirmed receipt of the unchanged complete report after its HTML attachment was removed. A complete HTML backup is optional only through explicit attachment configuration. Record Message-ID and SMTP acceptance metadata after successful transmission; SMTP relay acceptance must never be described as confirmation of inbox arrival.
+
 Show the stock and ETF breakdown, computed from the actual rows, for both countries' overall counts and both countries' newly appearing counts.
 
 The current readable report style uses 12.35px stock/new-row text and 13px ETF return text (about 30% larger than the earlier style), with 1px horizontal cell padding. Security names must stay on one line and display an ellipsis when they overflow; retain their full text in the HTML. Every table cell and column heading must stay on one line and show an ellipsis when it overflows; retain full values in the HTML and hover titles. Preserve current fonts.
