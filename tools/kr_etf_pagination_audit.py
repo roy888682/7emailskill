@@ -1,46 +1,8 @@
-"""Read-only source/pagination and price evidence for missing Korean ETFs."""
-import json, logging
-from datetime import date
-from concurrent.futures import ThreadPoolExecutor
-import requests
+import json, hashlib
 from src import main as m
-logging.basicConfig(level=logging.WARNING)
+collector = "def get_kr_etf_universe() -> dict:\n    \"\"\"Collect every Korean ETF page, verifying the provider's complete inventory.\"\"\"\n    out = {}\n    url = \"https://stock.naver.com/api/stockSecurity/etfs/v2/domestic\"\n    expected_total = None\n    # The observed v2 API accepts at most 100 rows and `index` is a page number,\n    # not a row offset. A size=300 request fails and index=0 alone omits funds.\n    for index in range(100):\n        page = None\n        last_error = None\n        for attempt in range(3):\n            try:\n                r = requests.get(url, headers=UA,\n                                 params={\"listingType\": \"aumDesc\", \"size\": 100, \"index\": index}, timeout=20)\n                if r.status_code != 200:\n                    raise RuntimeError(f\"HTTP {r.status_code}\")\n                data = r.json()\n                if not isinstance(data, dict) or not isinstance(data.get(\"items\"), list):\n                    raise ValueError(\"ETF list items are missing\")\n                if type(data.get(\"hasNext\")) is not bool:\n                    raise ValueError(\"ETF list hasNext is not a boolean\")\n                if any(isinstance(data.get(key), bool) or not re.fullmatch(r\"\\d+\", str(data.get(key)))\n                       for key in (\"index\", \"totalCount\")):\n                    raise ValueError(\"ETF list index/totalCount are invalid\")\n                total = int(data[\"totalCount\"])\n                if int(data[\"index\"]) != index or (expected_total is not None and total != expected_total):\n                    raise ValueError(\"ETF list page index or total count changed\")\n                rows = data[\"items\"]\n                if len(rows) > 100 or (data[\"hasNext\"] and not rows):\n                    raise ValueError(\"ETF list page length is invalid\")\n                parsed = {}\n                for row in rows:\n                    if not isinstance(row, dict):\n                        raise ValueError(\"ETF list contains a non-object row\")\n                    flat = _flatten(row)\n                    code = str(_find_val(flat, [([\"itemcode\"], [], []),\n                               ([\"code\"], [], [\"index\", \"theme\", \"type\"])]) or \"\").strip()\n                    name = str(_find_val(flat, [([\"itemname\"], [], []),\n                               ([\"name\"], [], [\"index\", \"theme\", \"issuer\"])]) or \"\").strip()\n                    if len(code) != 6 or not name or code in parsed:\n                        raise ValueError(\"ETF list contains an invalid or duplicate security\")\n                    list_aum = parse_kr_etf_base(row).get(\"aum\")\n                    parsed[code] = {\"name\": name, \"mcap\": None, \"aum\": list_aum,\n                                    \"market\": \"KOSPI\", \"is_etf\": True,\n                                    \"investment_area\": row.get(\"etfType\"),\n                                    \"investment_area_source\": \"Naver ETF 목록 분류\"}\n                combined_count = len(set(out) | set(parsed))\n                if rows and not (set(parsed) - set(out)):\n                    raise ValueError(\"ETF list pagination repeated a page without progress\")\n                if combined_count > total or (data[\"hasNext\"] and combined_count >= total):\n                    raise ValueError(\"ETF list pagination contradicts total count\")\n                if not data[\"hasNext\"] and combined_count != total:\n                    raise ValueError(f\"ETF list is incomplete: {combined_count}/{total}\")\n                page = (parsed, data[\"hasNext\"], total)\n                break\n            except Exception as error:\n                last_error = error\n                log.warning(\"한국 ETF 목록 page=%s 재시도 %s/3: %s\", index, attempt + 1, error)\n                if attempt < 2:\n                    time.sleep(.5 * (attempt + 1))\n        if page is None:\n            raise RuntimeError(f\"한국 ETF 전체 목록 수집 실패: page={index}, 확보={len(out)}, \"\n                               f\"예상={expected_total}: {last_error}\") from last_error\n        parsed, has_next, expected_total = page\n        out.update(parsed)\n        log.info(\"한국 ETF 목록 page=%s: 누적 %s/%s종목, hasNext=%s\",\n                 index, len(out), expected_total, has_next)\n        if not has_next:\n            log.info(\"한국 ETF 전체 유니버스: %s/%s종목 (완전성 확인)\", len(out), expected_total)\n            return out\n        time.sleep(.1)\n    raise RuntimeError(f\"한국 ETF 목록 페이지 안전 한도 초과: 확보={len(out)}, 예상={expected_total}\")\n\n"
+exec(collector, m.__dict__)
+universe = m.get_kr_etf_universe()
 codes = ("225040", "418660", "409820")
-url = "https://stock.naver.com/api/stockSecurity/etfs/v2/domestic"
-def query(label, params):
-    try:
-        r=requests.get(url,headers=m.UA,params=params,timeout=20)
-        data=r.json() if r.status_code==200 else {}
-        rows=m._extract_rows(data)
-        print("KR_PAGE_AUDIT:"+json.dumps({"label":label,"params":params,"status":r.status_code,"keys":list(data)[:20] if isinstance(data,dict) else None,"metadata":{k:v for k,v in data.items() if not isinstance(v,(list,dict))} if isinstance(data,dict) else None,"count":len(rows),"first":rows[0] if rows else None,"last":rows[-1] if rows else None,"codes":[str(row.get("itemcode") or row.get("itemCode") or row.get("code")) for row in rows],"target_rows":[row for row in rows if any(code in json.dumps(row) for code in codes)]},ensure_ascii=False),flush=True)
-    except Exception as e:
-        print("KR_PAGE_AUDIT:"+json.dumps({"label":label,"error":str(e)}),flush=True)
-for index,size in ((0,300),(0,100),(1,100),(100,100),(2,100)):
-    query(str(index)+"/"+str(size),{"listingType":"aumDesc","size":size,"index":index})
-old=m.get_kr_etf_universe()
-print("KR_OLD_UNIVERSE:"+json.dumps({"count":len(old),"target_membership":{code:code in old for code in codes},"nonbond":sum(not m.kr_is_bond_etf(row["name"]) for row in old.values())},ensure_ascii=False),flush=True)
-anchor=m.get_trading_info()["kr_last"]
-def prices(code):
-    dates,closes=m._kr_price_history_dated(code,count=8000)
-    pairs=[(d,p) for d,p in zip(dates,closes) if d<=anchor]
-    if not pairs:
-        return {"ticker":code,"no_history":True}
-    dates,closes=map(list,zip(*pairs))
-    row={"ticker":code,"market":"KOSPI","name":code}
-    row.update(m._etf_price_performance(dates,closes,price_basis="네이버 차트 종가·배당조정 미확인",price_currency="KRW"))
-    base=m.fetch_kr_etf_base(code)
-    row.update(m.parse_kr_etf_base(base) if base else {})
-    adjusted=m._kr_etf_adjusted_performance(code,"KOSPI",row)
-    if adjusted:row.update(adjusted)
-    row.update(m._validated_etf_metadata(row))
-    row.update(m._etf_lifetime_metrics(row) or {})
-    keys=("ticker","name","inception","inception_verified","price_start_date","price_end_date","initial_adjusted_price","latest_adjusted_price","cumulative_return","lifetime_cagr","lifetime_years","price_basis","return_ytd","return1y","return3y","return5y","return10y")
-    return {k:row.get(k) for k in keys}|{"history_count":len(dates)}
-with ThreadPoolExecutor(max_workers=3) as pool:
-    for row in pool.map(prices,codes):print("KR_TARGET_AUDIT:"+json.dumps(row,ensure_ascii=False),flush=True)
-try:
-    r=requests.get("https://finance.naver.com/api/sise/etfItemList.nhn",headers=m.UA,timeout=20)
-    data=r.json() if r.status_code==200 else {}
-    rows=data.get("result",{}).get("etfItemList",[])
-    print("KR_LEGACY_AUDIT:"+json.dumps({"status":r.status_code,"count":len(rows),"target_rows":[row for row in rows if row.get("itemcode") in codes]},ensure_ascii=False),flush=True)
-except Exception as e: print("KR_LEGACY_AUDIT:"+json.dumps({"error":str(e)}),flush=True)
+assert all(code in universe for code in codes)
+print("KR_FULL_UNIVERSE_VERIFIED:" + json.dumps({"count": len(universe), "collector_sha256": hashlib.sha256(collector.encode()).hexdigest(), "nonbond": sum(not m.kr_is_bond_etf(row["name"]) for row in universe.values()), "requested": {code: universe[code] for code in codes}}, ensure_ascii=False), flush=True)
