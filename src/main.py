@@ -9,9 +9,9 @@ from email.utils import formatdate, make_msgid, getaddresses
 from pathlib import Path
 
 if __package__:
-    from . import email_layout, email_flags, report_inline, native_email, us_naver_links
+    from . import email_layout, email_flags, report_inline, native_email, us_naver_links, etf_strategy
 else:
-    import email_layout, email_flags, report_inline, native_email, us_naver_links
+    import email_layout, email_flags, report_inline, native_email, us_naver_links, etf_strategy
 from datetime import datetime, timedelta, date, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -313,6 +313,9 @@ def _calc_perf(dates, closes):
 
 
 US_ETF_VERIFIED_LAUNCH = {
+    "TQQQ": {"inception": "2010-02-09", "inception_label": "ETF 설립일",
+             "inception_source": "ProShares 상품 공시 설립일",
+             "inception_url": "https://www.proshares.com/our-etfs/leveraged-and-inverse/tqqq"},
     # DFAC's 2026-10-02 date is a share-class reorganization. Its original ETF
     # launch was 2021-06-14; the predecessor mutual fund began on 2007-10-04.
     # Price returns below start with exchange-traded ETF history, not its
@@ -530,25 +533,66 @@ def _etf_market_date_error(item, anchor, country):
     return _etf_period_return_error(item, start, end)
 
 
-def validate_etf_market_dates(us, kr, info):
+def _etf_audit_universes(us, kr, comparison_etfs=None):
+    """Keep ATH membership separate from the independent ETF comparison corpus."""
+    ath, comparison, all_rows = set(), set(), {}
+    for country, rows in (("US", us), ("KR", kr)):
+        for row in rows:
+            if row.get("asset_type") != "ETF":
+                continue
+            key = (country, str(row.get("ticker") or ""))
+            if not key[1] or key in ath:
+                raise RuntimeError("ETF market-date validation failed: missing or duplicate ETF identity")
+            ath.add(key)
+            all_rows[key] = row
+    corpus = list(all_rows.values()) if comparison_etfs is None else comparison_etfs
+    for row in corpus:
+        if not isinstance(row, dict) or row.get("asset_type") != "ETF":
+            raise RuntimeError("ETF comparison universe contains a non-ETF candidate")
+        country = row.get("country")
+        if country not in ("US", "KR"):
+            market = row.get("market")
+            country = "US" if market == "US" else "KR" if market in ("KR", "KOSPI", "KOSDAQ") else None
+        if country is None:
+            matches = [key[0] for key, item in all_rows.items() if item is row]
+            country = matches[0] if len(matches) == 1 else None
+        key = (country, str(row.get("ticker") or ""))
+        if country not in ("US", "KR") or not key[1] or key in comparison:
+            raise RuntimeError("ETF comparison universe contains a missing or duplicate ETF identity")
+        comparison.add(key)
+        if key in all_rows and all_rows[key] is not row:
+            raise RuntimeError("ATH and comparison must share the same ETF candidate object")
+        all_rows.setdefault(key, row)
+    grouped = tuple((country, [row for key, row in all_rows.items() if key[0] == country])
+                    for country in ("US", "KR"))
+    return grouped, ath, comparison
+
+
+def validate_etf_market_dates(us, kr, info, comparison_etfs=None):
     """Audit every collected ETF, including those outside the comparison's top 100."""
     anchors = {"US": _performance_date(info.get("us_last")),
                "KR": _performance_date(info.get("kr_last"))}
     audit, errors, seen = [], [], set()
+    groups, ath_members, comparison_members = _etf_audit_universes(us, kr, comparison_etfs)
     keys = ("inception", "inception_source", "inception_verified", "inception_label",
             "return_ytd", "return1y", "return3y", "return5y", "return10y", "period_returns", "cumulative_return",
             "cumulative_growth", "lifetime_cagr", "lifetime_years", "return_as_of",
             "initial_adjusted_price", "latest_adjusted_price", "price_basis", "price_currency",
-            "price", "change", "gap")
+            "price", "change", "gap", *etf_strategy.STYLE_FIELDS)
     counts = {"US": 0, "KR": 0}
     status_counts = {"market_close": 0, "latest_available": 0, "unavailable": 0}
-    for country, rows in (("US", us), ("KR", kr)):
+    for country, rows in groups:
         for item in rows:
             if item.get("asset_type") != "ETF":
                 continue
             ticker = str(item.get("ticker") or "")
             identity = (country, ticker)
             reason = _etf_market_date_error(item, anchors[country], country)
+            try:
+                style = etf_strategy.management_style_metadata(dict(item, country=country))
+            except ValueError as error:
+                reason = str(error)
+                style = None
             if not ticker or identity in seen:
                 reason = "missing or duplicate ETF identity"
             seen.add(identity)
@@ -563,7 +607,10 @@ def validate_etf_market_dates(us, kr, info):
                 complete = {**_validated_etf_metadata(item), **_etf_lifetime_metrics(item)}
                 start, end = complete["price_start_date"], complete["price_end_date"]
                 status = "market_close" if end == anchors[country].isoformat() else "latest_available"
+            complete.update(style)
             audit.append({"country": country, "ticker": ticker, "asset_type": "ETF",
+                          "in_ath_report": identity in ath_members,
+                          "in_comparison_universe": identity in comparison_members,
                           "market": item.get("market") or country,
                           "first_date": start, "last_date": end,
                           "price_start_date": start, "price_end_date": end,
@@ -575,6 +622,7 @@ def validate_etf_market_dates(us, kr, info):
         raise RuntimeError("ETF market-date validation failed: " + "; ".join(errors))
     return {"version": 3,
             "market_dates": {country: value.isoformat() if value else None for country, value in anchors.items()},
+            "comparison_universe": sorted(country + ":" + ticker for country, ticker in comparison_members),
             "etfs": audit, "counts": counts, "status_counts": status_counts}
 
 
@@ -621,18 +669,19 @@ def _refresh_etf_market_history(item, country, anchor):
     return perf
 
 
-def synchronize_etf_market_dates(us, kr, info, attempts=2):
+def synchronize_etf_market_dates(us, kr, info, attempts=2, *, comparison_etfs=None):
     """Prefer the market close, retaining the latest honest past observations on failure."""
     if not isinstance(attempts, int) or isinstance(attempts, bool) or not 1 <= attempts <= 2:
         raise ValueError("ETF market-date retries must be 1 or 2")
     anchors = {"US": _performance_date(info.get("us_last")),
                "KR": _performance_date(info.get("kr_last"))}
+    groups, _, _ = _etf_audit_universes(us, kr, comparison_etfs)
     if any(anchors[country] is None and any(item.get("asset_type") == "ETF" for item in rows)
-           for country, rows in (("US", us), ("KR", kr))):
-        return validate_etf_market_dates(us, kr, info)
+           for country, rows in groups):
+        return validate_etf_market_dates(us, kr, info, comparison_etfs)
     # Transient status belongs to this requested market date. Preserve price data;
     # the actual observation dates, never a renamed reference date, determine it.
-    for country, rows in (("US", us), ("KR", kr)):
+    for country, rows in groups:
         for item in rows:
             if item.get("asset_type") != "ETF":
                 continue
@@ -640,7 +689,7 @@ def synchronize_etf_market_dates(us, kr, info, attempts=2):
             if item.get("date_status") != "unavailable":
                 item.pop("date_status", None)
     for attempt in range(1, attempts + 1):
-        pending = [(country, item) for country, rows in (("US", us), ("KR", kr)) for item in rows
+        pending = [(country, item) for country, rows in groups for item in rows
                    if item.get("asset_type") == "ETF" and (
                        _etf_market_date_error(item, anchors[country], country)
                        or _performance_date(item.get("price_end_date")) != anchors[country])]
@@ -677,7 +726,7 @@ def synchronize_etf_market_dates(us, kr, info, attempts=2):
                     log.warning("ETF 기준일 재조회 실패: %s:%s · 기대 %s · %s", country, item.get("ticker"), anchors[country], error)
         if attempt < attempts:
             time.sleep(1)
-    for country, rows in (("US", us), ("KR", kr)):
+    for country, rows in groups:
         for item in rows:
             if item.get("asset_type") != "ETF":
                 continue
@@ -698,7 +747,7 @@ def synchronize_etf_market_dates(us, kr, info, attempts=2):
                     log.warning("ETF 과거 가용일 사용: %s:%s · 시장 기준 %s · 실제 수익률 기준 %s",
                                 country, item.get("ticker"), anchors[country], item["price_end_date"])
             item["requested_market_date"] = anchors[country].isoformat()
-    proof = validate_etf_market_dates(us, kr, info)
+    proof = validate_etf_market_dates(us, kr, info, comparison_etfs)
     actual_dates = {}
     for country in ("US", "KR"):
         values = [row["price_end_date"] for row in proof["etfs"]
@@ -723,6 +772,7 @@ def verify_prepared_market_dates(html, manifest, directory, preview_proof):
     proof_bytes = (Path(directory) / "market-date-proof.json").read_bytes()
     date_proof = json.loads(proof_bytes)
     if (preview_proof.get("market_dates_checked") is not True
+            or preview_proof.get("management_styles_checked") is not True
             or preview_proof.get("period_returns_checked") is not True
             or preview_proof.get("market_dates_sha256") != hashlib.sha256(proof_bytes).hexdigest()):
         raise RuntimeError("ETF market-date browser proof is missing or changed")
@@ -732,9 +782,13 @@ def verify_prepared_market_dates(html, manifest, directory, preview_proof):
         raise RuntimeError("ETF market-date audit is incomplete")
     if any(not isinstance(item, dict) or item.get("country") not in ("US", "KR") for item in records):
         raise RuntimeError("ETF market-date audit contains an invalid market")
-    checked = validate_etf_market_dates([item for item in records if item["country"] == "US"],
-                                        [item for item in records if item["country"] == "KR"],
-                                        {"us_last": anchors.get("US"), "kr_last": anchors.get("KR")})
+    if any(type(item.get(key)) is not bool for item in records
+           for key in ("in_ath_report", "in_comparison_universe")):
+        raise RuntimeError("ETF market-date audit is missing explicit universe memberships")
+    checked = validate_etf_market_dates([item for item in records if item["country"] == "US" and item["in_ath_report"]],
+                                        [item for item in records if item["country"] == "KR" and item["in_ath_report"]],
+                                        {"us_last": anchors.get("US"), "kr_last": anchors.get("KR")},
+                                        [item for item in records if item["in_comparison_universe"]])
     bound = bind_market_date_proof(html, manifest, checked)
     if date_proof != bound:
         raise RuntimeError("ETF market-date audit, prepared body or inventory changed")
@@ -1031,7 +1085,8 @@ def enrich_us_etf(tk: str, name: str, usd_krw: float) -> dict:
         res.update(US_ETF_VERIFIED_LAUNCH[tk])
         res["inception_verified"] = True
     res["etf_index"] = _extract_us_index(info.get("longBusinessSummary") or "")
-    return {k: v for k, v in res.items() if v is not None}
+    res.update(etf_strategy.management_style_metadata({"ticker": tk, "name": name, "market": "US"}, info))
+    return {k: v for k, v in res.items() if v is not None or k in etf_strategy.STYLE_FIELDS}
 
 
 # ── ETF 전용 섹션 HTML ─────────────────────────────────────────────────────
@@ -1048,14 +1103,15 @@ def _etf_aum(v):
         return f"{v * 1e4:,.0f}억"
     return f"{v:,.2f}조" if v < 10 else f"{v:,.1f}조"
 
-def build_etf_info(us, kr):
+def build_etf_info(us, kr, comparison_etfs=None):
     """한국·미국 ETF 중 설립 이후 연평균 누적수익률 내림차순 상위 100개."""
-    pool = [s for s in kr + us if s.get("asset_type") == "ETF"]
+    pool = ([s for s in kr + us if s.get("asset_type") == "ETF"] if comparison_etfs is None
+            else list(comparison_etfs))
     ranked = []
     for item in pool:
         metrics = _etf_lifetime_metrics(item)
         if metrics is not None:
-            ranked.append({**item, **metrics})
+            ranked.append({**item, **metrics, **etf_strategy.management_style_metadata(item)})
     ranked.sort(key=lambda s: s["lifetime_cagr"], reverse=True)
     return {"rows": ranked[:100], "pool": len(pool), "with_ret": len(ranked)}
 
@@ -1218,23 +1274,31 @@ US_BOND_ETF_KEYWORDS = ("BOND","TREASURY","MUNICIPAL","MUNI ","T-BILL","TIPS",
                         "HIGH YIELD BOND","CORPORATE BOND","AGGREGATE BOND",
                         "DURATION BOND","FIXED INCOME")
 
-def get_us_ath(usd_krw):
+def get_us_ath(usd_krw, comparison_etfs=None):
     tickers,exchange_map,sp500_set,security_names,etf_flags=get_us_tickers()
     if not tickers: return []
+    compare = comparison_etfs is not None
+    etf_targets = [ticker for ticker in tickers if etf_flags.get(ticker, False)
+                   and not any(word in security_names.get(ticker, ticker).upper() for word in US_BOND_ETF_KEYWORDS)]
     d1=dl(tickers,"1y",chunk=100,sleep=1.0)
     cands=[tk for tk,s in d1.items() if len(s)>=2 and float(s.iloc[-1])>=float(s.max())*0.90]
     log.info(f"미국 1단계후보:{len(cands)}")
-    if not cands: return []
-    d2=dl(cands,"max",chunk=25,sleep=2.0)
-    out=[]
+    full_targets = list(dict.fromkeys(cands + (etf_targets if compare else [])))
+    if not full_targets: return []
+    d2=dl(full_targets,"max",chunk=25,sleep=2.0)
+    out=[]; ath_tickers=set()
     for tk,s in d2.items():
         try:
             last=float(s.iloc[-1]); prev=float(s.iloc[-2]); ath=float(s.max())
-            if last>=ath*0.90:
+            is_etf = etf_flags.get(tk, False)
+            if not all(math.isfinite(value) and value > 0 for value in (last, prev, ath)):
+                continue
+            if last>=ath*0.90 or (compare and is_etf):
                 sec_name = security_names.get(tk, tk)
-                is_etf = etf_flags.get(tk, False)
                 if is_etf and any(kw in sec_name.upper() for kw in US_BOND_ETF_KEYWORDS):
                     continue   # 채권형 ETF만 제외, 주식형 ETF는 통과
+                if last>=ath*0.90:
+                    ath_tickers.add(tk)
                 mcap=None
                 try:
                     m=getattr(yf.Ticker(tk).fast_info,"market_cap",None) or 0
@@ -1264,6 +1328,17 @@ def get_us_ath(usd_krw):
                             "index":idx,"industry":None,
                             "market":"US","url":url, **perf})
         except: pass
+    if compare:
+        found = {row["ticker"] for row in out if row["asset_type"] == "ETF"}
+        for ticker in etf_targets:
+            if ticker not in found:
+                # Missing batch data must remain visible to the bounded date
+                # refetch stage, rather than silently disappearing from ranking.
+                out.append({"ticker": ticker, "name": security_names.get(ticker, ticker),
+                            "asset_type": "ETF", "market": "US", "index": [exchange_map.get(ticker, "ETF")],
+                            "price": None, "change": None, "gap": None, "mcap": None,
+                            "industry": None, "url": None,
+                            "price_basis": "Yahoo 제공 수정주가(auto_adjust)", "price_currency": "USD"})
     if out:
         general = [s for s in out if s["asset_type"] != "ETF"]
         log.info(f"미국 일반주 업종 조회 중 ({len(general)}종목)...")
@@ -1291,6 +1366,9 @@ def get_us_ath(usd_krw):
                  f"원화 AUM {sum(1 for s in etf_items if s.get('aum'))}/{len(etf_items)}, "
                  f"투자분야 {sum(1 for s in etf_items if s.get('investment_area'))}/{len(etf_items)}")
     us_naver_links.resolve_us_links(out)
+    if compare:
+        comparison_etfs.extend(etf_items)
+        out = [item for item in out if item["ticker"] in ath_tickers]
     out.sort(key=lambda x:x["gap"])
     log.info(f"미국 최종:{len(out)}"); return out
 
@@ -1456,10 +1534,13 @@ def _kr_etf_adjusted_performance(code, market, fallback):
         return None
     suffix = ".KQ" if market == "KOSDAQ" else ".KS"
     try:
-        history = yf.Ticker(code + suffix).history(period="max", auto_adjust=True, timeout=12)
+        history = yf.Ticker(code + suffix).history(period="max", end=(expected_last + timedelta(days=1)).isoformat(),
+                                                  auto_adjust=True, timeout=12)
         closes = history["Close"].dropna()
         dates = [stamp.date() for stamp in closes.index]
         prices = [float(value) for value in closes.tolist()]
+        pairs = [(day, price) for day, price in zip(dates, prices) if day <= expected_last]
+        dates, prices = [day for day, _ in pairs], [price for _, price in pairs]
         if (len(dates) < 2 or dates[-1] != expected_last
                 or any(not math.isfinite(value) or value <= 0 for value in prices)):
             return None
@@ -1473,13 +1554,14 @@ def _kr_etf_adjusted_performance(code, market, fallback):
         return None
 
 
-def get_kr_ath(usd_krw, kr_last=None):
-    universe = get_kr_universe()
+def get_kr_ath(usd_krw, kr_last=None, comparison_etfs=None):
+    compare = comparison_etfs is not None
+    universe = get_kr_universe() or {}
     if not universe:
         log.warning("한국 종목 유니버스 1차 수집 실패 — 일시적 네트워크 문제일 수 있어 30초 후 재시도")
         time.sleep(30)
-        universe = get_kr_universe()
-    if not universe:
+        universe = get_kr_universe() or {}
+    if not universe and not compare:
         log.error("한국 종목 유니버스 재시도까지 실패 — 0종목 반환 (네트워크 문제 지속 중일 가능성)")
         return []
 
@@ -1494,6 +1576,12 @@ def get_kr_ath(usd_krw, kr_last=None):
                 universe[_code]["mcap"] = _meta["mcap"]
         else:
             universe[_code] = _meta
+    if not universe:
+        log.warning("한국 주식·ETF 유니버스를 확보하지 못했습니다")
+        return []
+    etf_targets = {code: meta for code, meta in universe.items()
+                   if (meta.get("is_etf") or kr_is_etf_name(meta["name"]))
+                   and not kr_is_bond_etf(meta["name"])}
     log.info(f"한국 {len(universe)}종목 fchart 가격이력 조회 시작 (ETF {len(etf_universe)}종목 포함, 15 workers)...")
 
     def fetch_one(code, meta):
@@ -1501,17 +1589,25 @@ def get_kr_ath(usd_krw, kr_last=None):
         if "스팩" in name:
             return None
         etf_flag = bool(meta.get("is_etf")) or kr_is_etf_name(name)
+        if etf_flag and kr_is_bond_etf(name):
+            return None
         dates = None
         if etf_flag:
             dates, closes = _kr_price_history_dated(code, count=8000)   # 설립일/1년·3년·5년·10년 및 누적수익률용 장기 이력
+            if kr_last is not None and dates and len(dates) == len(closes):
+                anchor = _performance_date(kr_last)
+                if anchor is not None:
+                    pairs = [(day, price) for day, price in zip(dates, closes)
+                             if _performance_date(day) is not None and _performance_date(day) <= anchor]
+                    dates, closes = [day for day, _ in pairs], [price for _, price in pairs]
         else:
             closes = _kr_price_history(code, count=3000)
-        if len(closes) < 30:
+        if len(closes) < (2 if compare and etf_flag else 30):
             return None
         last, prev, ath = closes[-1], closes[-2], max(closes)
         if last <= 0 or ath <= 0:
             return None
-        if last >= ath * 0.90:
+        if last >= ath * 0.90 or (compare and etf_flag):
             res = {"ticker":code, "name":name, "price":int(last),
                    "change":round((last-prev)/prev*100,2),
                    "gap":round((last-ath)/ath*100,2),
@@ -1532,8 +1628,24 @@ def get_kr_ath(usd_krw, kr_last=None):
     with ThreadPoolExecutor(max_workers=15) as ex:
         futs = {ex.submit(fetch_one, code, meta): code for code, meta in universe.items()}
         for fut in as_completed(futs):
-            r = fut.result()
+            try:
+                r = fut.result()
+            except Exception as error:
+                log.warning("한국 가격이력 조회 실패 %s: %s", futs[fut], type(error).__name__)
+                continue
             if r: out.append(r)
+    if compare:
+        found = {row["ticker"] for row in out if row.get("is_etf")}
+        for code, meta in etf_targets.items():
+            if code not in found:
+                out.append({"ticker": code, "name": meta["name"], "asset_type": "ETF", "is_etf": True,
+                            "market": meta.get("market", "KOSPI"), "index": [meta.get("market", "KOSPI")],
+                            "price": None, "change": None, "gap": None, "mcap": meta.get("mcap"),
+                            "aum": meta.get("aum"), "industry": None,
+                            "investment_area": meta.get("investment_area"),
+                            "investment_area_source": meta.get("investment_area_source"),
+                            "price_basis": "네이버 차트 종가·배당조정 미확인", "price_currency": "KRW",
+                            "url": f"https://m.stock.naver.com/domestic/stock/{code}/total"})
 
     log.info(f"한국 ATH 후보: {len(out)}종목")
 
@@ -1567,6 +1679,7 @@ def get_kr_ath(usd_krw, kr_last=None):
     if etf_items:
         log.info(f"한국 ETF 상세 조회 중 ({len(etf_items)}종목)...")
         def enrich_kr(s):
+            base = None
             try:
                 base = fetch_kr_etf_base(s["ticker"])
                 parsed = parse_kr_etf_base(base) if base else {}
@@ -1583,6 +1696,7 @@ def get_kr_ath(usd_krw, kr_last=None):
                 s["investment_area"] = parsed["investment_area"]
                 s["investment_area_source"] = parsed["investment_area_source"]
             s["etf_kind"] = classify_kr_etf(s["name"])
+            s.update(etf_strategy.management_style_metadata(s, base))
             adjusted = _kr_etf_adjusted_performance(s["ticker"], s.get("market"), s)
             if adjusted is not None:
                 s.update(adjusted)
@@ -1594,6 +1708,10 @@ def get_kr_ath(usd_krw, kr_last=None):
                  f"원화 AUM {sum(1 for s in etf_items if s.get('aum'))}/{len(etf_items)}, "
                  f"투자분야 {sum(1 for s in etf_items if s.get('investment_area'))}/{len(etf_items)}")
 
+    if compare:
+        comparison_etfs.extend(etf_items)
+        out = [item for item in out if item.get("asset_type") != "ETF" or
+               (isinstance(item.get("gap"), (int, float)) and item["gap"] >= -10)]
     out.sort(key=lambda x:x["gap"])
     log.info(f"한국 최종:{len(out)}")
     return out
@@ -1726,14 +1844,24 @@ def send_email(html, subject, inline_images=None, source_html=None):
     log.info("SMTP_ACCEPTED: %s", json.dumps(receipt, ensure_ascii=False))
     log.info("✅ SMTP 접수 성공 · 수신함 도착 여부는 별도 확인")
 
-CODE_VERSION = "2026-10-30-email-without-html-attachment"
+CODE_VERSION = "2026-11-02-independent-etf-comparison-management-style"
 
 def main(prepare_only=False):
     log.info(f"=== ATH 리포트 시작 (코드버전: {CODE_VERSION}) ===")
     info=get_trading_info(); usd_krw=get_usd_krw(); indices=get_market_indices()
-    us=get_us_ath(usd_krw)
-    kr=get_kr_ath(usd_krw, info.get("kr_last"))
-    market_dates = synchronize_etf_market_dates(us, kr, info)
+    comparison_etfs = []
+    us=get_us_ath(usd_krw, comparison_etfs)
+    kr=get_kr_ath(usd_krw, info.get("kr_last"), comparison_etfs)
+    # Backwards-compatible mocked collectors may return country rows without
+    # populating their output list. Real collectors retain every ETF candidate.
+    if not comparison_etfs:
+        comparison_etfs = [row for row in kr + us if row.get("asset_type") == "ETF"]
+    synchronize_etf_market_dates(us, kr, info, comparison_etfs=comparison_etfs)
+    # Updated ETF quotes can change ATH membership; they must never change
+    # membership of the independent cumulative-return comparison corpus.
+    us = [row for row in us if row.get("asset_type") != "ETF" or row.get("gap") is None or row["gap"] >= -10]
+    kr = [row for row in kr if row.get("asset_type") != "ETF" or row.get("gap") is None or row["gap"] >= -10]
+    market_dates = validate_etf_market_dates(us, kr, info, comparison_etfs)
 
     # 거래일 기준 스냅샷 비교 (같은 거래일 재실행해도 항상 동일 결과)
     us_date_key = info["us_last"].isoformat() if info.get("us_last") else datetime.now(KST).strftime("%Y-%m-%d")
@@ -1754,10 +1882,21 @@ def main(prepare_only=False):
     for s in us: s["streak"] = us_streak.get(s["ticker"], 1)
     for s in kr: s["streak"] = kr_streak.get(s["ticker"], 1)
 
-    # ETF 전용 섹션: ATH -10% 이내 ETF(한국+미국) 중 설립 이후 연평균 누적수익률 내림차순 상위 100개
-    etf_info = build_etf_info(us, kr)
+    # ETF 비교는 ATH와 독립된 수집 비채권 ETF 전체의 연평균 내림차순입니다.
+    etf_info = build_etf_info(us, kr, comparison_etfs)
     log.info(f"ETF 섹션: 풀 {etf_info['pool']}개 / 연평균 누적수익률 산출 {etf_info['with_ret']}개 / 표시 {len(etf_info['rows'])}개")
-    for item in us:
+    for item in comparison_etfs:
+        if item.get("ticker") == "TQQQ" and item.get("market") == "US":
+            metrics = _etf_lifetime_metrics(item) or {}
+            keys = ("ticker", "inception", "price_start_date", "price_end_date", "initial_adjusted_price",
+                    "latest_adjusted_price", "cumulative_return", "lifetime_cagr", "lifetime_years", "gap", "date_status")
+            audited = {**item, **metrics}
+            detail = {key: audited.get(key) for key in keys}
+            detail.update(in_ath_report=any(row["ticker"] == "TQQQ" for row in us),
+                          in_comparison_universe=True,
+                          displayed_rank=next((index for index, row in enumerate(etf_info["rows"], 1)
+                                               if row.get("market") == "US" and row["ticker"] == "TQQQ"), None))
+            log.info("ETF_TQQQ_VERIFIED: %s", json.dumps(detail, ensure_ascii=False))
         if item.get("ticker") == "DFAC" and item.get("asset_type") == "ETF":
             audited = {**item, **(_etf_lifetime_metrics(item) or {})}
             keys = ("inception", "inception_label", "inception_source", "inception_verified",

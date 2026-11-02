@@ -145,10 +145,10 @@ def price_exact_text(value):
 
 def table_columns(kind):
     if kind == "returns":
-        # Shorter annualized/date headings fund the added YTD column while
-        # preserving fonts, price widths and the fixed AUM/flag columns.
-        widths = ("3%", "3%", "6%", None, "8%", "4%", "4%", "4%", "4%", "4%",
-                  "6%", "5%", "5%", "4%", "96px", "7%", "6%", "6.5%")
+        # Both cumulative-return and elapsed-year widths are 85% of their
+        # former 6%; fonts, price widths and the fixed AUM/flag columns stay.
+        widths = ("3%", "3%", "6%", None, "8%", "6%", "4%", "4%", "4%", "4%", "4%",
+                  "5.1%", "5%", "5%", "4%", "96px", "7%", "5.1%", "6.5%")
     elif kind == "new":
         # Before this change the auto name width was 54% of the table minus
         # 168px. A fixed 19% is 46–55% of that width across 900–1920px hosts.
@@ -244,10 +244,42 @@ def period_return_title(row, period):
             f'{currency} · {row.get("price_basis") or "가격 기준 미확인"}')
 
 
+def management_style_text(row):
+    value = row.get("management_style")
+    return value if value in ("Active", "Passive") else "미확인"
+
+
+def management_style_title(row):
+    style = management_style_text(row)
+    source = row.get("management_style_source") or "운용방식 근거 미확인"
+    evidence = row.get("management_style_evidence") or "분류 근거 없음"
+    status = "공식자료 확인" if row.get("management_style_verified") is True else "공식자료 미확인"
+    title = f"{style} · {source} · {evidence} · {status}"
+    return title + (" · " + row["management_style_url"] if row.get("management_style_url") else "")
+
+
+def validate_management_style_evidence(row):
+    """Unknown stays explicit; named styles must retain their stated evidence."""
+    style = row.get("management_style")
+    source = row.get("management_style_source")
+    url = row.get("management_style_url")
+    verified = row.get("management_style_verified")
+    evidence = row.get("management_style_evidence")
+    if (style not in ("Active", "Passive", "미확인") or not isinstance(source, str)
+            or not source.strip() or type(verified) is not bool
+            or (url is not None and (not isinstance(url, str) or not url.startswith("https://")))):
+        raise RuntimeError("ETF management style or source metadata is invalid")
+    if style == "미확인":
+        if verified or url is not None or evidence is not None:
+            raise RuntimeError("Unknown ETF management style must not claim verified evidence")
+    elif (not isinstance(evidence, str) or not evidence.strip() or not url):
+        raise RuntimeError("Known ETF management style requires source URL and classification evidence")
+
+
 def etf_section_html(etf_info, include_details=False, info=None):
     rows = etf_info.get("rows", [])
     head = ('<div class="section" id="etf"><h2>ETF 수익률 비교</h2>'
-            f'<p class="intro">연평균 누적수익률 내림차순 · 상위 {len(rows)}개'
+            f'<p class="intro">수집 대상 비채권 ETF · 연평균 누적수익률 내림차순 · 상위 {len(rows)}개'
             f' · 산출 가능 {etf_info.get("with_ret", 0)} / 후보 {etf_info.get("pool", 0)}개</p>'
             '<p class="etf-caption">연초: 전년 마지막 시세 대비 · 1·3·5·10년: 각 기간 누적수익률 · 누적: 정확한 최초·최근주가의 수익률 · 연평균: 같은 가격 기간을 복리 환산 · 수익률 단위: %</p>')
     if info is not None:
@@ -259,7 +291,7 @@ def etf_section_html(etf_info, include_details=False, info=None):
               ("3y", "3년", "return3y"), ("5y", "5년", "return5y"), ("10y", "10년", "return10y"),
               ("cumulative", "누적", "cumulative_return"))
     table = ('<div class="etf-comparison"><table class="data-table etf-table" id="returns">' + table_columns("returns") + '<thead><tr>'
-             '<th class="number">No.</th><th class="flag-cell">국가</th><th>티커</th><th>종목명</th><th>업종·투자분야</th>' +
+             '<th class="number">No.</th><th class="flag-cell">국가</th><th>티커</th><th>종목명</th><th>업종·투자분야</th><th>운용방식</th>' +
              "".join(f'<th class="number {"one-year" if period == "1y" else ""}">{label}</th>'
                      for period, label, _ in labels) +
              '<th class="number">최초주가</th><th class="number">최근주가</th>'
@@ -275,7 +307,8 @@ def etf_section_html(etf_info, include_details=False, info=None):
                   f'<td class="flag-cell">{flag_icon(country)}</td>'
                   f'<td class="ticker-cell"><a href="{safe_url(row.get("url"))}">{ticker}</a></td>'
                   f'<td class="name-cell"><span class="nm">{h(row.get("name"))}</span></td>'
-                  f'<td title="{h(row.get("etf_index") or industry_text(row))}">{h(brief_investment_text(row))}</td>' +
+                  f'<td title="{h(row.get("etf_index") or industry_text(row))}">{h(brief_investment_text(row))}</td>'
+                  f'<td class="flag-cell" title="{h(management_style_title(row))}">{h(management_style_text(row))}</td>' +
                   "".join(f'<td class="number {"one-year" if period == "1y" else ""}" title="{h(period_return_title(row, period))}">'
                           f'{compact_metric(period, label, row.get(key))}</td>'
                           for period, label, key in labels) +
@@ -288,7 +321,8 @@ def etf_section_html(etf_info, include_details=False, info=None):
                   f'<td class="date-cell" title="{h(return_date_title(row, (info or {}).get(country.lower() + "_last")))}">'
                   f'{h(return_date_text(row))}</td></tr>')
     table += '</tbody></table></div>'
-    notes = ('<p class="notes">ATH -10% 이내 비채권 ETF 중 연평균 누적수익률 산출 가능 종목을 내림차순으로 최대 100개 표시합니다. '
+    notes = ('<p class="notes">ETF 비교는 ATH 괴리율과 무관하게 수집 대상 한국·미국 비채권 ETF 중 연평균 누적수익률 산출 가능 종목을 내림차순으로 최대 100개 표시합니다. '
+             '운용방식은 Active·Passive로 표시하며 근거가 없으면 미확인으로 표시합니다. 마우스를 올리면 분류 근거·출처와 공식자료 확인 여부를 볼 수 있습니다. 레버리지 사용만으로 Active로 분류하지 않습니다.<br>'
              '연초는 실제 수익률 기준일의 전년도 마지막 확보 시세부터, 1·3·5·10년은 실제 수익률 기준일에서 해당 연수 전 같은 날짜(휴장일이면 그 이전 최근 시세)부터의 누적수익률입니다. 각 기간 수익률 = (최근주가 ÷ 기간 시작주가 - 1) × 100이며 연환산하지 않습니다. 기간 이력이 부족하면 -로 표시합니다.<br>'
              '국가 시장 기준일의 시세가 없으면 재조회 후 이전 가능 시세일로 계산합니다. ETF별 실제 날짜는 오른쪽 수익률 기준일을 참고하세요. 유효한 가격을 확보하지 못한 ETF는 후보에 유지하며 수익률은 계산 불가로 처리합니다.<br>'
              '누적수익률 = (최근주가 ÷ 최초주가 - 1) × 100이며, 연환산하지 않음. 두 가격은 같은 제공업체·같은 조정 기준입니다. '
@@ -411,9 +445,10 @@ def render_email(us, kr, info, usd_krw, new_us=None, new_kr=None, diag=None,
               f'<style>{styles}</style></head><body>'
               '<div class="shell"><div class="hero">'
               f'<h1>오늘의 ATH &amp; ETF</h1><div class="date">{date_label} · 일일 시장 리포트</div>'
-              f'<div class="foot">All Time High −10% 이내 · 원/달러 {usd_krw:,.0f}원</div></div>')
-    html = (header + _summary(us, kr, info, indices) + new_summary(new_us, new_kr)
+              f'<div class="foot">ATH 후보 · ETF 연환산 순위 · 원/달러 {usd_krw:,.0f}원</div></div>')
+    html = (header + _summary(us, kr, info, indices)
             + etf_section_html(etf_info, include_details=False, info=info)
+            + new_summary(new_us, new_kr)
             + '<p class="notes">업종·투자분야: 주식은 기업 업종, ETF는 제공업체 분류를 표시합니다. 분류가 없으면 명칭 기준으로 표시합니다.</p>'
             + stocks_table(kr, "한국 ATH 후보", "KRW", info.get("kr_holiday", False),
                            info.get("kr_last_str", "-"), info.get("kr_holiday_msg", ""),
@@ -627,6 +662,12 @@ def validate_etf_date_proof(source, manifest, proof):
     records = proof.get("etfs")
     if not isinstance(records, list):
         raise RuntimeError("ETF market-date proof has no complete ETF audit list")
+    comparison_ids = proof.get("comparison_universe")
+    if (not isinstance(comparison_ids, list) or any(not isinstance(value, str) for value in comparison_ids)
+            or comparison_ids != sorted(set(comparison_ids))
+            or any(not re.fullmatch(r"(?:US|KR):[^:\s]+", value) for value in comparison_ids)):
+        raise RuntimeError("ETF comparison universe is missing, duplicated or malformed")
+    comparison_members = {tuple(value.split(":", 1)) for value in comparison_ids}
     audits = {}
     counts = {"US": 0, "KR": 0}
     status_counts = {"market_close": 0, "latest_available": 0, "unavailable": 0}
@@ -641,6 +682,10 @@ def validate_etf_date_proof(source, manifest, proof):
         key = (country, ticker)
         if country not in counts or not ticker or key in audits or record.get("asset_type") != "ETF":
             raise RuntimeError("ETF market-date proof has invalid or duplicate securities")
+        if (type(record.get("in_ath_report")) is not bool
+                or type(record.get("in_comparison_universe")) is not bool
+                or not (record["in_ath_report"] or record["in_comparison_universe"])):
+            raise RuntimeError("ETF audit is missing explicit ATH and comparison membership")
         anchor, end, status = market_dates[country], record.get("price_end_date"), record.get("date_status")
         if record.get("requested_market_date") != anchor or status not in status_counts:
             raise RuntimeError(f"ETF {country}:{ticker} is missing its requested market date or explicit date status")
@@ -652,6 +697,7 @@ def validate_etf_date_proof(source, manifest, proof):
               or status != ("market_close" if end == anchor else "latest_available")):
             raise RuntimeError(f"ETF {country}:{ticker} actual price date or fallback status is inconsistent")
         validate_period_return_evidence(record)
+        validate_management_style_evidence(record)
         audits[key] = record
         counts[country] += 1
         status_counts[status] += 1
@@ -682,18 +728,23 @@ def validate_etf_date_proof(source, manifest, proof):
                 raise RuntimeError("An ETF country table contains a malformed row")
             if cells[5].get_text(strip=True) == "ETF":
                 observed.add((country, row_ticker(cells)))
-    if observed != set(audits):
+    audit_ath_members = {key for key, record in audits.items() if record["in_ath_report"]}
+    audit_comparison_members = {key for key, record in audits.items() if record["in_comparison_universe"]}
+    if observed != audit_ath_members:
         raise RuntimeError("ETF market-date proof does not cover every ETF in the country tables")
+    if (comparison_members != audit_comparison_members
+            or set(audits) != observed | comparison_members):
+        raise RuntimeError("ETF market-date proof does not cover every ETF in the ATH/comparison union")
     for country in ("KR", "US"):
         for row in doc.select("#new-" + country.lower() + " tbody tr"):
             cells = row.find_all("td", recursive=False)
             if len(cells) != 10:
                 raise RuntimeError("A newly appearing ETF table contains a malformed row")
-            if cells[5].get_text(strip=True) == "ETF" and (country, row_ticker(cells)) not in audits:
+            if cells[5].get_text(strip=True) == "ETF" and (country, row_ticker(cells)) not in audit_ath_members:
                 raise RuntimeError("A newly appearing ETF is missing from the market-date audit")
     for row in doc.select("#returns tbody tr"):
         cells = row.find_all("td", recursive=False)
-        if len(cells) != 18:
+        if len(cells) != 19:
             raise RuntimeError("The ETF return table contains a malformed row")
         flag = cells[1].find("img")
         country = ("US" if flag and (flag.get("src") == "cid:u" or flag.get("alt") == "성조기")
@@ -702,10 +753,17 @@ def validate_etf_date_proof(source, manifest, proof):
         record = audits.get((country, ticker))
         if record is None:
             raise RuntimeError(f"Displayed ETF {country}:{ticker} is missing from the full market-date audit")
+        if (country, ticker) not in comparison_members or not record["in_comparison_universe"]:
+            raise RuntimeError(f"Displayed ETF {country}:{ticker} is outside the audited comparison universe")
         if record["date_status"] == "unavailable":
             raise RuntimeError(f"Unavailable ETF {country}:{ticker} must not claim a ranked return")
-        for column, key, date_key in ((11, "initial_adjusted_price", "price_start_date"),
-                                      (12, "latest_adjusted_price", "price_end_date")):
+        style_cell, style_text, style_detail = cells[5], management_style_text(record), management_style_title(record)
+        style_clip = style_cell.select_one(".cl")
+        if (style_cell.get_text() != style_text or style_cell.get("title") != style_detail
+                or style_clip is None or style_clip.get("title") != style_text + " · " + style_detail):
+            raise RuntimeError(f"Displayed ETF {country}:{ticker} management style differs from its audited evidence")
+        for column, key, date_key in ((12, "initial_adjusted_price", "price_start_date"),
+                                      (13, "latest_adjusted_price", "price_end_date")):
             value = record.get(key)
             currency = record.get("price_currency")
             detail = (f'정확값 {price_exact_text(value)} · {record.get(date_key)} · '
@@ -716,8 +774,8 @@ def validate_etf_date_proof(source, manifest, proof):
                     or cell.get("title") != detail or clip is None
                     or clip.get("title") != price_text(value) + " · " + detail):
                 raise RuntimeError(f"Displayed ETF {country}:{ticker} price or date differs from its audit")
-        for column, key in ((5, "return_ytd"), (6, "return1y"), (7, "return3y"), (8, "return5y"),
-                            (9, "return10y"), (10, "cumulative_return"), (13, "lifetime_cagr")):
+        for column, key in ((6, "return_ytd"), (7, "return1y"), (8, "return3y"), (9, "return5y"),
+                            (10, "return10y"), (11, "cumulative_return"), (14, "lifetime_cagr")):
             value = record.get(key)
             text = f"{value:.1f}" if isinstance(value, (int, float)) and math.isfinite(value) else "-"
             if cells[column].get_text() != text:
@@ -730,9 +788,9 @@ def validate_etf_date_proof(source, manifest, proof):
                 if (cells[column].get("title") != detail or clip is None
                         or clip.get("title") != text + " · " + detail):
                     raise RuntimeError(f"Displayed ETF {country}:{ticker} {key} period dates or prices differ from its audit")
-        if cells[16].get_text() != elapsed_years_text(record.get("lifetime_years")):
+        if cells[17].get_text() != elapsed_years_text(record.get("lifetime_years")):
             raise RuntimeError(f"Displayed ETF {country}:{ticker} elapsed years differ from its audited dates")
-        date_cell, date_detail = cells[17], return_date_title(record, market_dates[country])
+        date_cell, date_detail = cells[18], return_date_title(record, market_dates[country])
         clip = date_cell.select_one(".cl")
         if (date_cell.get_text() != return_date_text(record) or date_cell.get("title") != date_detail
                 or clip is None or clip.get("title") != return_date_text(record) + " · " + date_detail):

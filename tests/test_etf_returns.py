@@ -4,10 +4,12 @@ import unittest
 from datetime import date, datetime, time
 from unittest.mock import patch
 from types import SimpleNamespace
+import pandas as pd
 
 from src.main import (_calc_perf, _etf_period_returns, _etf_price_performance, _etf_lifetime_metrics,
                       _validated_etf_metadata, _kr_etf_adjusted_performance,
-                      build_etf_info, etf_section_html)
+                      build_etf_info, etf_section_html, get_us_ath, get_kr_ath,
+                      synchronize_etf_market_dates, validate_etf_market_dates)
 
 
 class EtfReturnTests(unittest.TestCase):
@@ -403,11 +405,21 @@ class KoreanAdjustedHistoryTests(unittest.TestCase):
             ticker.return_value.history.return_value = history
             result = _kr_etf_adjusted_performance("123456", "KOSPI", fallback)
             ticker.assert_called_once_with("123456.KS")
-            ticker.return_value.history.assert_called_once_with(period="max", auto_adjust=True, timeout=12)
+            ticker.return_value.history.assert_called_once_with(period="max", end="2026-10-15", auto_adjust=True, timeout=12)
         self.assertEqual(result["initial_adjusted_price"], 9876.54321)
         self.assertEqual(result["latest_adjusted_price"], 20000.25)
         self.assertEqual(result["price_currency"], "KRW")
         self.assertEqual(result["price_basis"], "Yahoo 제공 수정주가(auto_adjust)")
+
+    def test_future_intraday_quote_is_trimmed_to_actual_country_anchor(self):
+        history = self.fake_history([date(2021, 1, 4), date(2026, 10, 30), date(2026, 11, 2)], [100, 150, 999])
+        with patch("src.main.yf.Ticker") as ticker:
+            ticker.return_value.history.return_value = history
+            result = _kr_etf_adjusted_performance("123456", "KOSPI", {
+                "first_date": "2021-01-04", "last_date": "2026-10-30"})
+            ticker.return_value.history.assert_called_once_with(period="max", end="2026-10-31", auto_adjust=True, timeout=12)
+        self.assertEqual(result["price_end_date"], "2026-10-30")
+        self.assertEqual(result["latest_adjusted_price"], 150)
 
     def test_stale_short_invalid_or_unavailable_adjusted_series_does_not_replace_naver(self):
         fallback = {"first_date": "2021-01-04", "last_date": "2026-10-14"}
@@ -422,6 +434,89 @@ class KoreanAdjustedHistoryTests(unittest.TestCase):
                 ticker.assert_called_once_with("123456.KQ")
         with patch("src.main.yf.Ticker", side_effect=RuntimeError("unavailable")):
             self.assertIsNone(_kr_etf_adjusted_performance("123456", "KOSPI", fallback))
+
+
+class IndependentEtfComparisonTests(unittest.TestCase):
+    @staticmethod
+    def info():
+        return {"us_last": date(2026, 10, 30), "kr_last": date(2026, 10, 30)}
+
+    @staticmethod
+    def series(prices, dates=None):
+        return pd.Series(prices, index=pd.to_datetime(dates or ["2010-02-11", "2025-12-31", "2026-10-30"]))
+
+    def test_large_lifetime_return_is_ranked_even_when_both_ath_filters_reject_it(self):
+        symbols = ["TQQQ", "UPRO", "GOOD", "BAD", "BOND"]
+        flags = {symbol: symbol not in ("GOOD", "BAD") for symbol in symbols}
+        names = {symbol: "Example Bond ETF" if symbol == "BOND" else symbol for symbol in symbols}
+        one_year = {"TQQQ": self.series([70, 86.85, 62.01]), "UPRO": self.series([90, 100, 95]),
+                    "GOOD": self.series([90, 100, 105]), "BAD": self.series([100, 105, 70])}
+        full = {"TQQQ": self.series([.2051851600408554, 86.85, 62.0099983215332]),
+                "UPRO": self.series([1, 150, 95]), "GOOD": one_year["GOOD"]}
+        def download(tickers, period, **kwargs):
+            return one_year if period == "1y" else {symbol: full[symbol] for symbol in tickers if symbol in full}
+        pool = []
+        with (patch("src.main.get_us_tickers", return_value=(symbols, {}, set(), names, flags)),
+              patch("src.main.dl", side_effect=download) as batch,
+              patch("src.main.yf.Ticker", return_value=SimpleNamespace(fast_info=SimpleNamespace(market_cap=0), info={})),
+              patch("src.main.get_us_industry", return_value="기술"),
+              patch("src.main.us_naver_links.resolve_us_links")):
+            ath = get_us_ath(1400, pool)
+        self.assertEqual([row["ticker"] for row in ath], ["GOOD"])
+        self.assertEqual({row["ticker"] for row in pool}, {"TQQQ", "UPRO"})
+        self.assertIn("TQQQ", batch.call_args_list[1].args[0])
+        ranked = build_etf_info(ath, [], pool)
+        self.assertEqual(ranked["rows"][0]["ticker"], "TQQQ")
+        self.assertEqual(ranked["rows"][0]["cumulative_return"], 30121.5)
+        self.assertEqual(ranked["rows"][0]["price_start_date"], "2010-02-11")
+        self.assertEqual(ranked["rows"][0]["inception"], "2010-02-09")
+        proof = validate_etf_market_dates(ath, [], self.info(), pool)
+        tqqq = next(row for row in proof["etfs"] if row["ticker"] == "TQQQ")
+        self.assertFalse(tqqq["in_ath_report"])
+        self.assertTrue(tqqq["in_comparison_universe"])
+        self.assertEqual(proof["comparison_universe"], ["US:TQQQ", "US:UPRO"])
+
+    def test_missing_etf_batch_data_survives_as_candidate_and_receives_bounded_retry(self):
+        pool = []
+        with (patch("src.main.get_us_tickers", return_value=(["TQQQ"], {}, set(), {"TQQQ": "TQQQ"}, {"TQQQ": True})),
+              patch("src.main.dl", return_value={}),
+              patch("src.main.yf.Ticker", return_value=SimpleNamespace(info={})),
+              patch("src.main.us_naver_links.resolve_us_links")):
+            ath = get_us_ath(1400, pool)
+        self.assertEqual(ath, [])
+        self.assertEqual([row["ticker"] for row in pool], ["TQQQ"])
+        with patch("src.main.yf.Ticker") as ticker:
+            ticker.return_value.history.side_effect = RuntimeError("temporary data outage")
+            proof = synchronize_etf_market_dates(ath, [], self.info(), attempts=1, comparison_etfs=pool)
+            self.assertEqual(ticker.return_value.history.call_count, 1)
+        self.assertEqual(proof["counts"]["US"], 1)
+        self.assertEqual(proof["etfs"][0]["date_status"], "unavailable")
+        self.assertEqual(proof["comparison_universe"], ["US:TQQQ"])
+        self.assertEqual(build_etf_info(ath, [], pool), {"rows": [], "pool": 1, "with_ret": 0})
+
+    def test_korean_comparison_is_independent_of_general_stock_failure_and_ath(self):
+        universe = {code: {"name": name, "market": "KOSPI", "is_etf": True}
+                    for code, name in (("111111", "TIGER 지수"), ("222222", "KODEX 신규"),
+                                       ("333333", "ACE 이력없음"), ("444444", "TIGER 국채"))}
+        histories = {"111111": ([date(2025, 12, 31), date(2026, 10, 30), date(2026, 11, 2)], [100, 70, 999]),
+                     "222222": ([date(2026, 10, 29), date(2026, 10, 30)], [100, 101]),
+                     "333333": ([], [])}
+        pool = []
+        with (patch("src.main.get_kr_universe", return_value={}) as stock_universe,
+              patch("src.main.get_kr_etf_universe", return_value=universe),
+              patch("src.main._kr_price_history_dated", side_effect=lambda code, **kwargs: histories[code]),
+              patch("src.main.fetch_kr_etf_base", return_value=None),
+              patch("src.main._kr_etf_adjusted_performance", return_value=None),
+              patch("src.main.time.sleep") as sleep):
+            ath = get_kr_ath(1400, date(2026, 10, 30), pool)
+        sleep.assert_called_once_with(30)
+        self.assertEqual(stock_universe.call_count, 2)
+        self.assertEqual([row["ticker"] for row in ath], ["222222"])
+        self.assertEqual({row["ticker"] for row in pool}, {"111111", "222222", "333333"})
+        prior = next(row for row in pool if row["ticker"] == "111111")
+        self.assertEqual((prior["price_end_date"], prior["latest_adjusted_price"]), ("2026-10-30", 70))
+        self.assertEqual(prior["gap"], -30.0)
+        self.assertIsNotNone(_etf_lifetime_metrics(prior))
 
 
 if __name__ == "__main__":

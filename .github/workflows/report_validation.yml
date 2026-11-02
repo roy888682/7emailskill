@@ -45,9 +45,10 @@ jobs:
           import json
           from datetime import date
           from pathlib import Path
-          from tools.preview_email import sample_data, make_stock, manifest_for, set_sample_period_returns
+          from tools.preview_email import sample_data, make_stock, manifest_for, set_sample_period_returns, set_sample_management_style
           from src.email_layout import render_email
-          from src.main import validate_etf_market_dates, bind_market_date_proof, _etf_lifetime_metrics
+          from src.main import validate_etf_market_dates, bind_market_date_proof, _etf_lifetime_metrics, build_etf_info, ETF_CALCULATION_FIELDS, ETF_PERIOD_FIELDS
+          from src.etf_strategy import management_style_metadata
           data = sample_data()
           base_etfs = data["etf_info"]["rows"]
           data["us"] = [make_stock("US%04d" % i, number=i, asset_type="주식" if i < 75 else "ETF") for i in range(229)]
@@ -63,14 +64,43 @@ jobs:
                   actual_end = "2026-10-02" if index == 160 else "2026-10-06"
                   row["price_end_date"] = row["last_date"] = row["return_as_of"] = actual_end
                   row["lifetime_years"] = (date.fromisoformat(actual_end) - date.fromisoformat(row["price_start_date"])).days / 365.25
-              row["lifetime_cagr"] = 100.0 - index * .5
+              row["lifetime_cagr"] = 40.0 - index * .2
               row["cumulative_return"] = ((1 + row["lifetime_cagr"] / 100) ** row["lifetime_years"] - 1) * 100
               row["initial_adjusted_price"] = .0000123456789012 if index == 0 else 100.123456789
               row["latest_adjusted_price"] = row["initial_adjusted_price"] * (1 + row["cumulative_return"] / 100)
               row["cumulative_growth"] = row["latest_adjusted_price"] / row["initial_adjusted_price"]
               row.update(_etf_lifetime_metrics(row))
               set_sample_period_returns(row)
-          data["etf_info"] = {"rows": [dict(row) for row in cohort[:100]], "pool": len(cohort), "with_ret": len(cohort)}
+              set_sample_management_style(row, index)
+          tqqq = dict(base_etfs[0])
+          tqqq.update(make_stock("TQQQ", asset_type="ETF"))
+          tqqq.update(name="ProShares UltraPro QQQ synthetic price fixture", gap=-28.6,
+                      inception="2010-02-09", inception_verified=True,
+                      inception_source="ProShares ETF 설정일", first_date="2010-02-11",
+                      price_start_date="2010-02-11", price_end_date="2026-10-07",
+                      last_date="2026-10-07", return_as_of="2026-10-07",
+                      price_currency="USD", price_basis="Yahoo 제공 수정주가(auto_adjust)",
+                      initial_adjusted_price=.1, lifetime_cagr=40.73)
+          tqqq["lifetime_years"] = (date.fromisoformat(tqqq["price_end_date"]) - date.fromisoformat(tqqq["price_start_date"])).days / 365.25
+          tqqq["latest_adjusted_price"] = tqqq["initial_adjusted_price"] * (1 + tqqq["lifetime_cagr"] / 100) ** tqqq["lifetime_years"]
+          tqqq["cumulative_growth"] = tqqq["latest_adjusted_price"] / tqqq["initial_adjusted_price"]
+          tqqq["cumulative_return"] = (tqqq["cumulative_growth"] - 1) * 100
+          for field in ("management_style", "management_style_source", "management_style_url", "management_style_verified", "management_style_evidence"):
+              tqqq.pop(field, None)
+          tqqq.update(management_style_metadata(tqqq))
+          tqqq.update(_etf_lifetime_metrics(tqqq))
+          set_sample_period_returns(tqqq)
+          unavailable = make_stock("NOHISTORY", asset_type="ETF")
+          for field in ETF_CALCULATION_FIELDS:
+              unavailable[field] = None
+          unavailable.update(period_returns={key: None for key in ETF_PERIOD_FIELDS},
+                             requested_market_date="2026-10-07", date_status="unavailable")
+          set_sample_management_style(unavailable, 2)
+          comparison_etfs = cohort + [tqqq, unavailable]
+          data["etf_info"] = build_etf_info(data["us"], data["kr"], comparison_etfs=comparison_etfs)
+          assert data["etf_info"]["rows"][0]["ticker"] == "TQQQ"
+          assert all(row["ticker"] != "TQQQ" for row in data["us"])
+          assert data["etf_info"]["pool"] == 163 and data["etf_info"]["with_ret"] == 162
           data["new_us"] = data["us"][:5] + data["us"][75:99]
           data["new_kr"] = data["kr"][:1] + data["kr"][4:7]
           for row in data["us"] + data["kr"] + data["etf_info"]["rows"]:
@@ -84,7 +114,11 @@ jobs:
           (directory / "email-body.html").write_text(html, encoding="utf-8")
           (directory / "email-reference.html").write_text(render_email(**data, compact=False), encoding="utf-8")
           (directory / "report-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-          market_proof = bind_market_date_proof(html, manifest, validate_etf_market_dates(data["us"], data["kr"], data["info"]))
+          market_proof = bind_market_date_proof(html, manifest, validate_etf_market_dates(data["us"], data["kr"], data["info"], comparison_etfs=comparison_etfs))
+          assert len(market_proof["etfs"]) == 163
+          assert next(row for row in market_proof["etfs"] if row["ticker"] == "TQQQ")["in_ath_report"] is False
+          assert next(row for row in market_proof["etfs"] if row["ticker"] == "TQQQ")["in_comparison_universe"] is True
+          assert market_proof["status_counts"]["unavailable"] == 1
           (directory / "market-date-proof.json").write_text(json.dumps(market_proof, ensure_ascii=False), encoding="utf-8")
           PY
       - name: Verify complete native body at all desktop widths

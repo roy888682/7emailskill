@@ -36,6 +36,33 @@ def yahoo_history(days, prices):
 
 
 class MarketDateValidationTests(unittest.TestCase):
+    def test_comparison_only_fund_is_audited_without_being_inserted_into_ath(self):
+        ath = etf("QQQM")
+        comparison_only = etf("TQQQ")
+        comparison_only["gap"] = -28.6
+        us, pool = [ath], [ath, comparison_only]
+        before = copy.deepcopy((us, pool))
+        proof = validate_etf_market_dates(us, [], market_info(), pool)
+        self.assertEqual((us, pool), before)
+        self.assertEqual(proof["comparison_universe"], ["US:QQQM", "US:TQQQ"])
+        self.assertEqual(proof["counts"], {"US": 2, "KR": 0})
+        tqqq = next(row for row in proof["etfs"] if row["ticker"] == "TQQQ")
+        self.assertFalse(tqqq["in_ath_report"])
+        self.assertTrue(tqqq["in_comparison_universe"])
+        self.assertEqual(tqqq["management_style"], "Passive")
+
+    def test_independent_comparison_inventory_beyond_top_hundred_is_still_checked(self):
+        pool = [etf(f"EXAMPLE{index}") for index in range(125)]
+        self.assertEqual(len(build_etf_info([], [], pool)["rows"]), 100)
+        pool[-1]["price_end_date"] = "2026-10-29"
+        with self.assertRaises(RuntimeError):
+            validate_etf_market_dates([], [], market_info(), pool)
+
+    def test_two_separate_objects_cannot_claim_the_same_shared_candidate(self):
+        ath = etf()
+        with self.assertRaisesRegex(RuntimeError, "same ETF candidate object"):
+            validate_etf_market_dates([ath], [], market_info(), [copy.deepcopy(ath)])
+
     def test_period_evidence_is_bound_to_actual_dates_prices_and_cumulative_formula(self):
         item = etf()
         item.update(_etf_price_performance(
@@ -145,6 +172,18 @@ class MarketDateValidationTests(unittest.TestCase):
 
 
 class MarketDateSynchronizationTests(unittest.TestCase):
+    def test_comparison_only_quote_is_refetched_and_keeps_its_universe_membership(self):
+        item = etf("TQQQ", end="2026-10-27")
+        pool = [item]
+        with patch("src.main.yf.Ticker") as ticker:
+            ticker.return_value.history.return_value = yahoo_history(["2020-10-13", "2026-10-28"], [100, 300])
+            proof = synchronize_etf_market_dates([], [], market_info(), attempts=1, comparison_etfs=pool)
+        self.assertIs(pool[0], item)
+        self.assertEqual(item["price_end_date"], "2026-10-28")
+        self.assertEqual(proof["comparison_universe"], ["US:TQQQ"])
+        self.assertFalse(proof["etfs"][0]["in_ath_report"])
+        self.assertTrue(proof["etfs"][0]["in_comparison_universe"])
+
     def test_stale_history_is_refetched_and_future_partial_session_is_trimmed(self):
         item = etf(end="2026-10-27", latest=254.5)
         candidates = [item, {"ticker": "STOCK", "asset_type": "주식", "market": "US"}]

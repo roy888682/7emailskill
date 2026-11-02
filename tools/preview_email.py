@@ -56,6 +56,17 @@ def set_sample_period_returns(row):
     return row
 
 
+def set_sample_management_style(row, variant):
+    """Explicit synthetic provenance exercises known and unknown display states."""
+    style = ("Active", "Passive", "미확인")[variant % 3]
+    row.update(management_style=style,
+               management_style_source="운용방식 근거 미확인" if style == "미확인" else "합성 검증용 운용방식",
+               management_style_url=None if style == "미확인" else "https://example.test/etf-strategy/" + style.lower(),
+               management_style_verified=False,
+               management_style_evidence=None if style == "미확인" else "합성 fixture · " + style)
+    return row
+
+
 def sample_data():
     import math
     us = [make_stock("US%04d" % i, number=i) for i in range(203)]
@@ -101,6 +112,7 @@ def sample_data():
                          "inception": "2016-05-19", "first_date": "2016-05-19",
                          "last_date": "2026-10-07", "return_as_of": "2026-10-07"})
             set_sample_period_returns(item)
+            set_sample_management_style(item, rank)
             etfs.append(item)
             (kr if korean else us).append(item)
     etfs.sort(key=lambda item: item["lifetime_cagr"], reverse=True)
@@ -172,7 +184,7 @@ LAYOUT_CHECK = r"""expected => {
  const specs=[
    ["us","us",2,11],["kr","kr",2,11],
    ["new","new-kr",2,10,"KR"],["new","new-us",2,10,"US"],
-   ["etf","returns",2,18]
+   ["etf","returns",2,19]
  ];
  const getRows=id=>{
    const table=document.getElementById(id);
@@ -237,9 +249,11 @@ LAYOUT_CHECK = r"""expected => {
    problems.push("A nonempty new-security report must contain exactly one table for each country");
  if(document.getElementById("new")||Array.from(document.querySelectorAll(".new-table")).some(table=>!newIds.includes(table.id)))
    problems.push("New securities must use separate Korean and US tables");
- for(const table of newTables)
-   if(returns&&!(table.compareDocumentPosition(returns)&Node.DOCUMENT_POSITION_FOLLOWING))
-     problems.push("Each country's new-security list must precede ETF returns");
+ if(returns&&document.querySelector("table.data-table")!==returns)
+   problems.push("ETF returns must be the first data table after the report heading and summary");
+ for(const table of [...newTables,document.getElementById("kr"),document.getElementById("us")].filter(Boolean))
+   if(returns&&!(returns.compareDocumentPosition(table)&Node.DOCUMENT_POSITION_FOLLOWING))
+     problems.push("ETF returns must precede both new-security lists and both country stock tables");
  if(newTables.length===2&&!(newTables[0].compareDocumentPosition(newTables[1])&Node.DOCUMENT_POSITION_FOLLOWING))
    problems.push("The Korean new-security table must precede the US table");
  const allNew=newIds.flatMap(id=>getRows(id).map(row=>(id==="new-kr"?"KR:":"US:")+row.cells[2]?.textContent.trim()));
@@ -250,11 +264,11 @@ LAYOUT_CHECK = r"""expected => {
  if(document.body.textContent.includes("첨부"))problems.push("Attachment-related copy remains");
  if(returns){
    const headings=Array.from(returns.querySelectorAll("thead th")).map(cell=>cell.textContent.trim());
-   if(headings.length!==18||!/업종|투자/.test(headings[4])||headings[5]!=="연초"||
-      JSON.stringify(headings.slice(6,10))!==JSON.stringify(["1년","3년","5년","10년"])||!headings[10].includes("누적")||
-      headings[11]!=="최초주가"||headings[12]!=="최근주가"||
-      headings[13]!=="연평균"||!/AUM|시총/.test(headings[14])||
-      !headings[15].includes("설립")||!/연수|기간/.test(headings[16])||headings[17]!=="수익률 기준일")
+   if(headings.length!==19||!/업종|투자/.test(headings[4])||headings[5]!=="운용방식"||headings[6]!=="연초"||
+      JSON.stringify(headings.slice(7,11))!==JSON.stringify(["1년","3년","5년","10년"])||!headings[11].includes("누적")||
+      headings[12]!=="최초주가"||headings[13]!=="최근주가"||
+      headings[14]!=="연평균"||!/AUM|시총/.test(headings[15])||
+      !headings[16].includes("설립")||!/연수|기간/.test(headings[17])||headings[18]!=="수익률 기준일")
      problems.push("ETF columns must include area beside name, cumulative → initial price → latest price → lifetime CAGR → KRW AUM → inception → elapsed years");
  }
  const number=text=>{
@@ -275,21 +289,21 @@ LAYOUT_CHECK = r"""expected => {
  if(getRows("returns").length>100)problems.push("ETF comparison exceeds the top 100 limit");
  getRows("returns").forEach((row,index)=>{
    const colors=[];
-   for(const [column,cls] of [[6,"p1"],[7,"p3"],[8,"p5"],[9,"p10"]]){
+   for(const [column,cls] of [[7,"p1"],[8,"p3"],[9,"p5"],[10,"p10"]]){
      const cell=row.cells[column];
      if(!cell||!cell.classList.contains(cls))
        problems.push("ETF "+index+" is missing "+cls+" on the correct return column");
      if(cell)colors.push(getComputedStyle(cell).color);
    }
    if(new Set(colors).size!==4)problems.push("ETF "+index+" return colors are not distinct");
-   const lifetime=number(row.cells[13]?.textContent);
-   const years=number(row.cells[16]?.textContent);
+   const lifetime=number(row.cells[14]?.textContent);
+   const years=number(row.cells[17]?.textContent);
    if(!Number.isFinite(lifetime)||lifetime>previousLifetime)
      problems.push("ETF lifetime CAGR must be finite and sorted descending");
    if(!Number.isFinite(years)||years<0)
      problems.push("ETF displayed elapsed years must be nonnegative");
-   const initial=exactPriceIn(row.cells[11]),latest=exactPriceIn(row.cells[12]);
-   for(const [column,exact] of [[11,initial],[12,latest]]){
+   const initial=exactPriceIn(row.cells[12]),latest=exactPriceIn(row.cells[13]);
+   for(const [column,exact] of [[12,initial],[13,latest]]){
      const cell=row.cells[column],visible=cell?.textContent.trim()||"",whole=number(visible);
      const serializationTolerance=Math.max(1e-12,Math.abs(exact)*5e-12);
      if(!Number.isFinite(exact)||exact<=0||!Number.isInteger(whole)||whole<0||
@@ -300,15 +314,15 @@ LAYOUT_CHECK = r"""expected => {
      if(!/정확값\s+/.test(title)||!/\b(?:USD|KRW)\b/.test(title)||!/(?:Yahoo|네이버)/.test(title))
        problems.push("ETF "+index+" price title must preserve the exact value, currency and provider basis");
    }
-   const cumulative=number(row.cells[10]?.textContent);
+   const cumulative=number(row.cells[11]?.textContent);
    // Prices carry 12 significant digits; account only for that bounded
    // serialization error and the returns' one-decimal display rounding.
    const cumulativeTolerance=Math.max(.051,(Math.abs(cumulative)+100)*2e-11);
    if(!(initial>0)||!(latest>0)||!Number.isFinite(cumulative)||
       Math.abs((latest/initial-1)*100-cumulative)>cumulativeTolerance)
      problems.push("ETF "+index+" cumulative return does not match its exact starting and latest prices preserved in titles");
-   const start=dateIn(row.cells[11]),end=dateIn(row.cells[12]);
-   const inceptionText=row.cells[15]?.textContent.trim()||"";
+   const start=dateIn(row.cells[12]),end=dateIn(row.cells[13]);
+   const inceptionText=row.cells[16]?.textContent.trim()||"";
    const knownInception=/^\d{4}-\d{2}-\d{2}$/.test(inceptionText);
    const inception=knownInception?Date.parse(inceptionText+"T00:00:00Z"):NaN;
    const observedYears=(end-start)/(86400000*365.25);
@@ -320,7 +334,7 @@ LAYOUT_CHECK = r"""expected => {
       Math.abs((Math.pow(latest/initial,1/observedYears)-1)*100-lifetime)>
         Math.max(.051,(Math.abs(lifetime)+100)*2e-11/observedYears))
      problems.push("ETF "+index+" lifetime CAGR does not match its exact prices and dated interval");
-   for(const [column,period] of [[6,1],[7,3],[8,5],[9,10]])
+   for(const [column,period] of [[7,1],[8,3],[9,5],[10,10]])
      if(Number.isFinite(number(row.cells[column]?.textContent))&&observedYears+.004<period)
        problems.push("ETF "+index+" reports a "+period+"-year return before that much price history exists");
    previousLifetime=lifetime;
@@ -350,14 +364,21 @@ LAYOUT_CHECK = r"""expected => {
      const style=getComputedStyle(cell),bounds=cell.getBoundingClientRect();
      if(style.whiteSpace!=="nowrap")
        problems.push("Row "+index+" must keep every column on one line: "+column);
-     const expectedFont=tableId==="returns"&&![15,17].includes(column)?13:12.35;
+     const expectedFont=tableId==="returns"&&![16,18].includes(column)?13:12.35;
      if(Math.abs(parseFloat(style.fontSize)-expectedFont)>.01)
        problems.push("Row "+index+" font differs from the enlarged design: "+style.fontSize);
-     if(tableId==="returns"&&[15,17].includes(column)&&style.textAlign!=="center")
+     if(tableId==="returns"&&[16,18].includes(column)&&style.textAlign!=="center")
        problems.push("ETF date values must be centered in column "+column);
-     if(tableId==="returns"&&[13,15,17].includes(column)){
+     if(tableId==="returns"&&column===5&&style.textAlign!=="center")
+       problems.push("ETF Active/Passive values must be centered beside the investment area");
+     if(tableId==="returns"&&[11,17].includes(column)){
        const tableWidth=row.closest("table").getBoundingClientRect().width;
-       const maximum=column===13?.045:column===15?.075:.07;
+       if(Math.abs(bounds.width-tableWidth*.051)>tolerance)
+         problems.push("ETF cumulative return and elapsed years must be 15% narrower than the former 6% width: "+column);
+     }
+     if(tableId==="returns"&&[14,16,18].includes(column)){
+       const tableWidth=row.closest("table").getBoundingClientRect().width;
+       const maximum=column===14?.045:column===16?.075:.07;
        if(bounds.width>tableWidth*maximum+tolerance)
          problems.push("ETF shortened heading/date column has not been narrowed: "+column);
      }
@@ -371,7 +392,7 @@ LAYOUT_CHECK = r"""expected => {
        if(previousNameWidth<=0||bounds.width/previousNameWidth<.43||bounds.width/previousNameWidth>.58)
          problems.push("Row "+index+" new-security name column must be approximately half its previous width");
      }
-     const aumColumn=tableId==="returns"?14:6;
+     const aumColumn=tableId==="returns"?15:6;
      if(column===aumColumn&&Math.abs(bounds.width-(tableId==="returns"?96:84))>tolerance)
        problems.push("Row "+index+" AUM column must use the restored 96px ETF or 84px stock/new width");
      const clip=cell.querySelector(column===3?".nm":".cl,.iwc");
@@ -455,10 +476,10 @@ MARKET_DATE_CHECK = r"""expected => {
  for(const row of document.querySelectorAll('#returns tbody tr')){
    const flag=row.cells[1]?.querySelector('img');
    const country=flag?.alt==='성조기'?'US':flag?.alt==='태극기'?'KR':null;
-   const cell=row.cells[12];
+   const cell=row.cells[13];
    const titles=[cell?.getAttribute('title')||'',...Array.from(cell?.querySelectorAll('[title]')||[]).map(node=>node.title)];
    const dates=titles.map(title=>title.match(/\d{4}-\d{2}-\d{2}/)?.[0]).filter(Boolean);
-   const actual=dates[0],anchor=expected[country],dateCell=row.cells[17];
+   const actual=dates[0],anchor=expected[country],dateCell=row.cells[18];
    const shortDate=actual?.slice(2),status=actual===anchor?'market_close':'latest_available';
    const label=status==='market_close'?'시장 기준일 시세':'이전 가능 시세일';
    const detail=actual+' · '+label+' · 시장 기준일 '+anchor;
@@ -495,7 +516,7 @@ PERIOD_RETURN_CHECK = r"""proof => {
    const ticker=row.cells[2]?.querySelector('a')?.textContent.trim();
    const record=records.get(country+':'+ticker);
    if(!record){problems.push('Missing ETF period evidence for '+country+':'+ticker);continue;}
-   for(const [key,column,field] of [['ytd',5,'return_ytd'],['1y',6,'return1y'],['3y',7,'return3y'],['5y',8,'return5y'],['10y',9,'return10y']]){
+   for(const [key,column,field] of [['ytd',6,'return_ytd'],['1y',7,'return1y'],['3y',8,'return3y'],['5y',9,'return5y'],['10y',10,'return10y']]){
      const value=record.period_returns?.[key],visible=numeric(row.cells[column]?.textContent);
      const target=targetFor(record.price_end_date,key);
      const required=record.price_start_date<=target;
@@ -520,6 +541,53 @@ PERIOD_RETURN_CHECK = r"""proof => {
    }
  }
  return {periods_checked:checked,unavailable_periods:missing,problems};
+}"""
+
+
+MANAGEMENT_STYLE_CHECK = r"""proof => {
+ const problems=[],records=new Map(),counts={Active:0,Passive:0,'미확인':0},comparisonKeys=[];let displayed=0;
+ for(const record of proof.etfs||[]){
+   const style=record.management_style,source=record.management_style_source,
+         url=record.management_style_url,evidence=record.management_style_evidence,
+         verified=record.management_style_verified;
+   const identity=record.country+':'+record.ticker;
+   if(records.has(identity))problems.push('Duplicate ETF management-style audit: '+identity);
+   records.set(identity,record);
+   if(typeof record.in_ath_report!=='boolean'||typeof record.in_comparison_universe!=='boolean'||
+      (!record.in_ath_report&&!record.in_comparison_universe))
+     problems.push('ETF audit must explicitly identify its ATH and comparison membership: '+identity);
+   if(record.in_comparison_universe)comparisonKeys.push(identity);
+   const nonempty=value=>typeof value==='string'&&value.trim().length>0;
+   if(!Object.hasOwn(counts,style)||!nonempty(source)||typeof verified!=='boolean'){
+     problems.push('ETF '+record.ticker+' lacks explicit management-style provenance');continue;
+   }
+   counts[style]++;
+   if(style==='미확인'){
+     if(url!=null||evidence!=null||verified)
+       problems.push('Unknown ETF strategy must not claim verified Active/Passive evidence: '+record.ticker);
+   }else if(!nonempty(evidence)||!nonempty(url)||!/^https:\/\/[^\s/]+(?:\/|$)/.test(url)){
+     problems.push('Known ETF strategy requires a retained source URL and explicit evidence: '+record.ticker);
+   }
+ }
+ if(!Array.isArray(proof.comparison_universe)||
+    JSON.stringify(proof.comparison_universe)!==JSON.stringify(comparisonKeys.sort()))
+   problems.push('ETF comparison universe must match its complete audit membership');
+ for(const row of document.querySelectorAll('#returns tbody tr')){
+   const label=row.cells[1]?.querySelector('img')?.alt,country=label==='성조기'?'US':label==='태극기'?'KR':null;
+   const ticker=row.cells[2]?.querySelector('a')?.textContent.trim(),record=records.get(country+':'+ticker);
+   if(!record||record.in_comparison_universe!==true){
+     problems.push('Displayed ETF lacks comparison-universe management-style evidence: '+ticker);continue;
+   }
+   displayed++;
+   const cell=row.cells[5],style=record.management_style;
+   let detail=style+' · '+record.management_style_source+' · '+(record.management_style_evidence||'분류 근거 없음')+
+       ' · '+(record.management_style_verified?'공식자료 확인':'공식자료 미확인');
+   if(record.management_style_url)detail+=' · '+record.management_style_url;
+   if(cell?.textContent!==style||cell?.getAttribute('title')!==detail||
+      cell?.querySelector('.cl')?.getAttribute('title')!==style+' · '+detail)
+     problems.push('Displayed ETF management style or source differs from its audit: '+ticker);
+ }
+ return {audit_counts:counts,displayed_checked:displayed,problems};
 }"""
 
 
@@ -628,10 +696,13 @@ def verify_actual_display(browser, source, delivery, expected, output, market_da
                     page.evaluate("document.fonts.ready")
                     date_check=page.evaluate(MARKET_DATE_CHECK,market_dates)
                     period_check=page.evaluate(PERIOD_RETURN_CHECK,market_proof)
+                    strategy_check=page.evaluate(MANAGEMENT_STYLE_CHECK,market_proof)
                     if date_check["problems"]:
                         raise AssertionError("; ".join(date_check["problems"]))
                     if period_check["problems"]:
                         raise AssertionError("; ".join(period_check["problems"]))
+                    if strategy_check["problems"]:
+                        raise AssertionError("; ".join(strategy_check["problems"]))
                     if page.evaluate("document.documentElement.scrollWidth>window.innerWidth+1.5"):
                         raise AssertionError("Actual native delivery overflows the desktop window")
                     if page.evaluate("Array.from(document.images).some(img=>!img.complete||!img.naturalWidth)"):
@@ -703,6 +774,8 @@ def verify_actual_display(browser, source, delivery, expected, output, market_da
                       "native":True,**date_check}),flush=True)
                 print("ETF_PERIOD_RETURN_QA:"+json.dumps({"host":host,"viewport":width,
                       "native":True,**period_check}),flush=True)
+                print("ETF_MANAGEMENT_STYLE_QA:"+json.dumps({"host":host,"viewport":width,
+                      "native":True,**strategy_check}),flush=True)
                 if host=="gmail" and width==1600:
                     for table_id,filename,marker in (
                         ("us","email-actual-native-us.png","PREVIEW_IMAGE_ACTUAL_DELIVERY_US"),
@@ -808,9 +881,11 @@ def main():
                         result = page.evaluate(LAYOUT_CHECK, expected)
                         date_check = page.evaluate(MARKET_DATE_CHECK,market_dates)
                         period_check = page.evaluate(PERIOD_RETURN_CHECK,market_proof)
+                        strategy_check = page.evaluate(MANAGEMENT_STYLE_CHECK,market_proof)
                         result["market_dates"] = date_check["market_dates"]
                         result["problems"].extend(date_check["problems"])
                         result["problems"].extend(period_check["problems"])
+                        result["problems"].extend(strategy_check["problems"])
                         result["host"] = host
                         print("LAYOUT_QA:%s" % json.dumps(result, ensure_ascii=False), flush=True)
                         if result["problems"]:
@@ -867,6 +942,7 @@ def main():
         "new_country_numbering":new_numbering,"exact_price_titles_checked":True,
         "market_dates_checked":True,"market_dates":market_dates,
         "period_returns_checked":True,
+        "management_styles_checked":True,
         "market_dates_sha256":hashlib.sha256(market_proof_bytes).hexdigest(),
     }
     proof_path.write_text(json.dumps(proof, ensure_ascii=False, indent=2), encoding="utf-8")

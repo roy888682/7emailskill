@@ -218,17 +218,24 @@ class EmailDeliveryTests(unittest.TestCase):
         data = sample_data()
         info = dict(data["info"], us_last=date(2026,10,8), kr_last=date(2026,10,7))
         us = [next(row for row in data["us"] if row.get("asset_type") == "ETF")]
-        html = render_email(us, [], info, 1342, etf_info=build_etf_info(us, []))
+        tqqq = dict(next(row for row in data["us"] if row.get("ticker") == "TQQQ"), gap=-28.6)
+        comparison_etfs = [us[0], tqqq]
+        html = render_email(us, [], info, 1342, etf_info=build_etf_info(us, [], comparison_etfs=comparison_etfs))
         manifest = inventory(html)
-        market_proof = bind_market_date_proof(html, manifest, validate_etf_market_dates(us, [], info))
+        self.assertNotIn("TQQQ", manifest["us"])
+        self.assertIn("TQQQ", manifest["etf"])
+        market_proof = bind_market_date_proof(html, manifest, validate_etf_market_dates(us, [], info, comparison_etfs=comparison_etfs))
         self.assertEqual(market_proof["etfs"][0]["date_status"], "latest_available")
+        comparison_only = next(row for row in market_proof["etfs"] if row["ticker"] == "TQQQ")
+        self.assertFalse(comparison_only["in_ath_report"])
+        self.assertTrue(comparison_only["in_comparison_universe"])
         self.assertIn("26-10-07", html)
         market_bytes = json.dumps(market_proof, ensure_ascii=False, indent=2).encode("utf-8")
         proof = {"sha256":hashlib.sha256(html.encode("utf-8")).hexdigest(),
                  "all_passed":True, "layout_unchanged":True, "html_bytes":len(html.encode("utf-8")),
                  "counts":{key:len(values) for key,values in manifest.items()},
                  "hosts":["standalone","gmail"], "viewports":[900,1024,1280,1600,1920],
-                 "market_dates_checked":True,"period_returns_checked":True,
+                 "market_dates_checked":True,"period_returns_checked":True,"management_styles_checked":True,
                  "market_dates_sha256":hashlib.sha256(market_bytes).hexdigest()}
         with tempfile.TemporaryDirectory() as directory:
             original = os.getcwd()
@@ -246,7 +253,7 @@ class EmailDeliveryTests(unittest.TestCase):
                              delivery_checked=True,delivery_viewports=[900,1024,1280,1600,1920],
                              native_checked=True,us_font_matches_kr=True,high_font_matches_kr=True,
                              us_link_clicks=1,numbering_checked=True)
-                for change in ({"market_dates_checked":False}, {"period_returns_checked":False}, {"market_dates_sha256":"bad"},
+                for change in ({"market_dates_checked":False}, {"period_returns_checked":False}, {"management_styles_checked":False}, {"market_dates_sha256":"bad"},
                                {"native_checked":False}, {"high_font_matches_kr":False}, {"us_font_matches_kr":False}, {"delivery_viewports":[1600,1920]}, {"numbering_checked":False}, {"us_link_clicks":2}, {"delivery_checked":False}, {"delivery_sha256":"bad"}, {"native_package_sha256":"bad"}, {"delivery_viewports":[]}, {"all_passed":False}, {"layout_unchanged":False}, {"html_bytes":1}, {"hosts":["standalone"]},
                                {"viewports":[1024]}, {"counts":{}}, {"sha256":"bad"}):
                     with self.subTest(change=change):
@@ -262,12 +269,22 @@ class EmailDeliveryTests(unittest.TestCase):
                 annualized_record["return3y"] = round(three_year["return_pct"], 1)
                 wrong_ytd_record = copy.deepcopy(market_proof["etfs"][0])
                 wrong_ytd_record["period_returns"]["ytd"]["target_date"] = "2026-01-01"
+                wrong_strategy_record = copy.deepcopy(market_proof["etfs"][0])
+                wrong_strategy_record["management_style"] = "Active" if wrong_strategy_record["management_style"] != "Active" else "Passive"
+                unproven_strategy_record = copy.deepcopy(market_proof["etfs"][0])
+                unproven_strategy_record["management_style_url"] = None
+                def changed_first(record):
+                    return [record] + copy.deepcopy(market_proof["etfs"][1:])
+                forged_ath_records = copy.deepcopy(market_proof["etfs"])
+                next(row for row in forged_ath_records if row["ticker"] == "TQQQ")["in_ath_report"] = True
                 for change in ({"body_sha256":"bad"}, {"manifest_sha256":"bad"},
                                {"counts":{"US":0,"KR":0}},
                                {"market_dates":{"US":"2026-10-06","KR":"2026-10-07"}},
-                               {"etfs":[dict(market_proof["etfs"][0], date_status="market_close")]},
-                               {"etfs":[dict(market_proof["etfs"][0], return_as_of="2026-10-08")]},
-                               {"etfs":[annualized_record]}, {"etfs":[wrong_ytd_record]}):
+                               {"etfs":changed_first(dict(market_proof["etfs"][0], date_status="market_close"))},
+                               {"etfs":changed_first(dict(market_proof["etfs"][0], return_as_of="2026-10-08"))},
+                               {"etfs":changed_first(annualized_record)}, {"etfs":changed_first(wrong_ytd_record)},
+                               {"etfs":changed_first(wrong_strategy_record)}, {"etfs":changed_first(unproven_strategy_record)},
+                               {"etfs":forged_ath_records}, {"comparison_universe":["US:" + us[0]["ticker"]]}):
                     with self.subTest(market_audit=change):
                         altered_bytes = json.dumps(dict(market_proof, **change), ensure_ascii=False, indent=2).encode("utf-8")
                         Path("work/market-date-proof.json").write_bytes(altered_bytes)
