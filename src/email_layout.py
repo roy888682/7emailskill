@@ -130,9 +130,11 @@ def brief_investment_text(row):
     return str(row.get("etf_index") or row.get("investment_area") or row.get("etf_kind") or "미확인")
 
 
-def price_text(value):
+def price_text(value, *, initial=False):
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
         return "-"
+    if initial and value < 1:
+        return f"{value:.2f}"
     return f"{int(value):,}"
 
 
@@ -148,7 +150,7 @@ def table_columns(kind):
         # Both cumulative-return and elapsed-year widths are 85% of their
         # former 6%; fonts, price widths and the fixed AUM/flag columns stay.
         widths = ("3%", "3%", "6%", None, "8%", "6%", "4%", "4%", "4%", "4%", "4%",
-                  "5.1%", "5%", "5%", "4%", "96px", "7%", "5.1%", "6.5%")
+                  "5.1%", "5%", "5%", "4%", "5.1%", "96px", "7%", "6.5%")
     elif kind == "new":
         # Before this change the auto name width was 54% of the table minus
         # 168px. A fixed 19% is 46–55% of that width across 900–1920px hosts.
@@ -296,8 +298,9 @@ def etf_section_html(etf_info, include_details=False, info=None):
                      for period, label, _ in labels) +
              '<th class="number">최초주가</th><th class="number">최근주가</th>'
              '<th class="number">연평균</th>'
+             '<th class="number" data-field="lifetime_years">누적연수</th>'
              '<th class="number" data-field="aum">AUM·시총(원화)</th><th data-field="inception">설립·상장일</th>'
-             '<th class="number" data-field="lifetime_years">누적연수</th><th>수익률 기준일</th></tr></thead><tbody>')
+             '<th>수익률 기준일</th></tr></thead><tbody>')
     for rank, row in enumerate(rows, 1):
         country = "US" if row.get("market") == "US" else "KR"
         ticker = h(row.get("ticker"))
@@ -312,12 +315,12 @@ def etf_section_html(etf_info, include_details=False, info=None):
                   "".join(f'<td class="number {"one-year" if period == "1y" else ""}" title="{h(period_return_title(row, period))}">'
                           f'{compact_metric(period, label, row.get(key))}</td>'
                           for period, label, key in labels) +
-                  f'<td class="number" title="{first_title}">{price_text(row.get("initial_adjusted_price"))}</td>'
+                  f'<td class="number" title="{first_title}">{price_text(row.get("initial_adjusted_price"), initial=True)}</td>'
                   f'<td class="number" title="{last_title}">{price_text(row.get("latest_adjusted_price"))}</td>'
                   f'<td class="number">{compact_metric("lifetime", "연평균", row.get("lifetime_cagr"))}</td>'
+                  f'<td class="number" data-field="lifetime_years">{elapsed_years_text(row.get("lifetime_years"))}</td>'
                   f'<td class="number" data-field="aum">{row_size_html(dict(row, asset_type="ETF"))}</td>'
                   f'<td class="date-cell" data-field="inception" title="{h(row.get("inception_source") or "설립일 출처 미확인")}">{h(inception_text(row))}</td>'
-                  f'<td class="number" data-field="lifetime_years">{elapsed_years_text(row.get("lifetime_years"))}</td>'
                   f'<td class="date-cell" title="{h(return_date_title(row, (info or {}).get(country.lower() + "_last")))}">'
                   f'{h(return_date_text(row))}</td></tr>')
     table += '</tbody></table></div>'
@@ -326,7 +329,7 @@ def etf_section_html(etf_info, include_details=False, info=None):
              '연초는 실제 수익률 기준일의 전년도 마지막 확보 시세부터, 1·3·5·10년은 실제 수익률 기준일에서 해당 연수 전 같은 날짜(휴장일이면 그 이전 최근 시세)부터의 누적수익률입니다. 각 기간 수익률 = (최근주가 ÷ 기간 시작주가 - 1) × 100이며 연환산하지 않습니다. 기간 이력이 부족하면 -로 표시합니다.<br>'
              '국가 시장 기준일의 시세가 없으면 재조회 후 이전 가능 시세일로 계산합니다. ETF별 실제 날짜는 오른쪽 수익률 기준일을 참고하세요. 유효한 가격을 확보하지 못한 ETF는 후보에 유지하며 수익률은 계산 불가로 처리합니다.<br>'
              '누적수익률 = (최근주가 ÷ 최초주가 - 1) × 100이며, 연환산하지 않음. 두 가격은 같은 제공업체·같은 조정 기준입니다. '
-             '최초주가·최근주가는 화면에서 소수점 이하를 버리고 천 단위 쉼표로 표시하며, 수익률 계산에는 소수점을 생략하지 않은 정확한 원값을 사용합니다.<br>'
+             '최초주가가 1 미만이면 소수점 둘째 자리까지 표시하고, 그 외 최초주가·최근주가는 소수점 이하를 버리고 천 단위 쉼표로 표시합니다. 수익률 계산에는 표시값이 아닌 정확한 원값을 사용합니다.<br>'
              '연평균 누적수익률 = [(1 + 누적수익률/100)^(1/누적연수) - 1] × 100. '
              '누적연수는 표시된 최초·최근 가격의 실제 기준일 차이 ÷ 365.25이며, 계산은 반올림 전 값으로 합니다.<br>'
              '연평균 누적수익률은 누적수익률을 연수로 나눈 값이 아니라 복리 연환산(CAGR)입니다. 원금과 수익이 매년 함께 재투자된다고 가정합니다.<br>'
@@ -770,9 +773,10 @@ def validate_etf_date_proof(source, manifest, proof):
                       f'{record.get("price_basis")} · {currency}')
             cell = cells[column]
             clip = cell.select_one(".cl")
-            if (price_exact_text(value) == "-" or cell.get_text() != price_text(value)
+            visible = price_text(value, initial=(key == "initial_adjusted_price"))
+            if (price_exact_text(value) == "-" or cell.get_text() != visible
                     or cell.get("title") != detail or clip is None
-                    or clip.get("title") != price_text(value) + " · " + detail):
+                    or clip.get("title") != visible + " · " + detail):
                 raise RuntimeError(f"Displayed ETF {country}:{ticker} price or date differs from its audit")
         for column, key in ((6, "return_ytd"), (7, "return1y"), (8, "return3y"), (9, "return5y"),
                             (10, "return10y"), (11, "cumulative_return"), (14, "lifetime_cagr")):
@@ -788,7 +792,7 @@ def validate_etf_date_proof(source, manifest, proof):
                 if (cells[column].get("title") != detail or clip is None
                         or clip.get("title") != text + " · " + detail):
                     raise RuntimeError(f"Displayed ETF {country}:{ticker} {key} period dates or prices differ from its audit")
-        if cells[17].get_text() != elapsed_years_text(record.get("lifetime_years")):
+        if cells[15].get_text() != elapsed_years_text(record.get("lifetime_years")):
             raise RuntimeError(f"Displayed ETF {country}:{ticker} elapsed years differ from its audited dates")
         date_cell, date_detail = cells[18], return_date_title(record, market_dates[country])
         clip = date_cell.select_one(".cl")

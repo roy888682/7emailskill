@@ -80,7 +80,7 @@ jobs:
                       price_start_date="2010-02-11", price_end_date="2026-10-07",
                       last_date="2026-10-07", return_as_of="2026-10-07",
                       price_currency="USD", price_basis="Yahoo 제공 수정주가(auto_adjust)",
-                      initial_adjusted_price=.1, lifetime_cagr=40.73)
+                      initial_adjusted_price=.2051851749420166, lifetime_cagr=40.73)
           tqqq["lifetime_years"] = (date.fromisoformat(tqqq["price_end_date"]) - date.fromisoformat(tqqq["price_start_date"])).days / 365.25
           tqqq["latest_adjusted_price"] = tqqq["initial_adjusted_price"] * (1 + tqqq["lifetime_cagr"] / 100) ** tqqq["lifetime_years"]
           tqqq["cumulative_growth"] = tqqq["latest_adjusted_price"] / tqqq["initial_adjusted_price"]

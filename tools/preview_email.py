@@ -267,9 +267,9 @@ LAYOUT_CHECK = r"""expected => {
    if(headings.length!==19||!/업종|투자/.test(headings[4])||headings[5]!=="운용방식"||headings[6]!=="연초"||
       JSON.stringify(headings.slice(7,11))!==JSON.stringify(["1년","3년","5년","10년"])||!headings[11].includes("누적")||
       headings[12]!=="최초주가"||headings[13]!=="최근주가"||
-      headings[14]!=="연평균"||!/AUM|시총/.test(headings[15])||
-      !headings[16].includes("설립")||!/연수|기간/.test(headings[17])||headings[18]!=="수익률 기준일")
-     problems.push("ETF columns must include area beside name, cumulative → initial price → latest price → lifetime CAGR → KRW AUM → inception → elapsed years");
+      headings[14]!=="연평균"||!/연수|기간/.test(headings[15])||
+      !/AUM|시총/.test(headings[16])||!headings[17].includes("설립")||headings[18]!=="수익률 기준일")
+     problems.push("ETF columns must include area beside name, cumulative → initial price → latest price → lifetime CAGR → elapsed years → KRW AUM → inception");
  }
  const number=text=>{
    const cleaned=String(text||"").replace(/[^\deE.+-]/g,"");
@@ -297,19 +297,28 @@ LAYOUT_CHECK = r"""expected => {
    }
    if(new Set(colors).size!==4)problems.push("ETF "+index+" return colors are not distinct");
    const lifetime=number(row.cells[14]?.textContent);
-   const years=number(row.cells[17]?.textContent);
+   const years=number(row.cells[15]?.textContent);
    if(!Number.isFinite(lifetime)||lifetime>previousLifetime)
      problems.push("ETF lifetime CAGR must be finite and sorted descending");
    if(!Number.isFinite(years)||years<0)
      problems.push("ETF displayed elapsed years must be nonnegative");
    const initial=exactPriceIn(row.cells[12]),latest=exactPriceIn(row.cells[13]);
    for(const [column,exact] of [[12,initial],[13,latest]]){
-     const cell=row.cells[column],visible=cell?.textContent.trim()||"",whole=number(visible);
+     const cell=row.cells[column],visible=cell?.textContent.trim()||"",shown=number(visible);
      const serializationTolerance=Math.max(1e-12,Math.abs(exact)*5e-12);
-     if(!Number.isFinite(exact)||exact<=0||!Number.isInteger(whole)||whole<0||
-        visible!==whole.toLocaleString("en-US",{useGrouping:true,maximumFractionDigits:0})||
-        whole<Math.trunc(exact-serializationTolerance)||whole>Math.trunc(exact+serializationTolerance))
-       problems.push("ETF "+index+" price must omit decimals, use comma grouping, and preserve its exact value in the title");
+     const fractionalInitial=column===12&&(exact<1||
+       (Math.abs(exact-1)<=serializationTolerance&&visible==="1.00"));
+     const format=fractionalInitial?{useGrouping:true,minimumFractionDigits:2,maximumFractionDigits:2}:
+       {useGrouping:true,maximumFractionDigits:0};
+     // Titles retain 12 significant digits. A rounded sub-unit initial price
+     // must retain two visible places; compare within half a cent rather than
+     // imposing JavaScript's midpoint rounding on Python's formatter.
+     const correctValue=fractionalInitial?
+       Math.abs(shown-exact)<=.005+serializationTolerance:
+       Number.isInteger(shown)&&shown>=Math.trunc(exact-serializationTolerance)&&shown<=Math.trunc(exact+serializationTolerance);
+     if(!Number.isFinite(exact)||exact<=0||!Number.isFinite(shown)||shown<0||
+        visible!==shown.toLocaleString("en-US",format)||!correctValue)
+       problems.push("ETF "+index+" initial prices below 1 must show two decimals; other prices must omit decimals, use comma grouping, and retain exact title values");
      const title=priceTitles(cell).join(" ");
      if(!/정확값\s+/.test(title)||!/\b(?:USD|KRW)\b/.test(title)||!/(?:Yahoo|네이버)/.test(title))
        problems.push("ETF "+index+" price title must preserve the exact value, currency and provider basis");
@@ -322,7 +331,7 @@ LAYOUT_CHECK = r"""expected => {
       Math.abs((latest/initial-1)*100-cumulative)>cumulativeTolerance)
      problems.push("ETF "+index+" cumulative return does not match its exact starting and latest prices preserved in titles");
    const start=dateIn(row.cells[12]),end=dateIn(row.cells[13]);
-   const inceptionText=row.cells[16]?.textContent.trim()||"";
+   const inceptionText=row.cells[17]?.textContent.trim()||"";
    const knownInception=/^\d{4}-\d{2}-\d{2}$/.test(inceptionText);
    const inception=knownInception?Date.parse(inceptionText+"T00:00:00Z"):NaN;
    const observedYears=(end-start)/(86400000*365.25);
@@ -364,21 +373,21 @@ LAYOUT_CHECK = r"""expected => {
      const style=getComputedStyle(cell),bounds=cell.getBoundingClientRect();
      if(style.whiteSpace!=="nowrap")
        problems.push("Row "+index+" must keep every column on one line: "+column);
-     const expectedFont=tableId==="returns"&&![16,18].includes(column)?13:12.35;
+     const expectedFont=tableId==="returns"&&![17,18].includes(column)?13:12.35;
      if(Math.abs(parseFloat(style.fontSize)-expectedFont)>.01)
        problems.push("Row "+index+" font differs from the enlarged design: "+style.fontSize);
-     if(tableId==="returns"&&[16,18].includes(column)&&style.textAlign!=="center")
+     if(tableId==="returns"&&[17,18].includes(column)&&style.textAlign!=="center")
        problems.push("ETF date values must be centered in column "+column);
      if(tableId==="returns"&&column===5&&style.textAlign!=="center")
        problems.push("ETF Active/Passive values must be centered beside the investment area");
-     if(tableId==="returns"&&[11,17].includes(column)){
+     if(tableId==="returns"&&[11,15].includes(column)){
        const tableWidth=row.closest("table").getBoundingClientRect().width;
        if(Math.abs(bounds.width-tableWidth*.051)>tolerance)
          problems.push("ETF cumulative return and elapsed years must be 15% narrower than the former 6% width: "+column);
      }
-     if(tableId==="returns"&&[14,16,18].includes(column)){
+     if(tableId==="returns"&&[14,17,18].includes(column)){
        const tableWidth=row.closest("table").getBoundingClientRect().width;
-       const maximum=column===14?.045:column===16?.075:.07;
+       const maximum=column===14?.045:column===17?.075:.07;
        if(bounds.width>tableWidth*maximum+tolerance)
          problems.push("ETF shortened heading/date column has not been narrowed: "+column);
      }
@@ -392,7 +401,7 @@ LAYOUT_CHECK = r"""expected => {
        if(previousNameWidth<=0||bounds.width/previousNameWidth<.43||bounds.width/previousNameWidth>.58)
          problems.push("Row "+index+" new-security name column must be approximately half its previous width");
      }
-     const aumColumn=tableId==="returns"?15:6;
+     const aumColumn=tableId==="returns"?16:6;
      if(column===aumColumn&&Math.abs(bounds.width-(tableId==="returns"?96:84))>tolerance)
        problems.push("Row "+index+" AUM column must use the restored 96px ETF or 84px stock/new width");
      const clip=cell.querySelector(column===3?".nm":".cl,.iwc");

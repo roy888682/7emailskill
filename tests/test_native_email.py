@@ -79,7 +79,7 @@ class NativeEmailTests(unittest.TestCase):
 
     def test_native_css_centers_the_two_date_columns_and_aligns_ytd_numbers(self):
         css = native_email._column_css()
-        for column in (17, 19):
+        for column in (18, 19):
             self.assertIn(native_email._selectors((".v",), column) +
                           "{text-align:center;font-variant-numeric:normal;font-size:12.35px}", css)
         self.assertIn(native_email._selectors((".v",), 7) +
@@ -94,6 +94,7 @@ class NativeEmailTests(unittest.TestCase):
             self.assertEqual(headings[5], "운용방식")
             self.assertEqual(headings[6:11], ["연초", "1년", "3년", "5년", "10년"])
             self.assertEqual(headings[14], "연평균")
+            self.assertEqual(headings[15:19], ["누적연수", "AUM·시총(원화)", "설립·상장일", "수익률 기준일"])
 
     def test_colgroup_widths_remain_exact_across_html5_transport_roundtrips(self):
         source = ('<table><colgroup><col style="width:3%"/>'
@@ -163,7 +164,7 @@ class NativeEmailTests(unittest.TestCase):
                 self.assertEqual([row.find("td").get_text(strip=True) for row in rows],
                                  [str(number) for number in range(1, count + 1)])
             prices = doc.select_one("#returns tbody tr").find_all("td", recursive=False)[12:14]
-            for cell, displayed, exact in zip(prices, ("0", "123,456"),
+            for cell, displayed, exact in zip(prices, ("0.00", "123,456"),
                                               ("1.23456789012e-05", "123456.987654")):
                 self.assertEqual(cell.get_text(), displayed)
                 self.assertIn("정확값 " + exact, cell["title"])
