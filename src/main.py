@@ -1143,7 +1143,9 @@ US_MAJOR_ETFS = {
     # 미국 시장 전체/대형주
     "SPY":"SPDR S&P 500 ETF Trust","VOO":"Vanguard S&P 500 ETF","IVV":"iShares Core S&P 500 ETF",
     "VTI":"Vanguard Total Stock Market ETF","QQQ":"Invesco QQQ Trust, Series 1","QQQM":"Invesco NASDAQ 100 ETF",
-    "DIA":"SPDR Dow Jones Industrial Average ETF Trust","SPLG":"SPDR Portfolio S&P 500 ETF",
+    # Issuer/SEC notice: SPLG changed to SPYM on 2025-10-31; preserve its fund history.
+    # https://www.sec.gov/Archives/edgar/data/1064642/000119312525245731/d852395d497k.htm
+    "DIA":"SPDR Dow Jones Industrial Average ETF Trust","SPYM":"State Street SPDR Portfolio S&P 500 ETF",
     "RSP":"Invesco S&P 500 Equal Weight ETF","VV":"Vanguard Large-Cap ETF","SCHX":"Schwab U.S. Large-Cap ETF",
     "SCHB":"Schwab U.S. Broad Market ETF","ITOT":"iShares Core S&P Total U.S. Stock Market ETF",
     "IWB":"iShares Russell 1000 ETF","OEF":"iShares S&P 100 ETF","XLG":"Invesco S&P 500 Top 50 ETF",
