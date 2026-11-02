@@ -113,10 +113,10 @@ class EmailLayoutTests(unittest.TestCase):
                     cell = doc.select_one("#returns tbody tr").find_all("td", recursive=False)[7]
                     cell["title"] = cell["title"] + " changed"
                 elif field == "return_date":
-                    cell = doc.select_one("#returns tbody tr").find_all("td", recursive=False)[18]
+                    cell = doc.select_one("#returns tbody tr").find_all("td", recursive=False)[16]
                     cell.select_one(".cl").string = "26-10-06"
                 else:
-                    cell = doc.select_one("#returns tbody tr").find_all("td", recursive=False)[13]
+                    cell = doc.select_one("#returns tbody tr").find_all("td", recursive=False)[18]
                     if field == "date":
                         cell["title"] = cell["title"].replace("2026-10-07", "2026-10-06")
                     else:
@@ -202,19 +202,19 @@ class EmailLayoutTests(unittest.TestCase):
         for item,row in zip(self.data["etf_info"]["rows"],rows):
             cells=row.find_all("td",recursive=False)
             self.assertEqual(len(cells),19)
-            for index,key in zip((6,7,8,9,10,11,14),("return_ytd","return1y","return3y","return5y","return10y","cumulative_return","lifetime_cagr")):
+            for index,key in zip((6,7,8,9,10,11,12),("return_ytd","return1y","return3y","return5y","return10y","cumulative_return","lifetime_cagr")):
                 value=item.get(key)
                 self.assertEqual(cells[index].get_text(),f"{value:.1f}" if value is not None else "-")
             self.assertEqual(cells[4].get_text(),brief_investment_text(item))
             self.assertEqual(cells[5].get_text(),management_style_text(item))
-            self.assertEqual(cells[12].get_text(),price_text(item.get("initial_adjusted_price"), initial=True))
-            self.assertEqual(cells[13].get_text(),price_text(item.get("latest_adjusted_price")))
-            self.assertEqual(cells[15].get_text(),elapsed_years_text(item.get("lifetime_years")))
-            self.assertEqual(cells[16].get_text(),row_size(dict(item,asset_type="ETF")))
-            self.assertEqual(cells[17].get_text(),inception_text(item))
-            self.assertEqual(cells[18].get_text(), item["price_end_date"][2:])
-            self.assertIn(item["price_end_date"], cells[18]["title"])
-            self.assertIn(item["price_end_date"], cells[18].select_one(".cl")["title"])
+            self.assertEqual(cells[17].get_text(),price_text(item.get("initial_adjusted_price"), initial=True))
+            self.assertEqual(cells[18].get_text(),price_text(item.get("latest_adjusted_price")))
+            self.assertEqual(cells[13].get_text(),elapsed_years_text(item.get("lifetime_years")))
+            self.assertEqual(cells[14].get_text(),row_size(dict(item,asset_type="ETF")))
+            self.assertEqual(cells[15].get_text(),inception_text(item))
+            self.assertEqual(cells[16].get_text(), item["price_end_date"][2:])
+            self.assertIn(item["price_end_date"], cells[16]["title"])
+            self.assertIn(item["price_end_date"], cells[16].select_one(".cl")["title"])
             self.assertEqual([cells[i].get("class",[])[-1] for i in range(7,11)],["p1","p3","p5","p10"])
     def test_short_headings_ytd_order_and_centered_dates_keep_readable_fonts(self):
         doc = BeautifulSoup(render_email(**self.data), "html5lib")
@@ -222,15 +222,15 @@ class EmailLayoutTests(unittest.TestCase):
         headings = [cell.get_text() for cell in table.select("thead th")]
         self.assertEqual(headings[5], "운용방식")
         self.assertEqual(headings[6:11], ["연초", "1년", "3년", "5년", "10년"])
-        self.assertEqual(headings[14], "연평균")
-        self.assertEqual(headings[15:19], ["누적연수", "AUM·시총(원화)", "설립·상장일", "수익률 기준일"])
+        self.assertEqual(headings[12], "연평균")
+        self.assertEqual(headings[13:19], ["누적연수", "AUM·시총(원화)", "설립·상장일", "수익률 기준일", "최초주가", "최근주가"])
         columns = table.select("col")
-        for index, width in ((5, "6%"), (6, "4%"), (11, "5.1%"), (14, "4%"), (15, "5.1%"), (17, "7%"), (18, "6.5%")):
+        for index, width in ((5, "6%"), (6, "4%"), (11, "5.1%"), (12, "4%"), (13, "5.1%"), (15, "7%"), (16, "6.5%"), (17, "5%"), (18, "5%")):
             self.assertEqual(columns[index].get("style"), "width:" + width)
         for row in table.select("tbody tr"):
-            for index in (17, 18):
+            for index in (15, 16):
                 self.assertIn("d", row.find_all("td", recursive=False)[index].get("class", []))
-        for index in (17, 18):
+        for index in (15, 16):
             self.assertNotIn("d", table.select("thead th")[index].get("class", []))
         self.assertRegex(CSS, r"\.data-table th\{[^}]*font-size:13px;[^}]*text-align:center!important")
         self.assertIn(".data-table .d{font-size:12.35px;text-align:center}", CSS)
@@ -398,7 +398,7 @@ class EmailLayoutTests(unittest.TestCase):
             delivery,_=native_email.prepare(source,inventory(source),directory)
         for html in (body,delivery):
             doc=BeautifulSoup(html,"html5lib")
-            for table_id,column in (("us",6),("kr",6),("new-kr",6),("new-us",6),("returns",16)):
+            for table_id,column in (("us",6),("kr",6),("new-kr",6),("new-us",6),("returns",14)):
                 cell=doc.select_one("#"+table_id+" tbody tr").find_all("td",recursive=False)[column]
                 self.assertEqual(cell.get_text(),"5,530억원")
                 self.assertEqual(cell.find("span",style=True)["style"],"color:#c23932")
@@ -472,7 +472,7 @@ class EmailLayoutTests(unittest.TestCase):
         source = render_email(**self.data)
         doc = BeautifulSoup(source, "html5lib")
         for table_id, column, width in (("us",6,"84px"),("kr",6,"84px"),
-                                         ("new-kr",6,"84px"),("new-us",6,"84px"),("returns",16,"96px")):
+                                         ("new-kr",6,"84px"),("new-us",6,"84px"),("returns",14,"96px")):
             self.assertEqual(doc.select_one("#" + table_id).select("col")[column].get("style"), "width:" + width)
         for table_id in ("new-kr", "new-us"):
             self.assertEqual(doc.select_one("#" + table_id).select("col")[3].get("style"), "width:19%")
@@ -489,12 +489,12 @@ class EmailLayoutTests(unittest.TestCase):
                     price_start_date="2016-05-19", price_end_date="2026-10-07",
                     price_basis="Yahoo 제공 수정주가(auto_adjust)", price_currency="USD")
         doc = BeautifulSoup(render_email(**self.data), "html5lib")
-        self.assertEqual([cell.get_text() for cell in doc.select("#returns thead th")][12:14],
+        self.assertEqual([cell.get_text() for cell in doc.select("#returns thead th")][17:19],
                          ["최초주가", "최근주가"])
-        self.assertEqual(doc.select("#returns thead th")[18].get_text(), "수익률 기준일")
+        self.assertEqual(doc.select("#returns thead th")[16].get_text(), "수익률 기준일")
         cells = doc.select_one("#returns tbody tr").find_all("td", recursive=False)
-        for index,key,date_value in ((12,"initial_adjusted_price","2016-05-19"),(13,"latest_adjusted_price","2026-10-07")):
-            self.assertEqual(cells[index].get_text(), "0.00" if index == 12 else "123,456")
+        for index,key,date_value in ((17,"initial_adjusted_price","2016-05-19"),(18,"latest_adjusted_price","2026-10-07")):
+            self.assertEqual(cells[index].get_text(), "0.00" if index == 17 else "123,456")
             expected_detail = (f'정확값 {format(item[key], ".12g")} · {date_value} · '
                                'Yahoo 제공 수정주가(auto_adjust) · USD')
             self.assertEqual(cells[index]["title"], expected_detail)

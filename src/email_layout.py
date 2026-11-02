@@ -150,7 +150,7 @@ def table_columns(kind):
         # Both cumulative-return and elapsed-year widths are 85% of their
         # former 6%; fonts, price widths and the fixed AUM/flag columns stay.
         widths = ("3%", "3%", "6%", None, "8%", "6%", "4%", "4%", "4%", "4%", "4%",
-                  "5.1%", "5%", "5%", "4%", "5.1%", "96px", "7%", "6.5%")
+                  "5.1%", "4%", "5.1%", "96px", "7%", "6.5%", "5%", "5%")
     elif kind == "new":
         # Before this change the auto name width was 54% of the table minus
         # 168px. A fixed 19% is 46–55% of that width across 900–1920px hosts.
@@ -296,11 +296,10 @@ def etf_section_html(etf_info, include_details=False, info=None):
              '<th class="number">No.</th><th class="flag-cell">국가</th><th>티커</th><th>종목명</th><th>업종·투자분야</th><th>운용방식</th>' +
              "".join(f'<th class="number {"one-year" if period == "1y" else ""}">{label}</th>'
                      for period, label, _ in labels) +
-             '<th class="number">최초주가</th><th class="number">최근주가</th>'
              '<th class="number">연평균</th>'
              '<th class="number" data-field="lifetime_years">누적연수</th>'
              '<th class="number" data-field="aum">AUM·시총(원화)</th><th data-field="inception">설립·상장일</th>'
-             '<th>수익률 기준일</th></tr></thead><tbody>')
+             '<th>수익률 기준일</th><th class="number">최초주가</th><th class="number">최근주가</th></tr></thead><tbody>')
     for rank, row in enumerate(rows, 1):
         country = "US" if row.get("market") == "US" else "KR"
         ticker = h(row.get("ticker"))
@@ -315,14 +314,14 @@ def etf_section_html(etf_info, include_details=False, info=None):
                   "".join(f'<td class="number {"one-year" if period == "1y" else ""}" title="{h(period_return_title(row, period))}">'
                           f'{compact_metric(period, label, row.get(key))}</td>'
                           for period, label, key in labels) +
-                  f'<td class="number" title="{first_title}">{price_text(row.get("initial_adjusted_price"), initial=True)}</td>'
-                  f'<td class="number" title="{last_title}">{price_text(row.get("latest_adjusted_price"))}</td>'
                   f'<td class="number">{compact_metric("lifetime", "연평균", row.get("lifetime_cagr"))}</td>'
                   f'<td class="number" data-field="lifetime_years">{elapsed_years_text(row.get("lifetime_years"))}</td>'
                   f'<td class="number" data-field="aum">{row_size_html(dict(row, asset_type="ETF"))}</td>'
                   f'<td class="date-cell" data-field="inception" title="{h(row.get("inception_source") or "설립일 출처 미확인")}">{h(inception_text(row))}</td>'
                   f'<td class="date-cell" title="{h(return_date_title(row, (info or {}).get(country.lower() + "_last")))}">'
-                  f'{h(return_date_text(row))}</td></tr>')
+                  f'{h(return_date_text(row))}</td>'
+                  f'<td class="number" title="{first_title}">{price_text(row.get("initial_adjusted_price"), initial=True)}</td>'
+                  f'<td class="number" title="{last_title}">{price_text(row.get("latest_adjusted_price"))}</td></tr>')
     table += '</tbody></table></div>'
     notes = ('<p class="notes">ETF 비교는 ATH 괴리율과 무관하게 수집 대상 한국·미국 비채권 ETF 중 연평균 누적수익률 산출 가능 종목을 내림차순으로 최대 100개 표시합니다. '
              '운용방식은 Active·Passive로 표시하며 근거가 없으면 미확인으로 표시합니다. 마우스를 올리면 분류 근거·출처와 공식자료 확인 여부를 볼 수 있습니다. 레버리지 사용만으로 Active로 분류하지 않습니다.<br>'
@@ -765,8 +764,8 @@ def validate_etf_date_proof(source, manifest, proof):
         if (style_cell.get_text() != style_text or style_cell.get("title") != style_detail
                 or style_clip is None or style_clip.get("title") != style_text + " · " + style_detail):
             raise RuntimeError(f"Displayed ETF {country}:{ticker} management style differs from its audited evidence")
-        for column, key, date_key in ((12, "initial_adjusted_price", "price_start_date"),
-                                      (13, "latest_adjusted_price", "price_end_date")):
+        for column, key, date_key in ((17, "initial_adjusted_price", "price_start_date"),
+                                      (18, "latest_adjusted_price", "price_end_date")):
             value = record.get(key)
             currency = record.get("price_currency")
             detail = (f'정확값 {price_exact_text(value)} · {record.get(date_key)} · '
@@ -779,7 +778,7 @@ def validate_etf_date_proof(source, manifest, proof):
                     or clip.get("title") != visible + " · " + detail):
                 raise RuntimeError(f"Displayed ETF {country}:{ticker} price or date differs from its audit")
         for column, key in ((6, "return_ytd"), (7, "return1y"), (8, "return3y"), (9, "return5y"),
-                            (10, "return10y"), (11, "cumulative_return"), (14, "lifetime_cagr")):
+                            (10, "return10y"), (11, "cumulative_return"), (12, "lifetime_cagr")):
             value = record.get(key)
             text = f"{value:.1f}" if isinstance(value, (int, float)) and math.isfinite(value) else "-"
             if cells[column].get_text() != text:
@@ -792,9 +791,9 @@ def validate_etf_date_proof(source, manifest, proof):
                 if (cells[column].get("title") != detail or clip is None
                         or clip.get("title") != text + " · " + detail):
                     raise RuntimeError(f"Displayed ETF {country}:{ticker} {key} period dates or prices differ from its audit")
-        if cells[15].get_text() != elapsed_years_text(record.get("lifetime_years")):
+        if cells[13].get_text() != elapsed_years_text(record.get("lifetime_years")):
             raise RuntimeError(f"Displayed ETF {country}:{ticker} elapsed years differ from its audited dates")
-        date_cell, date_detail = cells[18], return_date_title(record, market_dates[country])
+        date_cell, date_detail = cells[16], return_date_title(record, market_dates[country])
         clip = date_cell.select_one(".cl")
         if (date_cell.get_text() != return_date_text(record) or date_cell.get("title") != date_detail
                 or clip is None or clip.get("title") != return_date_text(record) + " · " + date_detail):

@@ -936,41 +936,77 @@ def classify_kr_etf(name: str) -> str:
 _KR_ETF_DIAG = {"base_logged": False}
 
 def get_kr_etf_universe() -> dict:
-    """국내 ETF 목록 (AUM 큰 순). 응답 구조 미문서화 → 후보 키 탐색 + 진단 로그."""
+    """Collect every Korean ETF page, verifying the provider's complete inventory."""
     out = {}
     url = "https://stock.naver.com/api/stockSecurity/etfs/v2/domestic"
-    rows = []
-    for size in (300, 100):
-        try:
-            r = requests.get(url, headers=UA,
-                             params={"listingType": "aumDesc", "size": size, "index": 0}, timeout=20)
-            log.info(f"  [진단ETF] 목록 size={size} status={r.status_code} 응답길이={len(r.text)}")
-            if r.status_code != 200:
-                log.warning(f"  [진단ETF] 목록 body일부: {r.text[:200]}")
-                continue
-            data = r.json()
-            rows = _extract_rows(data)
-            if rows:
+    expected_total = None
+    # The observed v2 API accepts at most 100 rows and `index` is a page number,
+    # not a row offset. A size=300 request fails and index=0 alone omits funds.
+    for index in range(100):
+        page = None
+        last_error = None
+        for attempt in range(3):
+            try:
+                r = requests.get(url, headers=UA,
+                                 params={"listingType": "aumDesc", "size": 100, "index": index}, timeout=20)
+                if r.status_code != 200:
+                    raise RuntimeError(f"HTTP {r.status_code}")
+                data = r.json()
+                if not isinstance(data, dict) or not isinstance(data.get("items"), list):
+                    raise ValueError("ETF list items are missing")
+                if type(data.get("hasNext")) is not bool:
+                    raise ValueError("ETF list hasNext is not a boolean")
+                if any(isinstance(data.get(key), bool) or not re.fullmatch(r"\d+", str(data.get(key)))
+                       for key in ("index", "totalCount")):
+                    raise ValueError("ETF list index/totalCount are invalid")
+                total = int(data["totalCount"])
+                if int(data["index"]) != index or (expected_total is not None and total != expected_total):
+                    raise ValueError("ETF list page index or total count changed")
+                rows = data["items"]
+                if len(rows) > 100 or (data["hasNext"] and not rows):
+                    raise ValueError("ETF list page length is invalid")
+                parsed = {}
+                for row in rows:
+                    if not isinstance(row, dict):
+                        raise ValueError("ETF list contains a non-object row")
+                    flat = _flatten(row)
+                    code = str(_find_val(flat, [(["itemcode"], [], []),
+                               (["code"], [], ["index", "theme", "type"])]) or "").strip()
+                    name = str(_find_val(flat, [(["itemname"], [], []),
+                               (["name"], [], ["index", "theme", "issuer"])]) or "").strip()
+                    if len(code) != 6 or not name or code in parsed:
+                        raise ValueError("ETF list contains an invalid or duplicate security")
+                    list_aum = parse_kr_etf_base(row).get("aum")
+                    parsed[code] = {"name": name, "mcap": None, "aum": list_aum,
+                                    "market": "KOSPI", "is_etf": True,
+                                    "investment_area": row.get("etfType"),
+                                    "investment_area_source": "Naver ETF 목록 분류"}
+                combined_count = len(set(out) | set(parsed))
+                if rows and not (set(parsed) - set(out)):
+                    raise ValueError("ETF list pagination repeated a page without progress")
+                if combined_count > total or (data["hasNext"] and combined_count >= total):
+                    raise ValueError("ETF list pagination contradicts total count")
+                if not data["hasNext"] and combined_count != total:
+                    raise ValueError(f"ETF list is incomplete: {combined_count}/{total}")
+                page = (parsed, data["hasNext"], total)
                 break
-            log.info(f"  [진단ETF] 목록 구조 이상, 최상위: {list(data.keys())[:15] if isinstance(data, dict) else type(data)}")
-        except Exception as e:
-            log.warning(f"  [진단ETF] 목록 예외: {e}")
-    if rows and isinstance(rows[0], dict):
-        log.info(f"  [진단ETF] 첫 행: {json.dumps(rows[0], ensure_ascii=False)[:700]}")
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        flat = _flatten(row)
-        code = str(_find_val(flat, [(["itemcode"], [], []), (["code"], [], ["index", "theme", "type"])]) or "").strip()
-        name = str(_find_val(flat, [(["itemname"], [], []), (["name"], [], ["index", "theme", "issuer"])]) or "").strip()
-        if len(code) != 6 or not name:
-            continue
-        list_aum = parse_kr_etf_base(row).get("aum")  # Explicit totalNetAssets raw KRW only
-        out[code] = {"name": name, "mcap": None, "aum": list_aum, "market": "KOSPI", "is_etf": True,
-                     "investment_area": row.get("etfType"),
-                     "investment_area_source": "Naver ETF 목록 분류"}
-    log.info(f"한국 ETF 유니버스: {len(out)}종목")
-    return out
+            except Exception as error:
+                last_error = error
+                log.warning("한국 ETF 목록 page=%s 재시도 %s/3: %s", index, attempt + 1, error)
+                if attempt < 2:
+                    time.sleep(.5 * (attempt + 1))
+        if page is None:
+            raise RuntimeError(f"한국 ETF 전체 목록 수집 실패: page={index}, 확보={len(out)}, "
+                               f"예상={expected_total}: {last_error}") from last_error
+        parsed, has_next, expected_total = page
+        out.update(parsed)
+        log.info("한국 ETF 목록 page=%s: 누적 %s/%s종목, hasNext=%s",
+                 index, len(out), expected_total, has_next)
+        if not has_next:
+            log.info("한국 ETF 전체 유니버스: %s/%s종목 (완전성 확인)", len(out), expected_total)
+            return out
+        time.sleep(.1)
+    raise RuntimeError(f"한국 ETF 목록 페이지 안전 한도 초과: 확보={len(out)}, 예상={expected_total}")
 
 def fetch_kr_etf_base(code: str):
     try:
@@ -1846,7 +1882,7 @@ def send_email(html, subject, inline_images=None, source_html=None):
     log.info("SMTP_ACCEPTED: %s", json.dumps(receipt, ensure_ascii=False))
     log.info("✅ SMTP 접수 성공 · 수신함 도착 여부는 별도 확인")
 
-CODE_VERSION = "2026-11-02-independent-etf-comparison-management-style"
+CODE_VERSION = "2026-11-03-complete-korean-etf-pages-price-columns"
 
 def main(prepare_only=False):
     log.info(f"=== ATH 리포트 시작 (코드버전: {CODE_VERSION}) ===")

@@ -78,8 +78,9 @@ def _column_css():
         (10, "color:#087d67"),
         (11, "color:#7944b0"),
         (12, "color:#17263d"),
-        (18, "text-align:center;font-variant-numeric:normal;font-size:12.35px"),
-        (19, "text-align:center;font-variant-numeric:normal;font-size:12.35px"),
+        (16, "text-align:center;font-variant-numeric:normal;font-size:12.35px"),
+        (17, "text-align:center;font-variant-numeric:normal;font-size:12.35px"),
+        (18, "text-align:right;font-variant-numeric:tabular-nums;font-size:13px"),
     )
     for column, declarations in rules:
         groups.append(_selectors(etfs, column) + "{" + declarations + "}")
