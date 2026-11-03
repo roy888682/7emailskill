@@ -1140,16 +1140,25 @@ def _etf_aum(v):
     return f"{v:,.2f}조" if v < 10 else f"{v:,.1f}조"
 
 def build_etf_info(us, kr, comparison_etfs=None):
-    """한국·미국 ETF 중 설립 이후 연평균 누적수익률 내림차순 상위 100개."""
+    """실제 가격 누적연수 1년 이상 ETF의 연평균 수익률 내림차순 상위 100개."""
     pool = ([s for s in kr + us if s.get("asset_type") == "ETF"] if comparison_etfs is None
             else list(comparison_etfs))
     ranked = []
+    with_ret = 0
+    under_one_year = 0
     for item in pool:
         metrics = _etf_lifetime_metrics(item)
         if metrics is not None:
+            with_ret += 1
+            # Eligibility uses the original price interval, never its rounded
+            # display text or an earlier official fund inception date.
+            if metrics["lifetime_years"] < 1:
+                under_one_year += 1
+                continue
             ranked.append({**item, **metrics, **etf_strategy.management_style_metadata(item)})
     ranked.sort(key=lambda s: s["lifetime_cagr"], reverse=True)
-    return {"rows": ranked[:100], "pool": len(pool), "with_ret": len(ranked)}
+    return {"rows": ranked[:100], "pool": len(pool), "with_ret": with_ret,
+            "eligible_count": len(ranked), "under_one_year": under_one_year}
 
 
 def etf_section_html(etf_info):
@@ -1882,7 +1891,7 @@ def send_email(html, subject, inline_images=None, source_html=None):
     log.info("SMTP_ACCEPTED: %s", json.dumps(receipt, ensure_ascii=False))
     log.info("✅ SMTP 접수 성공 · 수신함 도착 여부는 별도 확인")
 
-CODE_VERSION = "2026-11-03-complete-korean-etf-pages-price-columns"
+CODE_VERSION = "2026-11-03-etf-minimum-one-year-ranking"
 
 def main(prepare_only=False):
     log.info(f"=== ATH 리포트 시작 (코드버전: {CODE_VERSION}) ===")
@@ -1922,7 +1931,9 @@ def main(prepare_only=False):
 
     # ETF 비교는 ATH와 독립된 수집 비채권 ETF 전체의 연평균 내림차순입니다.
     etf_info = build_etf_info(us, kr, comparison_etfs)
-    log.info(f"ETF 섹션: 풀 {etf_info['pool']}개 / 연평균 누적수익률 산출 {etf_info['with_ret']}개 / 표시 {len(etf_info['rows'])}개")
+    log.info(f"ETF 섹션: 풀 {etf_info['pool']}개 / 연평균 누적수익률 산출 {etf_info['with_ret']}개 / "
+             f"누적연수 1년 이상 {etf_info['eligible_count']}개 / 1년 미만 {etf_info['under_one_year']}개 / "
+             f"표시 {len(etf_info['rows'])}개")
     for item in comparison_etfs:
         if item.get("ticker") == "TQQQ" and item.get("market") == "US":
             metrics = _etf_lifetime_metrics(item) or {}

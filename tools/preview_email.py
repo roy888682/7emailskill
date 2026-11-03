@@ -335,6 +335,8 @@ LAYOUT_CHECK = r"""expected => {
    const knownInception=/^\d{4}-\d{2}-\d{2}$/.test(inceptionText);
    const inception=knownInception?Date.parse(inceptionText+"T00:00:00Z"):NaN;
    const observedYears=(end-start)/(86400000*365.25);
+   if(!Number.isFinite(observedYears)||observedYears<1)
+     problems.push("ETF "+index+" must have at least one unrounded elapsed year before ranking");
    if(!Number.isFinite(start)||!Number.isFinite(end)||end<=start||
       (knownInception&&(!Number.isFinite(inception)||start<inception))||
       (!knownInception&&!["미확인","-"].includes(inceptionText))||Math.abs(observedYears-years)>.00501)
@@ -555,6 +557,8 @@ PERIOD_RETURN_CHECK = r"""proof => {
 
 MANAGEMENT_STYLE_CHECK = r"""proof => {
  const problems=[],records=new Map(),counts={Active:0,Passive:0,'미확인':0},comparisonKeys=[];let displayed=0;
+ const yearsOf=record=>(Date.parse(record.price_end_date+'T00:00:00Z')-
+   Date.parse(record.price_start_date+'T00:00:00Z'))/(86400000*365.25);
  for(const record of proof.etfs||[]){
    const style=record.management_style,source=record.management_style_source,
          url=record.management_style_url,evidence=record.management_style_evidence,
@@ -581,6 +585,11 @@ MANAGEMENT_STYLE_CHECK = r"""proof => {
  if(!Array.isArray(proof.comparison_universe)||
     JSON.stringify(proof.comparison_universe)!==JSON.stringify(comparisonKeys.sort()))
    problems.push('ETF comparison universe must match its complete audit membership');
+ const eligible=Array.from(records.values()).filter(record=>record.in_comparison_universe&&
+   record.date_status!=='unavailable'&&typeof record.lifetime_cagr==='number'&&
+   Number.isFinite(record.lifetime_cagr)&&yearsOf(record)>=1);
+ const expectedCagrs=eligible.map(record=>record.lifetime_cagr).sort((a,b)=>b-a).slice(0,100);
+ const displayedCagrs=[],displayedKeys=new Set();
  for(const row of document.querySelectorAll('#returns tbody tr')){
    const label=row.cells[1]?.querySelector('img')?.alt,country=label==='성조기'?'US':label==='태극기'?'KR':null;
    const ticker=row.cells[2]?.querySelector('a')?.textContent.trim(),record=records.get(country+':'+ticker);
@@ -588,6 +597,11 @@ MANAGEMENT_STYLE_CHECK = r"""proof => {
      problems.push('Displayed ETF lacks comparison-universe management-style evidence: '+ticker);continue;
    }
    displayed++;
+   const identity=country+':'+ticker,years=yearsOf(record);
+   if(!Number.isFinite(years)||years<1||Math.abs(years-record.lifetime_years)>1e-12)
+     problems.push('Displayed ETF must have at least one unrounded elapsed year: '+ticker);
+   if(displayedKeys.has(identity))problems.push('Duplicate ETF in the ranked comparison: '+ticker);
+   displayedKeys.add(identity);displayedCagrs.push(record.lifetime_cagr);
    const cell=row.cells[5],style=record.management_style;
    let detail=style+' · '+record.management_style_source+' · '+(record.management_style_evidence||'분류 근거 없음')+
        ' · '+(record.management_style_verified?'공식자료 확인':'공식자료 미확인');
@@ -596,7 +610,9 @@ MANAGEMENT_STYLE_CHECK = r"""proof => {
       cell?.querySelector('.cl')?.getAttribute('title')!==style+' · '+detail)
      problems.push('Displayed ETF management style or source differs from its audit: '+ticker);
  }
- return {audit_counts:counts,displayed_checked:displayed,problems};
+ if(JSON.stringify(displayedCagrs)!==JSON.stringify(expectedCagrs))
+   problems.push('ETF comparison must show the complete top 100 eligible one-year-or-older ETFs in CAGR order');
+ return {audit_counts:counts,displayed_checked:displayed,eligible_count:eligible.length,problems};
 }"""
 
 

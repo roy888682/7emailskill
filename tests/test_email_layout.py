@@ -1,7 +1,7 @@
 """Regressions for the restored 38-security desktop table and direct delivery."""
 import copy
 import unittest
-from datetime import date
+from datetime import date, timedelta
 from bs4 import BeautifulSoup
 from src.email_layout import (render_email, etf_section_html, inception_text,
                               row_size, row_size_html, aum, industry_text, inventory, validate_size,
@@ -10,7 +10,7 @@ from src.email_layout import (render_email, etf_section_html, inception_text,
                               validate_etf_date_proof, validate_period_return_evidence,
                               management_style_text, management_style_title, validate_management_style_evidence)
 from tools.preview_email import sample_data, make_stock, manifest_for, set_sample_period_returns
-from src.main import validate_etf_market_dates
+from src.main import validate_etf_market_dates, build_etf_info, _etf_price_performance
 
 class EmailLayoutTests(unittest.TestCase):
     def setUp(self):
@@ -33,7 +33,8 @@ class EmailLayoutTests(unittest.TestCase):
         self.assertIn("복리 연환산(CAGR)", doc.get_text())
         self.assertIn("원금과 수익이 매년 함께 재투자", doc.get_text())
 
-    def test_full_etf_market_proof_covers_even_funds_outside_the_comparison(self):
+    def test_full_etf_market_proof_covers_even_ath_only_funds_outside_the_comparison(self):
+        comparison = list(self.data["etf_info"]["rows"])
         extra = copy.deepcopy(next(row for row in self.data["us"] if row.get("asset_type") == "ETF"))
         extra["ticker"] = "OUTSIDE100"
         extra.update(price_end_date="2026-10-06", last_date="2026-10-06", return_as_of="2026-10-06")
@@ -41,9 +42,11 @@ class EmailLayoutTests(unittest.TestCase):
         self.data["us"].append(extra)
         source = render_email(**self.data)
         manifest = manifest_for(self.data)
-        proof = self.market_proof()
+        proof = validate_etf_market_dates(self.data["us"], self.data["kr"], self.data["info"],
+                                          comparison_etfs=comparison)
         self.assertNotIn("OUTSIDE100", manifest["etf"])
         record = next(row for row in proof["etfs"] if row["ticker"] == "OUTSIDE100")
+        self.assertFalse(record["in_comparison_universe"])
         self.assertEqual(record["date_status"], "latest_available")
         self.assertEqual(record["requested_market_date"], "2026-10-07")
         self.assertEqual(validate_etf_date_proof(source, manifest, proof), proof["market_dates"])
@@ -75,8 +78,7 @@ class EmailLayoutTests(unittest.TestCase):
                                management_style_url=None, management_style_verified=False,
                                management_style_evidence=None)
         comparison = [row for row in self.data["us"] + self.data["kr"] if row.get("asset_type") == "ETF"] + [comparison_only]
-        ranked = [comparison_only] + self.data["etf_info"]["rows"]
-        self.data["etf_info"] = {"rows": ranked, "pool": len(comparison), "with_ret": len(comparison)}
+        self.data["etf_info"] = build_etf_info(self.data["us"], self.data["kr"], comparison_etfs=comparison)
         source, manifest = render_email(**self.data), manifest_for(self.data)
         proof = validate_etf_market_dates(self.data["us"], self.data["kr"], self.data["info"],
                                           comparison_etfs=comparison)
@@ -99,6 +101,70 @@ class EmailLayoutTests(unittest.TestCase):
                 altered["comparison_universe"].remove("US:TQQQ_ONLY")
             with self.subTest(kind=kind), self.assertRaises(RuntimeError):
                 validate_etf_date_proof(source, manifest, altered)
+
+    def minimum_year_data(self):
+        end = date(2026, 10, 7)
+        template = next(row for row in self.data["us"] if row.get("asset_type") == "ETF")
+        items = []
+        for ticker, days, latest in (("SHORT365", 365, 300.0), ("LONG366", 366, 120.0),
+                                     ("LONGLOW", 731, 110.0)):
+            item = copy.deepcopy(template)
+            start = end - timedelta(days=days)
+            item.update(ticker=ticker, name=ticker, market="US", asset_type="ETF",
+                        inception=start.isoformat(), inception_verified=False,
+                        inception_source="검증용 최초 가격일", gap=-25.0)
+            item.update(_etf_price_performance([start, end], [100.0, latest],
+                        price_basis="Yahoo 제공 수정주가(auto_adjust)", price_currency="USD"))
+            set_sample_period_returns(item)
+            items.append(item)
+        data = dict(self.data, us=items, kr=[], new_us=items[:1], new_kr=[])
+        data["etf_info"] = build_etf_info(items, [], comparison_etfs=items)
+        return data, items
+
+    def test_one_year_ranking_keeps_short_etfs_in_country_new_and_complete_audit(self):
+        data, items = self.minimum_year_data()
+        source, manifest = render_email(**data), manifest_for(data)
+        proof = validate_etf_market_dates(data["us"], data["kr"], data["info"], comparison_etfs=items)
+        self.assertEqual(manifest["etf"], ["LONG366", "LONGLOW"])
+        self.assertIn("SHORT365", manifest["us"])
+        self.assertIn("US:SHORT365", manifest["new"])
+        record = next(row for row in proof["etfs"] if row["ticker"] == "SHORT365")
+        self.assertTrue(record["in_comparison_universe"])
+        self.assertEqual(elapsed_years_text(record["lifetime_years"]), "1.00년")
+        self.assertLess(record["lifetime_years"], 1)
+        self.assertEqual(elapsed_years_text(items[1]["lifetime_years"]), "1.00년")
+        self.assertGreater(items[1]["lifetime_years"], 1)
+        self.assertIn("누적연수 1년 이상", BeautifulSoup(source, "html5lib").get_text())
+        self.assertEqual(validate_etf_date_proof(source, manifest, proof), proof["market_dates"])
+
+    def test_rank_proof_rejects_rounded_short_age_reintroduction_missing_rows_and_wrong_order(self):
+        data, items = self.minimum_year_data()
+        proof = validate_etf_market_dates(data["us"], data["kr"], data["info"], comparison_etfs=items)
+        for kind in ("reintroduce_short", "omit_eligible", "wrong_order", "rounded_age"):
+            altered = copy.deepcopy(data)
+            altered_proof = copy.deepcopy(proof)
+            if kind == "reintroduce_short":
+                altered["etf_info"]["rows"].insert(0, items[0])
+            elif kind == "omit_eligible":
+                altered["etf_info"]["rows"].pop()
+            elif kind == "wrong_order":
+                altered["etf_info"]["rows"].reverse()
+            else:
+                next(row for row in altered_proof["etfs"] if row["ticker"] == "SHORT365")["lifetime_years"] = 1.0
+            source, manifest = render_email(**altered), manifest_for(altered)
+            with self.subTest(kind=kind), self.assertRaises(RuntimeError):
+                validate_etf_date_proof(source, manifest, altered_proof)
+
+    def test_rank_proof_permits_equal_unrounded_cagr_tie_order(self):
+        data, items = self.minimum_year_data()
+        tied = copy.deepcopy(items[1])
+        tied.update(ticker="LONGTIE", name="Same exact CAGR")
+        data["us"].append(tied)
+        data["etf_info"] = build_etf_info(data["us"], [], comparison_etfs=data["us"])
+        data["etf_info"]["rows"][:2] = reversed(data["etf_info"]["rows"][:2])
+        source, manifest = render_email(**data), manifest_for(data)
+        proof = validate_etf_market_dates(data["us"], [], data["info"], comparison_etfs=data["us"])
+        self.assertEqual(validate_etf_date_proof(source, manifest, proof), proof["market_dates"])
 
     def test_market_proof_rejects_changed_caption_price_date_or_precise_price(self):
         source = render_email(**self.data)

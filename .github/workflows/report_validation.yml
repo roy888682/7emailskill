@@ -64,7 +64,13 @@ jobs:
                   actual_end = "2026-10-02" if index == 160 else "2026-10-06"
                   row["price_end_date"] = row["last_date"] = row["return_as_of"] = actual_end
                   row["lifetime_years"] = (date.fromisoformat(actual_end) - date.fromisoformat(row["price_start_date"])).days / 365.25
+              if index in (0, 1, 2):
+                  start_date = ("2026-04-01", "2025-10-07", "2025-10-06")[index]
+                  row["price_start_date"] = row["first_date"] = start_date
+                  row["lifetime_years"] = (date.fromisoformat(row["price_end_date"]) - date.fromisoformat(start_date)).days / 365.25
               row["lifetime_cagr"] = 40.0 - index * .2
+              if index in (0, 1):
+                  row["lifetime_cagr"] = 400.0 - index
               row["cumulative_return"] = ((1 + row["lifetime_cagr"] / 100) ** row["lifetime_years"] - 1) * 100
               row["initial_adjusted_price"] = .0000123456789012 if index == 0 else 100.123456789
               row["latest_adjusted_price"] = row["initial_adjusted_price"] * (1 + row["cumulative_return"] / 100)
@@ -101,6 +107,11 @@ jobs:
           assert data["etf_info"]["rows"][0]["ticker"] == "TQQQ"
           assert all(row["ticker"] != "TQQQ" for row in data["us"])
           assert data["etf_info"]["pool"] == 163 and data["etf_info"]["with_ret"] == 162
+          assert data["etf_info"]["eligible_count"] == 160 and data["etf_info"]["under_one_year"] == 2
+          assert len(data["etf_info"]["rows"]) == 100
+          assert all(row["lifetime_years"] >= 1 for row in data["etf_info"]["rows"])
+          assert not {cohort[0]["ticker"], cohort[1]["ticker"]} & {row["ticker"] for row in data["etf_info"]["rows"]}
+          assert cohort[2]["ticker"] in {row["ticker"] for row in data["etf_info"]["rows"]}
           data["new_us"] = data["us"][:5] + data["us"][75:99]
           data["new_kr"] = data["kr"][:1] + data["kr"][4:7]
           for row in data["us"] + data["kr"] + data["etf_info"]["rows"]:
@@ -116,6 +127,7 @@ jobs:
           (directory / "report-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
           market_proof = bind_market_date_proof(html, manifest, validate_etf_market_dates(data["us"], data["kr"], data["info"], comparison_etfs=comparison_etfs))
           assert len(market_proof["etfs"]) == 163
+          assert sum(row.get("lifetime_years") is not None and row["lifetime_years"] < 1 for row in market_proof["etfs"]) == 2
           assert next(row for row in market_proof["etfs"] if row["ticker"] == "TQQQ")["in_ath_report"] is False
           assert next(row for row in market_proof["etfs"] if row["ticker"] == "TQQQ")["in_comparison_universe"] is True
           assert market_proof["status_counts"]["unavailable"] == 1
