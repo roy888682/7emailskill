@@ -413,6 +413,49 @@ class EtfLifetimeMetricTests(unittest.TestCase):
                             inception="2026-10-02")
         self.assertIsNone(_etf_lifetime_metrics(item))
 
+    def test_gbtc_etf_returns_start_at_uplisting_and_keep_original_trust_dates(self):
+        dates = [date(2015, 5, 4), date(2024, 1, 10), date(2024, 1, 11), date(2026, 11, 2)]
+        # Inputs are the provider's already-adjusted prices; never apply a
+        # separate adjustment for the later Mini Trust distribution a second time.
+        perf = _etf_price_performance(dates, [.5, 35, 36, 59.09], not_before="2024-01-11",
+                                      price_basis="Yahoo 제공 수정주가(auto_adjust)", price_currency="USD")
+        item = {"ticker": "GBTC", "asset_type": "ETF", "market": "US", "inception": "2013-09-25", **perf}
+        corrected = _validated_etf_metadata(item)
+        self.assertEqual(corrected["inception"], "2024-01-11")
+        self.assertEqual(corrected["inception_label"], "ETF 전환·상장일")
+        self.assertEqual(corrected["trust_inception"], "2013-09-25")
+        self.assertEqual(corrected["public_quotation_date"], "2015-05-04")
+        self.assertEqual((perf["initial_adjusted_price"], perf["latest_adjusted_price"]), (36.0, 59.09))
+        self.assertIsNone(perf["return3y"])
+        self.assertIsNone(perf["return5y"])
+        self.assertIsNone(perf["return10y"])
+        metrics = _etf_lifetime_metrics(item)
+        self.assertEqual(metrics["cumulative_return"], 64.1)
+        self.assertEqual(metrics["lifetime_years"], (dates[-1] - dates[2]).days / 365.25)
+        self.assertLess(metrics["lifetime_years"], 3)
+        ranked = build_etf_info([], [], [item])
+        self.assertEqual(ranked["rows"], [])
+        self.assertEqual((ranked["pool"], ranked["with_ret"], ranked["below_minimum_years"]), (1, 1, 1))
+
+    def test_verified_gbtc_etf_launch_rejects_unfiltered_otc_price_history(self):
+        item = self.example(ticker="GBTC", market="US", first_date="2015-05-04",
+                            inception="2013-09-25")
+        self.assertIsNone(_etf_lifetime_metrics(item))
+
+    def test_actual_gbtc_etf_quotes_reproduce_verified_cumulative_and_annualized_returns(self):
+        # Quotes printed by read-only Actions audit 41602350025, market 2026-11-02.
+        perf = _etf_price_performance(
+            [date(2024, 1, 11), date(2026, 11, 2)],
+            [36.75699996948242, 59.09000015258789],
+            price_basis="Yahoo 제공 수정주가(auto_adjust)", price_currency="USD")
+        item = {"ticker": "GBTC", "market": "US", "asset_type": "ETF", **perf}
+        metrics = _etf_lifetime_metrics(item)
+        self.assertEqual(metrics["cumulative_return"], 60.8)
+        self.assertAlmostEqual(metrics["lifetime_cagr"], 18.4122721142921, places=10)
+        self.assertEqual(metrics["lifetime_years"], (date(2026, 11, 2) - date(2024, 1, 11)).days / 365.25)
+        self.assertIsNone(perf["return3y"])
+        self.assertEqual(build_etf_info([], [], [item])["rows"], [])
+
     def test_ranking_does_not_mutate_collected_records(self):
         original = self.example(inception="invalid", first_date="2022-01-02")
         before = dict(original)
@@ -477,6 +520,35 @@ class IndependentEtfComparisonTests(unittest.TestCase):
     @staticmethod
     def series(prices, dates=None):
         return pd.Series(prices, index=pd.to_datetime(dates or ["2010-02-11", "2025-12-31", "2026-10-30"]))
+
+    def test_gbtc_initial_collection_uses_etf_quotes_while_preserving_audit_candidate(self):
+        recent = self.series([55, 62, 59.09], ["2025-10-30", "2025-12-31", "2026-10-30"])
+        full = self.series([.5, 35, 36, 62, 59.09],
+                           ["2015-05-04", "2024-01-10", "2024-01-11", "2025-12-31", "2026-10-30"])
+        pool = []
+        with (patch("src.main.get_us_tickers", return_value=(["GBTC"], {}, set(),
+                    {"GBTC": "Grayscale Bitcoin Trust ETF"}, {"GBTC": True})),
+              patch("src.main.dl", side_effect=lambda tickers, period, **kwargs: {"GBTC": recent if period == "1y" else full}),
+              patch("src.main.yf.Ticker", return_value=SimpleNamespace(
+                    fast_info=SimpleNamespace(market_cap=0), info={"fundInceptionDate": 1380067200})),
+              patch("src.main.us_naver_links.resolve_us_links")):
+            ath = get_us_ath(1400, pool)
+        self.assertEqual(len(pool), 1)
+        item = pool[0]
+        self.assertEqual(item["price_start_date"], "2024-01-11")
+        self.assertEqual(item["initial_adjusted_price"], 36.0)
+        self.assertEqual(item["inception"], "2024-01-11")
+        self.assertEqual(item["trust_inception"], "2013-09-25")
+        self.assertIsNone(item["return3y"])
+        self.assertEqual(build_etf_info(ath, [], pool)["rows"], [])
+        proof = validate_etf_market_dates(ath, [], self.info(), pool)
+        record = next(row for row in proof["etfs"] if row["ticker"] == "GBTC")
+        self.assertTrue(record["in_comparison_universe"])
+        self.assertEqual(record["inception_label"], "ETF 전환·상장일")
+        self.assertEqual(record["trust_inception"], "2013-09-25")
+        self.assertEqual(record["public_quotation_date"], "2015-05-04")
+        self.assertEqual(record["etf_listing_date"], "2024-01-11")
+        self.assertEqual(record["inception_url"], "https://etfs.grayscale.com/gbtc")
 
     def test_large_lifetime_return_is_ranked_even_when_both_ath_filters_reject_it(self):
         symbols = ["TQQQ", "UPRO", "GOOD", "BAD", "BOND"]

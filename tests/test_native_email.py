@@ -83,6 +83,30 @@ class NativeEmailTests(unittest.TestCase):
             delivered = BeautifulSoup(delivery, "html5lib").select_one("#etf-market-dates")
             self.assertEqual(str(delivered), str(original))
 
+    def test_native_delivery_preserves_only_subunit_initial_price_red_text(self):
+        data = sample_data()
+        cases = ((.2051851749420166, "0.21", True), (.999, "1.00", True),
+                 (.9999999999996, "1.00", True), (1.0, "1", False),
+                 (1.999, "1", False), (None, "-", False))
+        for row, (initial, _, _) in zip(data["etf_info"]["rows"], cases):
+            row.update(initial_adjusted_price=initial, latest_adjusted_price=.5)
+        source, manifest = render_email(**data), manifest_for(data)
+        with tempfile.TemporaryDirectory() as directory:
+            delivery, meta = native_email.prepare(source, manifest, directory)
+            self.assertEqual(native_email.verify_package(source, delivery, manifest, meta, directory), {})
+            for html in (source, delivery):
+                doc = BeautifulSoup(html, "html5lib")
+                css = "".join(str(tag.string or "") for tag in doc.find_all("style"))
+                self.assertIn(".initial-price-small{color:#c23932}", css)
+                for tr, (_, text, red) in zip(doc.select("#returns tbody tr"), cases):
+                    cells = tr.find_all("td", recursive=False)
+                    markers = cells[17].select(".initial-price-small")
+                    self.assertEqual(len(markers), int(red))
+                    self.assertEqual(cells[17].get_text(), text)
+                    self.assertEqual(cells[18].get_text(), "0")
+                    self.assertIsNone(cells[18].select_one(".initial-price-small"))
+                    self.assertEqual(cells[17]["title"], cells[17].select_one(".cl")["title"].split(" · ", 1)[1])
+
     def test_native_css_centers_the_two_date_columns_and_aligns_ytd_numbers(self):
         css = native_email._column_css()
         for column in (16, 17):
@@ -103,6 +127,34 @@ class NativeEmailTests(unittest.TestCase):
             self.assertEqual(headings[6:11], ["연초", "1년", "3년", "5년", "10년"])
             self.assertEqual(headings[12], "연평균")
             self.assertEqual(headings[13:19], ["누적연수", "AUM·시총(원화)", "설립·상장일", "수익률 기준일", "최초주가", "최근주가"])
+
+    def test_long_ticker_cells_keep_the_bold_clipping_parent_only_in_column_three(self):
+        data = sample_data()
+        data["us"][0]["ticker"] = "USLONGTICKER0000"
+        data["kr"][0]["ticker"] = "KRLONGTICKER0000"
+        data["etf_info"]["rows"][0]["ticker"] = "COMPARISONONLY0000"
+        data["new_us"], data["new_kr"] = data["us"][:1], data["kr"][:1]
+        source, manifest = render_email(**data), manifest_for(data)
+        with tempfile.TemporaryDirectory() as directory:
+            delivery, meta = native_email.prepare(source, manifest, directory)
+            self.assertEqual(native_email.verify_package(source, delivery, manifest, meta, directory), {})
+        for html in (source, delivery):
+            doc = BeautifulSoup(html, "html5lib")
+            css = "".join(str(tag.string or "") for tag in doc.find_all("style"))
+            self.assertIn(".data-table .t{font-weight:bold}", css)
+            self.assertEqual({table.get("id") for table in doc.select("table.data-table")},
+                             {"returns", "new-kr", "new-us", "kr", "us"})
+            wanted = {"returns": "COMPARISONONLY0000", "us": "USLONGTICKER0000",
+                      "new-us": "USLONGTICKER0000", "kr": "KRLONGTICKER0000",
+                      "new-kr": "KRLONGTICKER0000"}
+            for table in doc.select("table.data-table"):
+                cells = table.select_one("tbody tr").find_all("td", recursive=False)
+                self.assertIn("t", cells[2].get("class", []))
+                ticker_link = cells[2].select_one(".cl a")
+                self.assertEqual("".join(ticker_link.find_all(string=True, recursive=False)).strip(),
+                                 wanted[table.get("id")])
+                self.assertTrue(all("t" not in cell.get("class", [])
+                                    for index, cell in enumerate(cells) if index != 2))
 
     def test_colgroup_widths_remain_exact_across_html5_transport_roundtrips(self):
         source = ('<table><colgroup><col style="width:3%"/>'

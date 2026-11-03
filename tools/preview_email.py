@@ -557,7 +557,7 @@ PERIOD_RETURN_CHECK = r"""proof => {
 
 
 MANAGEMENT_STYLE_CHECK = r"""proof => {
- const problems=[],records=new Map(),counts={Active:0,Passive:0,'미확인':0},comparisonKeys=[];let displayed=0;
+ const problems=[],records=new Map(),counts={Active:0,Passive:0,'미확인':0},comparisonKeys=[];let displayed=0,subunitPrices=0;
  const yearsOf=record=>(Date.parse(record.price_end_date+'T00:00:00Z')-
    Date.parse(record.price_start_date+'T00:00:00Z'))/(86400000*365.25);
  for(const record of proof.etfs||[]){
@@ -610,10 +610,24 @@ MANAGEMENT_STYLE_CHECK = r"""proof => {
    if(cell?.textContent!==style||cell?.getAttribute('title')!==detail||
       cell?.querySelector('.cl')?.getAttribute('title')!==style+' · '+detail)
      problems.push('Displayed ETF management style or source differs from its audit: '+ticker);
+   const initial=record.initial_adjusted_price,initialCell=row.cells[17],latestCell=row.cells[18];
+   const expectedSmall=typeof initial==='number'&&Number.isFinite(initial)&&initial>0&&initial<1;
+   const smallPrices=Array.from(initialCell?.querySelectorAll('.initial-price-small')||[]);
+   const initialPaint=expectedSmall?smallPrices[0]:(initialCell?.querySelector('.cl')||initialCell);
+   const latestPaint=latestCell?.querySelector('.cl')||latestCell;
+   if(expectedSmall)subunitPrices++;
+   if(smallPrices.length!==(expectedSmall?1:0)||
+      !initialPaint||!latestPaint||
+      (expectedSmall&&smallPrices[0].textContent!==initialCell.textContent)||
+      getComputedStyle(initialPaint).color!==(expectedSmall?'rgb(194, 57, 50)':'rgb(23, 38, 61)')||
+      getComputedStyle(latestPaint).color!=='rgb(23, 38, 61)'||
+      latestCell?.querySelector('.initial-price-small'))
+     problems.push('Only exact initial prices below 1 must show red text: '+ticker);
  }
  if(JSON.stringify(displayedCagrs)!==JSON.stringify(expectedCagrs))
    problems.push('ETF comparison must show the complete top '+__ETF_COMPARISON_LIMIT__+' eligible ETFs with at least '+__ETF_MINIMUM_YEARS__+' years in CAGR order');
- return {audit_counts:counts,displayed_checked:displayed,eligible_count:eligible.length,problems};
+ return {audit_counts:counts,displayed_checked:displayed,eligible_count:eligible.length,
+         subunit_initial_prices_checked:subunitPrices,problems};
 }"""
 
 
