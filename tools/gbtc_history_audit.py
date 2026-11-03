@@ -1,4 +1,5 @@
 import json, math
+import pandas as pd
 from datetime import date, timedelta
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlsplit
@@ -12,24 +13,27 @@ adjusted = ticker.history(period="max", end=(anchor + timedelta(days=1)).isoform
 closes = adjusted["Close"].dropna()
 pairs = [(stamp.date(), float(value)) for stamp, value in closes.items() if stamp.date() <= anchor and math.isfinite(float(value)) and value > 0]
 dates, prices = map(list, zip(*pairs))
-def performance(label, cutoff=None):
+def performance(label, cutoff=None, end_date=None):
     row = {"ticker":"GBTC", "market":"US", "asset_type":"ETF",
            "inception":cutoff or "2013-09-25", "inception_verified":True}
-    row.update(m._etf_price_performance(dates, prices, not_before=cutoff, price_basis="Yahoo provided adjusted prices(auto_adjust)", price_currency="USD"))
+    scenario = [(day, price) for day, price in zip(dates, prices) if end_date is None or day <= date.fromisoformat(end_date)]
+    scenario_dates, scenario_prices = map(list, zip(*scenario))
+    row.update(m._etf_price_performance(scenario_dates, scenario_prices, not_before=cutoff, price_basis="Yahoo provided adjusted prices(auto_adjust)", price_currency="USD"))
     row.update(m._etf_lifetime_metrics(row) or {})
     keys = ("price_start_date","price_end_date","initial_adjusted_price","latest_adjusted_price","cumulative_return","lifetime_cagr","lifetime_years","return_ytd","return1y","return3y","return5y","return10y")
     print("GBTC_HISTORY_AUDIT:" + json.dumps({"case":label, "anchor":anchor.isoformat(), **{key:row.get(key) for key in keys}}, ensure_ascii=False), flush=True)
 performance("old_full_OTC_plus_ETF_history")
 performance("ETF_since_2024_01_11", "2024-01-11")
+performance("ETF_monthend_issuer_comparison_2026_09_30", "2024-01-11", "2026-09-30")
 samples = []
 for stamp,row in raw.iterrows():
     day=stamp.date()
     if day<=anchor and (len(samples)<3 or day.isoformat() in ("2024-01-10","2024-01-11","2024-07-29","2024-07-30","2024-07-31","2024-08-01") or day==anchor):
-        samples.append({"date":day.isoformat(), **{key:float(row[key]) for key in ("Close","Adj Close","Dividends","Stock Splits","Capital Gains") if key in raw.columns and m.pd.notna(row[key])}})
+        samples.append({"date":day.isoformat(), **{key:float(row[key]) for key in ("Close","Adj Close","Dividends","Stock Splits","Capital Gains") if key in raw.columns and pd.notna(row[key])}})
 events=[]
 for stamp,row in raw.iterrows():
-    if any(key in raw.columns and m.pd.notna(row[key]) and float(row[key])!=0 for key in ("Dividends","Stock Splits","Capital Gains")):
-        events.append({"date":stamp.date().isoformat(), **{key:float(row[key]) for key in ("Close","Adj Close","Dividends","Stock Splits","Capital Gains") if key in raw.columns and m.pd.notna(row[key])}})
+    if any(key in raw.columns and pd.notna(row[key]) and float(row[key])!=0 for key in ("Dividends","Stock Splits","Capital Gains")):
+        events.append({"date":stamp.date().isoformat(), **{key:float(row[key]) for key in ("Close","Adj Close","Dividends","Stock Splits","Capital Gains") if key in raw.columns and pd.notna(row[key])}})
 print("GBTC_PRICE_AND_ACTION_AUDIT:"+json.dumps({"first_date":dates[0].isoformat(),"last_date":dates[-1].isoformat(),"observations":len(dates),"samples":samples,"events":events},ensure_ascii=False),flush=True)
 try:
     link=nav.resolve_us_url("GBTC")
