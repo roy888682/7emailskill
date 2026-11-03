@@ -1,0 +1,42 @@
+name: Top300 layout diagnostic
+on:
+  push:
+    branches: [codex/three-year-top300-layout-diagnostic-20261103]
+    paths:
+      - '.github/workflows/top300_layout_diagnostic.yml'
+      - 'tools/preview_email.py'
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - run: |
+          pip install -r requirements.txt playwright
+          python -m playwright install --with-deps chromium
+          sudo apt-get update -qq
+          sudo apt-get install -y fonts-noto-cjk
+      - name: Prepare the exact representative fixture
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          lines = Path(".github/workflows/report_validation.yml").read_text().splitlines()
+          start = next(index for index, line in enumerate(lines) if "python - <<'PY'" in line) + 1
+          end = next(index for index in range(start, len(lines)) if lines[index].strip() == "PY")
+          script = "\n".join(line[10:] for line in lines[start:end])
+          exec(compile(script, "representative-fixture", "exec"))
+          PY
+      - name: Diagnose exact pixel differences
+        run: python tools/preview_email.py --html work/email-body.html --manifest work/report-manifest.json --reference work/email-reference.html
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: top300-layout-diagnostic
+          path: work/*
+          retention-days: 7
