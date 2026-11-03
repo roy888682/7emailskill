@@ -104,6 +104,32 @@ class NativeEmailTests(unittest.TestCase):
             self.assertEqual(headings[12], "연평균")
             self.assertEqual(headings[13:19], ["누적연수", "AUM·시총(원화)", "설립·상장일", "수익률 기준일", "최초주가", "최근주가"])
 
+    def test_long_ticker_cells_keep_the_bold_clipping_parent_only_in_column_three(self):
+        data = sample_data()
+        data["us"][0]["ticker"] = "USLONGTICKER0000"
+        data["kr"][0]["ticker"] = "KRLONGTICKER0000"
+        data["etf_info"]["rows"][0]["ticker"] = "COMPARISONONLY0000"
+        data["new_us"], data["new_kr"] = data["us"][:1], data["kr"][:1]
+        source, manifest = render_email(**data), manifest_for(data)
+        with tempfile.TemporaryDirectory() as directory:
+            delivery, meta = native_email.prepare(source, manifest, directory)
+            self.assertEqual(native_email.verify_package(source, delivery, manifest, meta, directory), {})
+        for html in (source, delivery):
+            doc = BeautifulSoup(html, "html5lib")
+            css = "".join(str(tag.string or "") for tag in doc.find_all("style"))
+            self.assertIn(".data-table .t{font-weight:bold}", css)
+            self.assertEqual({table.get("id") for table in doc.select("table.data-table")},
+                             {"returns", "new-kr", "new-us", "kr", "us"})
+            wanted = {"returns": "COMPARISONONLY0000", "us": "USLONGTICKER0000",
+                      "new-us": "USLONGTICKER0000", "kr": "KRLONGTICKER0000",
+                      "new-kr": "KRLONGTICKER0000"}
+            for table in doc.select("table.data-table"):
+                cells = table.select_one("tbody tr").find_all("td", recursive=False)
+                self.assertIn("t", cells[2].get("class", []))
+                self.assertEqual(cells[2].select_one(".cl").get_text(), wanted[table.get("id")])
+                self.assertTrue(all("t" not in cell.get("class", [])
+                                    for index, cell in enumerate(cells) if index != 2))
+
     def test_colgroup_widths_remain_exact_across_html5_transport_roundtrips(self):
         source = ('<table><colgroup><col style="width:3%"/>'
                   '<col style="width:126px"/><col/></colgroup>'

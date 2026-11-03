@@ -133,7 +133,8 @@ def _trim_css(css, doc):
     css = css.replace("padding-left:1px;padding-right:1px", "")
     css = css.replace(".etf-comparison .data-table{", ".v{")
     css = css.replace(".m{", ".v b{")
-    css = css.replace(".data-table .t,.data-table a{", ".data-table a{")
+    # Keep the ticker cell's own bold rule: its clipping span draws the
+    # ellipsis, so bolding only the nested link changes clipped pixels.
     css = css.replace(".data-table .n,.data-table .r{", ".data-table .n{")
     css = css.replace(".asset,.e,.s,", "")
     css = css.replace(".s,.stock-table b", ".stock-table b")

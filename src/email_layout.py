@@ -533,9 +533,8 @@ def compact_transport_html(source):
     result = result.replace(".data-table .n{", ".data-table .n,.data-table .r{", 1)
     result = result.replace('class="asset e"', 'class="e"').replace('class="asset s"', 'class="s"')
     result = result.replace('class="n r"', 'class="r"')
-    # Every table link is a ticker; inherit the identical bold style directly.
-    result = result.replace(".data-table .t{", ".data-table .t,.data-table a{", 1)
-    result = result.replace(' class="t"', "")
+    # Keep the ticker cell's bold class: an overflow ellipsis is painted by
+    # its clipping wrapper and inherits the cell's weight, not the link's.
     # The two badge elements carry the same visual rules without per-row classes.
     result = result.replace(".asset,.e,.s{", ".asset,.e,.s,.stock-table b,.stock-table i,.new-table b,.new-table i{", 1)
     result = result.replace(".s{", ".s,.stock-table b,.new-table b{", 1)

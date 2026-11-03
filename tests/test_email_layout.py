@@ -551,6 +551,24 @@ class EmailLayoutTests(unittest.TestCase):
             source = compact_transport_html(source)
             self.assertEqual([node.get("style") for node in BeautifulSoup(source, "html5lib").select("col")], expected)
 
+    def test_long_ticker_ellipsis_retains_the_bold_cell_after_transport_compaction(self):
+        seen = set()
+        for item in self.data["us"] + self.data["kr"] + self.data["etf_info"]["rows"]:
+            if id(item) not in seen:
+                item["ticker"] = "LONGTICKER_" + item["ticker"]
+                seen.add(id(item))
+        source = render_email(**self.data, compact=False)
+        for _ in range(3):
+            source = compact_transport_html(source)
+            doc = BeautifulSoup(source, "html5lib")
+            self.assertIn(".data-table .t{font-weight:bold}", source)
+            for table_id in ("returns", "new-kr", "new-us", "kr", "us"):
+                for row in doc.select("#" + table_id + " tbody tr"):
+                    cell = row.find_all("td", recursive=False)[2]
+                    self.assertIn("t", cell.get("class", []))
+                    self.assertIn("LONGTICKER_", cell.select_one("a").get_text())
+                    self.assertEqual(cell.select_one(".cl").get_text(), cell.get_text())
+
     def test_price_columns_show_subunit_initial_prices_and_preserve_exact_verification_values(self):
         item = self.data["etf_info"]["rows"][0]
         item.update(initial_adjusted_price=.0000123456789012, latest_adjusted_price=123456.987654,

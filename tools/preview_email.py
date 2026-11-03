@@ -6,7 +6,7 @@ import hashlib
 import json
 import io
 from datetime import date
-from PIL import Image
+from PIL import Image, ImageChops
 import re
 import sys
 from pathlib import Path
@@ -643,6 +643,63 @@ def cropped_table_image(page, table_id, output, marker):
     print(marker + ":" + base64.b64encode(png).decode("ascii"), flush=True)
 
 
+def save_layout_mismatch(actual, reference, actual_pixels, reference_pixels, output, width, host):
+    """Retain strict pixel-failure evidence so transport regressions are reviewable."""
+    prefix = f"layout-mismatch-{host}-{width}"
+    actual_pixels.save(output / (prefix + "-actual.png"))
+    reference_pixels.save(output / (prefix + "-reference.png"))
+    canvas_size = (max(actual_pixels.width, reference_pixels.width),
+                   max(actual_pixels.height, reference_pixels.height))
+    canvases = []
+    for pixels in (actual_pixels, reference_pixels):
+        canvas = Image.new("RGB", canvas_size, "#ff00ff")
+        canvas.paste(pixels, (0, 0))
+        canvases.append(canvas)
+    difference = ImageChops.difference(*canvases)
+    difference.save(output / (prefix + "-difference.png"))
+    geometry = r"""() => {
+      const bounds=element=>{const r=element.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};};
+      const nodes=Array.from(document.querySelectorAll('.shell,.hero,.summary,.section,.intro,.etf-caption,.notes,.footer,table.data-table'));
+      return {scrollWidth:document.documentElement.scrollWidth,scrollHeight:document.documentElement.scrollHeight,
+        elements:nodes.map(element=>({tag:element.tagName,id:element.id,class:element.className,bounds:bounds(element),
+          firstRow:element.matches('table')&&element.rows.length?bounds(element.rows[0]):null,
+          lastRow:element.matches('table')&&element.rows.length?bounds(element.rows[element.rows.length-1]):null}))};
+    }"""
+    actual_snapshot, reference_snapshot = actual.evaluate(NATIVE_SNAPSHOT), reference.evaluate(NATIVE_SNAPSHOT)
+    mismatches = []
+    for table_id in actual_snapshot:
+        first, second = actual_snapshot[table_id], reference_snapshot.get(table_id, [])
+        if len(first) != len(second):
+            mismatches.append({"table": table_id, "rows": [len(first), len(second)]})
+        for row_index, (actual_row, reference_row) in enumerate(zip(first, second)):
+            for column, (actual_cell, reference_cell) in enumerate(zip(actual_row, reference_row)):
+                for field in ("text", "style", "clipped"):
+                    if actual_cell[field] != reference_cell[field]:
+                        mismatches.append({"table": table_id, "row": row_index, "column": column,
+                                           "field": field, "actual": actual_cell[field], "reference": reference_cell[field]})
+                        if len(mismatches) >= 20:
+                            break
+                if len(mismatches) >= 20:
+                    break
+            if len(mismatches) >= 20:
+                break
+        if len(mismatches) >= 20:
+            break
+    detail = {"actual_size": list(actual_pixels.size), "reference_size": list(reference_pixels.size),
+              "difference_bounds": difference.getbbox(), "actual_geometry": actual.evaluate(geometry),
+              "reference_geometry": reference.evaluate(geometry), "cell_mismatches": mismatches}
+    (output / (prefix + ".json")).write_text(json.dumps(detail, ensure_ascii=False, indent=2), encoding="utf-8")
+    print("LAYOUT_PIXEL_DIFFERENCE:" + json.dumps(detail, ensure_ascii=False), flush=True)
+    if detail["difference_bounds"]:
+        left, top, right, bottom = detail["difference_bounds"]
+        crop_top = max(0, top - 20)
+        crop = (0, crop_top, canvas_size[0], min(canvas_size[1], crop_top + 360))
+        for label, pixels in (("ACTUAL", canvases[0]), ("REFERENCE", canvases[1]), ("DIFFERENCE", difference)):
+            buffer = io.BytesIO()
+            pixels.crop(crop).save(buffer, format="PNG")
+            print("LAYOUT_MISMATCH_IMAGE_" + label + ":" + base64.b64encode(buffer.getvalue()).decode("ascii"), flush=True)
+
+
 NATIVE_SNAPSHOT = r"""() => {
  const properties=["fontFamily","fontSize","fontWeight","fontStyle","lineHeight",
   "letterSpacing","fontVariantNumeric","textAlign","whiteSpace","paddingTop",
@@ -929,6 +986,8 @@ def main():
                             actual_pixels = Image.open(io.BytesIO(page.screenshot(full_page=True))).convert("RGB")
                             original_pixels = Image.open(io.BytesIO(reference_page.screenshot(full_page=True))).convert("RGB")
                             if actual_pixels.size != original_pixels.size or actual_pixels.tobytes() != original_pixels.tobytes():
+                                save_layout_mismatch(page, reference_page, actual_pixels, original_pixels,
+                                                     args.output, width, host)
                                 raise AssertionError("Rendered layout differs from the accepted style at %dpx (%s)" % (width,host))
                             print("LAYOUT_IDENTICAL:%s:%d" % (host,width),flush=True)
                         finally:
