@@ -10,7 +10,7 @@ from src.email_layout import (render_email, etf_section_html, inception_text,
                               validate_etf_date_proof, validate_period_return_evidence,
                               management_style_text, management_style_title, validate_management_style_evidence)
 from tools.preview_email import sample_data, make_stock, manifest_for, set_sample_period_returns
-from src.main import validate_etf_market_dates, build_etf_info, _etf_price_performance
+from src.main import validate_etf_market_dates, build_etf_info, _etf_price_performance, _etf_lifetime_metrics
 
 class EmailLayoutTests(unittest.TestCase):
     def setUp(self):
@@ -115,6 +115,7 @@ class EmailLayoutTests(unittest.TestCase):
                         inception_source="검증용 최초 가격일", gap=-25.0)
             item.update(_etf_price_performance([start, end], [100.0, latest],
                         price_basis="Yahoo 제공 수정주가(auto_adjust)", price_currency="USD"))
+            item.update(_etf_lifetime_metrics(item))
             set_sample_period_returns(item)
             items.append(item)
         data = dict(self.data, us=items, kr=[], new_us=items[:1], new_kr=[])
