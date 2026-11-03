@@ -6,7 +6,7 @@ from bs4 import BeautifulSoup
 from src.email_layout import (render_email, etf_section_html, inception_text,
                               row_size, row_size_html, aum, industry_text, inventory, validate_size,
                               validate_inventory, MAX_EMAIL_BYTES, CSS, compact_transport_html, security_count,
-                              elapsed_years_text, price_text, brief_investment_text,
+                              elapsed_years_text, price_text, initial_price_html, brief_investment_text,
                               validate_etf_date_proof, validate_period_return_evidence,
                               management_style_text, management_style_title, validate_management_style_evidence)
 from tools.preview_email import sample_data, make_stock, manifest_for, set_sample_period_returns
@@ -595,6 +595,46 @@ class EmailLayoutTests(unittest.TestCase):
             self.assertEqual(price_text(value, initial=True), "-")
         self.assertEqual(inception_text({"inception":"2026-10-02","inception_verified":False}), "미확인")
 
+    def test_subunit_initial_prices_are_red_using_the_exact_value_before_rounding(self):
+        cases = ((.2051851749420166, "0.21", True), (.999, "1.00", True),
+                 (.9999999999996, "1.00", True), (1.0, "1", False),
+                 (1.999, "1", False), (None, "-", False), (0, "-", False),
+                 (float("nan"), "-", False), (True, "-", False))
+        for value, text, red in cases:
+            with self.subTest(value=value):
+                doc = BeautifulSoup(initial_price_html(value), "html5lib")
+                self.assertEqual(doc.get_text(), text)
+                self.assertEqual(len(doc.select(".initial-price-small")), int(red))
+        self.assertIn(".initial-price-small{color:#c23932}", CSS)
+        row = self.data["etf_info"]["rows"][0]
+        row.update(initial_adjusted_price=.999, latest_adjusted_price=.5)
+        doc = BeautifulSoup(render_email(**self.data), "html5lib")
+        cells = doc.select_one("#returns tbody tr").find_all("td", recursive=False)
+        self.assertEqual(cells[17].select_one(".initial-price-small").get_text(), "1.00")
+        self.assertIsNone(cells[18].select_one(".initial-price-small"))
+        self.assertEqual(cells[18].get_text(), "0")
+
+    def test_exact_price_audit_rejects_missing_or_misplaced_subunit_red_markers(self):
+        source = render_email(**self.data)
+        manifest, proof = manifest_for(self.data), self.market_proof()
+        self.assertEqual(validate_etf_date_proof(source, manifest, proof), proof["market_dates"])
+        for change in ("remove_initial_marker", "mark_latest_price"):
+            with self.subTest(change=change):
+                doc = BeautifulSoup(source, "html5lib")
+                if change == "remove_initial_marker":
+                    marker = doc.select_one("#returns .initial-price-small")
+                    self.assertIsNotNone(marker)
+                    marker.unwrap()
+                else:
+                    cell = doc.select_one("#returns tbody tr").find_all("td", recursive=False)[18]
+                    marker = doc.new_tag("span", attrs={"class": "initial-price-small"})
+                    clip = cell.select_one(".cl")
+                    for child in list(clip.contents):
+                        marker.append(child.extract())
+                    clip.append(marker)
+                with self.assertRaisesRegex(RuntimeError, "sub-unit initial price emphasis"):
+                    validate_etf_date_proof(str(doc), manifest, proof)
+
     def test_brief_etf_investment_labels_are_next_to_the_security_name(self):
         self.assertEqual(brief_investment_text({"asset_type":"ETF","etf_index":"NASDAQ-100 Index"}), "나스닥100")
         self.assertEqual(brief_investment_text({"asset_type":"ETF","name":"KODEX 반도체","market":"KOSPI"}), "한국반도체")
@@ -664,7 +704,7 @@ class PeriodReturnEvidenceTests(unittest.TestCase):
             validate_period_return_evidence(record)
 
 
-BASELINE_CSS = "\nbody{margin:0;background:#f2f5f8;color:#17263d;font-family:Arial,'Malgun Gothic','Apple SD Gothic Neo',sans-serif;font-size:15.6px;line-height:1.4}\ntable{border-collapse:collapse}a{color:#1260ad;text-decoration:none}\n.shell{max-width:1360px;margin:0 auto;padding:12px;color:#17263d;background:#f2f5f8;font-family:Arial,'Malgun Gothic','Apple SD Gothic Neo',sans-serif;font-size:15.6px;line-height:1.4}.layout{width:100%;table-layout:fixed}\n.hero{background:#11243c;color:#fff;border-radius:9px;padding:12px 16px}.hero .eyebrow{display:none}\n.hero h1{font-size:24.7px;line-height:1.2;margin:0 0 5px}.date{font-size:14.3px;color:#c5d5e4}\n.hero .foot{font-size:13px;color:#9eb5cc;border-top:1px solid #30465f;padding-top:6px;margin-top:7px}\n.summary{margin-top:8px;background:#fff;border:1px solid #dfe7ef;border-radius:8px;padding:8px 10px}\n.summary td{width:50%;padding:0 3px;vertical-align:top}.count{font-size:22.1px;font-weight:bold}\n.market{font-weight:bold;font-size:14.3px;margin-bottom:2px}.muted{font-size:13px;color:#667a90}\n.section{margin-top:14px}.section h2{margin:0;font-size:20.8px;line-height:1.25}\n.intro,.etf-caption{font-size:13px;color:#64778b;margin:4px 0 7px}\n.data-table{width:100%;table-layout:fixed;background:#fff;border:1px solid #dce5ee;font-size:12.35px;line-height:1.25}\n.data-table th,.data-table td{white-space:nowrap;overflow:hidden;padding:3px 1px;text-align:left;vertical-align:middle;border-right:1px solid #000}\n.data-table th:last-child,.data-table td:last-child{border-right:0}\n.data-table th{background:#163b68;color:#fff;font-weight:bold;font-size:13px;white-space:nowrap;text-align:center!important}\n.data-table .cl,.data-table .nm,.data-table .iwc{display:block;width:100%;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\n.data-table .iw{width:126px;max-width:126px}\n.data-table .nm{text-align:left}\n.stock-table th{background:#ee990b;color:#fff}\n.asset{display:inline-block;border-radius:3px;padding:1px 3px;font-size:11.7px;font-weight:bold}.s{background:#dff3ee;color:#087569}.e{background:#eee5fa;color:#753caf}\n.data-table td{border-bottom:1px solid #e7edf3}.data-table tbody tr:nth-child(even){background:#f6f8fb}\n.data-table .n{text-align:right;font-variant-numeric:tabular-nums}\n.data-table .f{text-align:center;padding-left:1px;padding-right:1px}.f img{width:20px;height:auto;vertical-align:middle}\n.data-table .t{font-weight:bold}.data-table .y{background:#eaf1fb;font-weight:bold}\n.data-table th.y{background:#2b4665;color:#fff}.data-table .d{font-size:12.35px;text-align:center}\n.etf-comparison .data-table{font-size:13px}.metric-label{display:none}.m{display:block;font-size:13px;font-weight:bold;line-height:1.25}\n.etf-details{margin-top:12px}.etf-details h3{font-size:16.9px;margin:0 0 6px}\n.up{color:#c04840}.down{color:#2862a6}.flat{color:#52677d}\n.new-section{border-top:3px solid #ee990b;padding-top:8px}.new-table th{background:#ee990b}.r{color:#c23932}.data-table .p1{color:#c23932}.data-table .p3{color:#245ba6}.data-table .p5{color:#087d67}.data-table .p10{color:#7944b0}.data-table .z{background:#f6f8fb}\n.new{background:#e6f3ed;color:#237353;border-radius:3px;padding:0 3px;margin-left:3px;font-size:10.4px;font-weight:bold}\n.notice{background:#fff4dc;color:#796438;border-radius:6px;padding:8px 10px;font-size:13px;margin:8px 0}\n.report-note{padding:8px 10px;background:#e8f0f8;border-radius:6px;color:#405d7a;font-size:13px}\n.notes{font-size:11.7px;line-height:1.5;color:#75869a;margin:8px 0}.footer{text-align:center;color:#8a9aab;font-size:11.7px;padding:16px 0 8px}\n"
+BASELINE_CSS = "\nbody{margin:0;background:#f2f5f8;color:#17263d;font-family:Arial,'Malgun Gothic','Apple SD Gothic Neo',sans-serif;font-size:15.6px;line-height:1.4}\ntable{border-collapse:collapse}a{color:#1260ad;text-decoration:none}\n.shell{max-width:1360px;margin:0 auto;padding:12px;color:#17263d;background:#f2f5f8;font-family:Arial,'Malgun Gothic','Apple SD Gothic Neo',sans-serif;font-size:15.6px;line-height:1.4}.layout{width:100%;table-layout:fixed}\n.hero{background:#11243c;color:#fff;border-radius:9px;padding:12px 16px}.hero .eyebrow{display:none}\n.hero h1{font-size:24.7px;line-height:1.2;margin:0 0 5px}.date{font-size:14.3px;color:#c5d5e4}\n.hero .foot{font-size:13px;color:#9eb5cc;border-top:1px solid #30465f;padding-top:6px;margin-top:7px}\n.summary{margin-top:8px;background:#fff;border:1px solid #dfe7ef;border-radius:8px;padding:8px 10px}\n.summary td{width:50%;padding:0 3px;vertical-align:top}.count{font-size:22.1px;font-weight:bold}\n.market{font-weight:bold;font-size:14.3px;margin-bottom:2px}.muted{font-size:13px;color:#667a90}\n.section{margin-top:14px}.section h2{margin:0;font-size:20.8px;line-height:1.25}\n.intro,.etf-caption{font-size:13px;color:#64778b;margin:4px 0 7px}\n.data-table{width:100%;table-layout:fixed;background:#fff;border:1px solid #dce5ee;font-size:12.35px;line-height:1.25}\n.data-table th,.data-table td{white-space:nowrap;overflow:hidden;padding:3px 1px;text-align:left;vertical-align:middle;border-right:1px solid #000}\n.data-table th:last-child,.data-table td:last-child{border-right:0}\n.data-table th{background:#163b68;color:#fff;font-weight:bold;font-size:13px;white-space:nowrap;text-align:center!important}\n.data-table .cl,.data-table .nm,.data-table .iwc{display:block;width:100%;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\n.data-table .iw{width:126px;max-width:126px}\n.data-table .nm{text-align:left}\n.stock-table th{background:#ee990b;color:#fff}\n.asset{display:inline-block;border-radius:3px;padding:1px 3px;font-size:11.7px;font-weight:bold}.s{background:#dff3ee;color:#087569}.e{background:#eee5fa;color:#753caf}\n.data-table td{border-bottom:1px solid #e7edf3}.data-table tbody tr:nth-child(even){background:#f6f8fb}\n.data-table .n{text-align:right;font-variant-numeric:tabular-nums}\n.data-table .f{text-align:center;padding-left:1px;padding-right:1px}.f img{width:20px;height:auto;vertical-align:middle}\n.data-table .t{font-weight:bold}.data-table .y{background:#eaf1fb;font-weight:bold}\n.data-table th.y{background:#2b4665;color:#fff}.data-table .d{font-size:12.35px;text-align:center}\n.etf-comparison .data-table{font-size:13px}.metric-label{display:none}.m{display:block;font-size:13px;font-weight:bold;line-height:1.25}\n.etf-details{margin-top:12px}.etf-details h3{font-size:16.9px;margin:0 0 6px}\n.up{color:#c04840}.down{color:#2862a6}.flat{color:#52677d}\n.initial-price-small{color:#c23932}\n.new-section{border-top:3px solid #ee990b;padding-top:8px}.new-table th{background:#ee990b}.r{color:#c23932}.data-table .p1{color:#c23932}.data-table .p3{color:#245ba6}.data-table .p5{color:#087d67}.data-table .p10{color:#7944b0}.data-table .z{background:#f6f8fb}\n.new{background:#e6f3ed;color:#237353;border-radius:3px;padding:0 3px;margin-left:3px;font-size:10.4px;font-weight:bold}\n.notice{background:#fff4dc;color:#796438;border-radius:6px;padding:8px 10px;font-size:13px;margin:8px 0}\n.report-note{padding:8px 10px;background:#e8f0f8;border-radius:6px;color:#405d7a;font-size:13px}\n.notes{font-size:11.7px;line-height:1.5;color:#75869a;margin:8px 0}.footer{text-align:center;color:#8a9aab;font-size:11.7px;padding:16px 0 8px}\n"
 
 if __name__=="__main__":
     unittest.main()

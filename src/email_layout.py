@@ -42,6 +42,7 @@ table{border-collapse:collapse}a{color:#1260ad;text-decoration:none}
 .etf-comparison .data-table{font-size:13px}.metric-label{display:none}.m{display:block;font-size:13px;font-weight:bold;line-height:1.25}
 .etf-details{margin-top:12px}.etf-details h3{font-size:16.9px;margin:0 0 6px}
 .up{color:#c04840}.down{color:#2862a6}.flat{color:#52677d}
+.initial-price-small{color:#c23932}
 .new-section{border-top:3px solid #ee990b;padding-top:8px}.new-table th{background:#ee990b}.r{color:#c23932}.data-table .p1{color:#c23932}.data-table .p3{color:#245ba6}.data-table .p5{color:#087d67}.data-table .p10{color:#7944b0}.data-table .z{background:#f6f8fb}
 .new{background:#e6f3ed;color:#237353;border-radius:3px;padding:0 3px;margin-left:3px;font-size:10.4px;font-weight:bold}
 .notice{background:#fff4dc;color:#796438;border-radius:6px;padding:8px 10px;font-size:13px;margin:8px 0}
@@ -138,6 +139,16 @@ def price_text(value, *, initial=False):
     if initial and value < 1:
         return f"{value:.2f}"
     return f"{int(value):,}"
+
+
+def is_subunit_initial_price(value):
+    return (not isinstance(value, bool) and isinstance(value, (int, float))
+            and math.isfinite(value) and 0 < value < 1)
+
+
+def initial_price_html(value):
+    text = price_text(value, initial=True)
+    return f'<span class="initial-price-small">{text}</span>' if is_subunit_initial_price(value) else text
 
 
 def price_exact_text(value):
@@ -322,7 +333,7 @@ def etf_section_html(etf_info, include_details=False, info=None):
                   f'<td class="date-cell" data-field="inception" title="{h(row.get("inception_source") or "설립일 출처 미확인")}">{h(inception_text(row))}</td>'
                   f'<td class="date-cell" title="{h(return_date_title(row, (info or {}).get(country.lower() + "_last")))}">'
                   f'{h(return_date_text(row))}</td>'
-                  f'<td class="number" title="{first_title}">{price_text(row.get("initial_adjusted_price"), initial=True)}</td>'
+                  f'<td class="number" title="{first_title}">{initial_price_html(row.get("initial_adjusted_price"))}</td>'
                   f'<td class="number" title="{last_title}">{price_text(row.get("latest_adjusted_price"))}</td></tr>')
     table += '</tbody></table></div>'
     notes = (f'<p class="notes">ETF 비교는 ATH 괴리율과 무관하게 수집 대상 한국·미국 비채권 ETF 중 누적연수 {ETF_MINIMUM_YEARS}년 이상이며 연평균 누적수익률 산출 가능한 종목을 내림차순으로 최대 {ETF_COMPARISON_LIMIT}개 표시합니다. '
@@ -330,13 +341,14 @@ def etf_section_html(etf_info, include_details=False, info=None):
              '연초는 실제 수익률 기준일의 전년도 마지막 확보 시세부터, 1·3·5·10년은 실제 수익률 기준일에서 해당 연수 전 같은 날짜(휴장일이면 그 이전 최근 시세)부터의 누적수익률입니다. 각 기간 수익률 = (최근주가 ÷ 기간 시작주가 - 1) × 100이며 연환산하지 않습니다. 기간 이력이 부족하면 -로 표시합니다.<br>'
              '국가 시장 기준일의 시세가 없으면 재조회 후 이전 가능 시세일로 계산합니다. ETF별 실제 날짜는 오른쪽 수익률 기준일을 참고하세요. 유효한 가격을 확보하지 못한 ETF는 후보에 유지하며 수익률은 계산 불가로 처리합니다.<br>'
              '누적수익률 = (최근주가 ÷ 최초주가 - 1) × 100이며, 연환산하지 않음. 두 가격은 같은 제공업체·같은 조정 기준입니다. '
-             '최초주가가 1 미만이면 소수점 둘째 자리까지 표시하고, 그 외 최초주가·최근주가는 소수점 이하를 버리고 천 단위 쉼표로 표시합니다. 수익률 계산에는 표시값이 아닌 정확한 원값을 사용합니다.<br>'
+             '최초주가가 1 미만이면 소수점 둘째 자리까지 빨간색으로 표시하고, 그 외 최초주가·최근주가는 소수점 이하를 버리고 천 단위 쉼표로 표시합니다. 수익률 계산에는 표시값이 아닌 정확한 원값을 사용합니다.<br>'
              '연평균 누적수익률 = [(1 + 누적수익률/100)^(1/누적연수) - 1] × 100. '
              f'누적연수는 표시된 최초·최근 가격의 실제 기준일 차이 ÷ 365.25이며, 반올림 전 누적연수가 {ETF_MINIMUM_YEARS}년 미만이면 순위에서 제외합니다. 계산은 반올림 전 값으로 합니다.<br>'
              '연평균 누적수익률은 누적수익률을 연수로 나눈 값이 아니라 복리 연환산(CAGR)입니다. 원금과 수익이 매년 함께 재투자된다고 가정합니다.<br>'
              '미국과 수정주가 확보 한국 ETF는 Yahoo 제공 수정주가(auto_adjust) 기준입니다. 수정주가 확보 불가 한국 ETF는 네이버 차트 종가이며 배당조정 미확인으로 구분합니다.<br>'
              '설립일 당일 가격이 없으면 실제 최초 확보일 가격을 표시합니다. 각 가격에 마우스를 올리면 소수점이 포함된 정확값·기준일·통화·가격 기준을 확인할 수 있습니다. 설립일 출처가 불명확하면 미확인으로 표시합니다.<br>'
              'DFAC: ETF 최초상장 2021-06-14, 전신 펀드 2007-10-04, 재편 후 존속 펀드 2005-09-15, 지분종류 재편 기준일 2026-10-02. ETF 최초상장 이후 가격으로 계산하며 재편일을 최초상장일로 사용하지 않습니다. '
+             'GBTC: 신탁 설립 2013-09-25, 공개 호가 시작 2015-05-04, ETF 전환·상장 2024-01-11. ETF 비교 수익률은 2024-01-11 이후 시세로 계산하며 전환 이전 OTC 시세는 제외합니다. '
              'AUM 우선, 없으면 시총을 원화로 표시합니다.</p>')
     details = ""
     if include_details:
@@ -806,6 +818,11 @@ def validate_etf_date_proof(source, manifest, proof):
                     or cell.get("title") != detail or clip is None
                     or clip.get("title") != visible + " · " + detail):
                 raise RuntimeError(f"Displayed ETF {country}:{ticker} price or date differs from its audit")
+            small_prices = cell.select(".initial-price-small")
+            expected_small = key == "initial_adjusted_price" and is_subunit_initial_price(value)
+            if (len(small_prices) != int(expected_small)
+                    or (small_prices and small_prices[0].get_text() != visible)):
+                raise RuntimeError(f"Displayed ETF {country}:{ticker} sub-unit initial price emphasis differs from its exact value")
         for column, key in ((6, "return_ytd"), (7, "return1y"), (8, "return3y"), (9, "return5y"),
                             (10, "return10y"), (11, "cumulative_return"), (12, "lifetime_cagr")):
             value = record.get(key)

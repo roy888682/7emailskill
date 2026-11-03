@@ -270,6 +270,29 @@ class MarketDateSynchronizationTests(unittest.TestCase):
         self.assertIsNotNone(item["return5y"])
         self.assertIsNone(item["return10y"])
 
+    def test_gbtc_refetch_trims_otc_history_and_preserves_distinct_launch_dates(self):
+        item = etf("GBTC", end="2026-10-27", latest=59.09)
+        item.update(inception="2013-09-25", price_history_inception_mismatch=True)
+        with patch("src.main.yf.Ticker") as ticker, patch("src.main.time.sleep"):
+            ticker.return_value.history.return_value = yahoo_history(
+                ["2015-05-04", "2024-01-10", "2024-01-11", "2026-10-28", "2026-10-29"],
+                [.5, 35, 36, 59.09, 999])
+            proof = synchronize_etf_market_dates([item], [], market_info(), attempts=2,
+                                                 comparison_etfs=[item])
+        self.assertEqual(item["inception"], "2024-01-11")
+        self.assertEqual(item["price_start_date"], "2024-01-11")
+        self.assertEqual(item["price_end_date"], "2026-10-28")
+        self.assertEqual((item["initial_adjusted_price"], item["latest_adjusted_price"]), (36.0, 59.09))
+        self.assertFalse(item.get("price_history_inception_mismatch", False))
+        self.assertIsNone(item["return3y"])
+        self.assertEqual(build_etf_info([], [], [item])["rows"], [])
+        record = next(row for row in proof["etfs"] if row["ticker"] == "GBTC")
+        self.assertTrue(record["in_comparison_universe"])
+        self.assertEqual(record["trust_inception"], "2013-09-25")
+        self.assertEqual(record["public_quotation_date"], "2015-05-04")
+        self.assertEqual(record["etf_listing_date"], "2024-01-11")
+        self.assertEqual(record["date_status"], "market_close")
+
     def test_failed_retry_sends_valid_previous_prices_without_dropping_the_candidate(self):
         item = etf(end="2026-10-27", latest=254.5)
         candidates, before = [item], copy.deepcopy(item)
