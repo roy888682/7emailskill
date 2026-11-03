@@ -126,7 +126,9 @@ class NativeEmailTests(unittest.TestCase):
             for table in doc.select("table.data-table"):
                 cells = table.select_one("tbody tr").find_all("td", recursive=False)
                 self.assertIn("t", cells[2].get("class", []))
-                self.assertEqual(cells[2].select_one(".cl").get_text(), wanted[table.get("id")])
+                    ticker_link = cells[2].select_one(".cl a")
+                    self.assertEqual("".join(ticker_link.find_all(string=True, recursive=False)).strip(),
+                                     wanted[table.get("id")])
                 self.assertTrue(all("t" not in cell.get("class", [])
                                     for index, cell in enumerate(cells) if index != 2))
 
