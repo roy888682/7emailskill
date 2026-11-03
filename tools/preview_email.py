@@ -13,6 +13,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+from src.email_layout import ETF_MINIMUM_YEARS, ETF_COMPARISON_LIMIT
 
 def make_stock(ticker, market="US", number=0, asset_type="주식"):
     korean = market != "US"
@@ -286,7 +287,7 @@ LAYOUT_CHECK = r"""expected => {
    return values.length&&values.every(value=>Number.isFinite(value)&&value===values[0])?values[0]:NaN;
  };
  let previousLifetime=Infinity;
- if(getRows("returns").length>100)problems.push("ETF comparison exceeds the top 100 limit");
+ if(getRows("returns").length>__ETF_COMPARISON_LIMIT__)problems.push("ETF comparison exceeds the top "+__ETF_COMPARISON_LIMIT__+" limit");
  getRows("returns").forEach((row,index)=>{
    const colors=[];
    for(const [column,cls] of [[7,"p1"],[8,"p3"],[9,"p5"],[10,"p10"]]){
@@ -335,8 +336,8 @@ LAYOUT_CHECK = r"""expected => {
    const knownInception=/^\d{4}-\d{2}-\d{2}$/.test(inceptionText);
    const inception=knownInception?Date.parse(inceptionText+"T00:00:00Z"):NaN;
    const observedYears=(end-start)/(86400000*365.25);
-   if(!Number.isFinite(observedYears)||observedYears<1)
-     problems.push("ETF "+index+" must have at least one unrounded elapsed year before ranking");
+   if(!Number.isFinite(observedYears)||observedYears<__ETF_MINIMUM_YEARS__)
+     problems.push("ETF "+index+" must have at least "+__ETF_MINIMUM_YEARS__+" unrounded elapsed years before ranking");
    if(!Number.isFinite(start)||!Number.isFinite(end)||end<=start||
       (knownInception&&(!Number.isFinite(inception)||start<inception))||
       (!knownInception&&!["미확인","-"].includes(inceptionText))||Math.abs(observedYears-years)>.00501)
@@ -587,8 +588,8 @@ MANAGEMENT_STYLE_CHECK = r"""proof => {
    problems.push('ETF comparison universe must match its complete audit membership');
  const eligible=Array.from(records.values()).filter(record=>record.in_comparison_universe&&
    record.date_status!=='unavailable'&&typeof record.lifetime_cagr==='number'&&
-   Number.isFinite(record.lifetime_cagr)&&yearsOf(record)>=1);
- const expectedCagrs=eligible.map(record=>record.lifetime_cagr).sort((a,b)=>b-a).slice(0,100);
+   Number.isFinite(record.lifetime_cagr)&&yearsOf(record)>=__ETF_MINIMUM_YEARS__);
+ const expectedCagrs=eligible.map(record=>record.lifetime_cagr).sort((a,b)=>b-a).slice(0,__ETF_COMPARISON_LIMIT__);
  const displayedCagrs=[],displayedKeys=new Set();
  for(const row of document.querySelectorAll('#returns tbody tr')){
    const label=row.cells[1]?.querySelector('img')?.alt,country=label==='성조기'?'US':label==='태극기'?'KR':null;
@@ -598,8 +599,8 @@ MANAGEMENT_STYLE_CHECK = r"""proof => {
    }
    displayed++;
    const identity=country+':'+ticker,years=yearsOf(record);
-   if(!Number.isFinite(years)||years<1||Math.abs(years-record.lifetime_years)>1e-12)
-     problems.push('Displayed ETF must have at least one unrounded elapsed year: '+ticker);
+   if(!Number.isFinite(years)||years<__ETF_MINIMUM_YEARS__||Math.abs(years-record.lifetime_years)>1e-12)
+     problems.push('Displayed ETF must have at least '+__ETF_MINIMUM_YEARS__+' unrounded elapsed years: '+ticker);
    if(displayedKeys.has(identity))problems.push('Duplicate ETF in the ranked comparison: '+ticker);
    displayedKeys.add(identity);displayedCagrs.push(record.lifetime_cagr);
    const cell=row.cells[5],style=record.management_style;
@@ -611,9 +612,15 @@ MANAGEMENT_STYLE_CHECK = r"""proof => {
      problems.push('Displayed ETF management style or source differs from its audit: '+ticker);
  }
  if(JSON.stringify(displayedCagrs)!==JSON.stringify(expectedCagrs))
-   problems.push('ETF comparison must show the complete top 100 eligible one-year-or-older ETFs in CAGR order');
+   problems.push('ETF comparison must show the complete top '+__ETF_COMPARISON_LIMIT__+' eligible ETFs with at least '+__ETF_MINIMUM_YEARS__+' years in CAGR order');
  return {audit_counts:counts,displayed_checked:displayed,eligible_count:eligible.length,problems};
 }"""
+
+
+for _check_name in ("LAYOUT_CHECK", "MANAGEMENT_STYLE_CHECK"):
+    globals()[_check_name] = (globals()[_check_name]
+                            .replace("__ETF_MINIMUM_YEARS__", str(ETF_MINIMUM_YEARS))
+                            .replace("__ETF_COMPARISON_LIMIT__", str(ETF_COMPARISON_LIMIT)))
 
 
 def cropped_table_image(page, table_id, output, marker):

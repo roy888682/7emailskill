@@ -133,7 +133,7 @@ class EtfReturnTests(unittest.TestCase):
 class EtfRankingAndHtmlTests(unittest.TestCase):
     @staticmethod
     def dated_etf(ticker, cumulative, **extra):
-        return {"ticker": ticker, "asset_type": "ETF", "first_date": "2024-01-01",
+        return {"ticker": ticker, "asset_type": "ETF", "first_date": "2022-01-01",
                 "last_date": "2026-01-01", "cumulative_return": cumulative, **extra}
 
     def test_lifetime_descending_ranking_ignores_one_year_return(self):
@@ -154,43 +154,43 @@ class EtfRankingAndHtmlTests(unittest.TestCase):
                          ["US_HIGH", "KR_MID", "US_LOW", "KR_ZERO"])
         self.assertEqual(info["pool"], 6)
         self.assertEqual(info["with_ret"], 5)
-        self.assertEqual((info["eligible_count"], info["under_one_year"]), (4, 1))
+        self.assertEqual((info["eligible_count"], info["below_minimum_years"]), (4, 1))
 
-    def test_top_hundred_limit_preserves_descending_ranks_and_candidate_counts(self):
-        etfs = [self.dated_etf(str(i), float(i)) for i in range(125)]
+    def test_top_three_hundred_limit_preserves_descending_ranks_and_candidate_counts(self):
+        etfs = [self.dated_etf(str(i), float(i)) for i in range(325)]
         info = build_etf_info(etfs, [])
-        self.assertEqual(len(info["rows"]), 100)
-        self.assertEqual([s["ticker"] for s in info["rows"]], list(map(str, range(124, 24, -1))))
-        self.assertEqual((info["pool"], info["with_ret"]), (125, 125))
+        self.assertEqual(len(info["rows"]), 300)
+        self.assertEqual([s["ticker"] for s in info["rows"]], list(map(str, range(324, 24, -1))))
+        self.assertEqual((info["pool"], info["with_ret"]), (325, 325))
 
-    def test_short_high_cagr_funds_do_not_consume_the_hundred_eligible_places(self):
-        older = [self.dated_etf("OLD%03d" % i, float(i)) for i in range(125)]
+    def test_short_high_cagr_funds_do_not_consume_the_three_hundred_eligible_places(self):
+        older = [self.dated_etf("OLD%03d" % i, float(i)) for i in range(325)]
         short = [self.dated_etf("NEW%03d" % i, 1000.0 + i,
-                                first_date="2025-12-01", lifetime_years=5.0)
+                                first_date="2024-07-01" if i % 2 else "2023-07-01", lifetime_years=5.0)
                  for i in range(20)]
         source = short + older
         info = build_etf_info([], [], comparison_etfs=source)
         self.assertEqual([row["ticker"] for row in info["rows"]],
-                         ["OLD%03d" % i for i in range(124, 24, -1)])
-        self.assertEqual((info["pool"], info["with_ret"], info["eligible_count"], info["under_one_year"]),
-                         (145, 145, 125, 20))
-        self.assertEqual(len(source), 145)
+                         ["OLD%03d" % i for i in range(324, 24, -1)])
+        self.assertEqual((info["pool"], info["with_ret"], info["eligible_count"], info["below_minimum_years"]),
+                         (345, 345, 325, 20))
+        self.assertEqual(len(source), 345)
         self.assertEqual(short[0]["lifetime_years"], 5.0)
 
-    def test_one_year_selection_uses_exact_observation_interval_before_display_rounding(self):
-        # Both intervals display as 1.00 years. Only 366/365.25 reaches the
-        # one-year threshold used by the lifetime return calculation.
-        short = self.dated_etf("SHORT", 100.0, first_date="2025-01-01",
+    def test_three_year_selection_uses_exact_observation_interval_before_display_rounding(self):
+        # Both intervals display as 3.00 years. Only 1096/365.25 reaches the
+        # three-year threshold used by the lifetime return calculation.
+        short = self.dated_etf("SHORT", 100.0, first_date="2023-01-02",
                                last_date="2026-01-01", inception="2000-01-01",
                                lifetime_years=20.0)
-        eligible = self.dated_etf("ELIGIBLE", 10.0, first_date="2024-12-31",
+        eligible = self.dated_etf("ELIGIBLE", 10.0, first_date="2023-01-01",
                                   last_date="2026-01-01", lifetime_years=.1)
-        self.assertEqual(format(_etf_lifetime_metrics(short)["lifetime_years"], ".2f"), "1.00")
-        self.assertEqual(format(_etf_lifetime_metrics(eligible)["lifetime_years"], ".2f"), "1.00")
+        self.assertEqual(format(_etf_lifetime_metrics(short)["lifetime_years"], ".2f"), "3.00")
+        self.assertEqual(format(_etf_lifetime_metrics(eligible)["lifetime_years"], ".2f"), "3.00")
         info = build_etf_info([short, eligible], [])
         self.assertEqual([row["ticker"] for row in info["rows"]], ["ELIGIBLE"])
-        self.assertEqual((info["with_ret"], info["eligible_count"], info["under_one_year"]), (2, 1, 1))
-        self.assertEqual(info["rows"][0]["lifetime_years"], 366 / 365.25)
+        self.assertEqual((info["with_ret"], info["eligible_count"], info["below_minimum_years"]), (2, 1, 1))
+        self.assertEqual(info["rows"][0]["lifetime_years"], 1096 / 365.25)
 
     def test_comparison_shows_all_seven_return_metrics_in_order(self):
         row = {"ticker": "ETF", "name": "Example ETF", "market": "US",
@@ -229,7 +229,7 @@ class EtfRankingAndHtmlTests(unittest.TestCase):
     def test_empty_pool_renders_without_errors(self):
         info = build_etf_info([], [])
         self.assertEqual(info, {"rows": [], "pool": 0, "with_ret": 0,
-                                "eligible_count": 0, "under_one_year": 0})
+                                "eligible_count": 0, "below_minimum_years": 0})
         self.assertIn("해당 ETF 없음", etf_section_html(info))
 
 
@@ -285,7 +285,7 @@ class EtfLifetimeMetricTests(unittest.TestCase):
         info = build_etf_info([item], [])
         self.assertEqual((info["pool"], info["with_ret"]), (1, 1))
         self.assertEqual(info["rows"], [])
-        self.assertEqual((info["eligible_count"], info["under_one_year"]), (0, 1))
+        self.assertEqual((info["eligible_count"], info["below_minimum_years"]), (0, 1))
         metrics = _etf_lifetime_metrics(item)
         self.assertLess(metrics["lifetime_years"], 1)
         self.assertAlmostEqual(metrics["lifetime_cagr"], (1.1 ** (365.25 / 184) - 1) * 100)
@@ -316,7 +316,7 @@ class EtfLifetimeMetricTests(unittest.TestCase):
                 self.assertEqual(build_etf_info([item], [])["rows"], [])
 
     def test_unrounded_price_growth_controls_calculation_and_sort(self):
-        dates = [date(2024, 1, 1), date(2026, 1, 1)]
+        dates = [date(2022, 1, 1), date(2026, 1, 1)]
         high = {"ticker": "HIGH", "asset_type": "ETF",
                 **_etf_price_performance(dates, [100, 100.104])}
         low = {"ticker": "LOW", "asset_type": "ETF",
@@ -414,7 +414,7 @@ class EtfLifetimeMetricTests(unittest.TestCase):
         self.assertIsNone(_etf_lifetime_metrics(item))
 
     def test_ranking_does_not_mutate_collected_records(self):
-        original = self.example(inception="invalid")
+        original = self.example(inception="invalid", first_date="2022-01-02")
         before = dict(original)
         info = build_etf_info([original], [])
         self.assertEqual(original, before)
@@ -526,7 +526,7 @@ class IndependentEtfComparisonTests(unittest.TestCase):
         self.assertEqual(proof["etfs"][0]["date_status"], "unavailable")
         self.assertEqual(proof["comparison_universe"], ["US:TQQQ"])
         self.assertEqual(build_etf_info(ath, [], pool), {"rows": [], "pool": 1, "with_ret": 0,
-                                                        "eligible_count": 0, "under_one_year": 0})
+                                                        "eligible_count": 0, "below_minimum_years": 0})
 
     def test_korean_comparison_is_independent_of_general_stock_failure_and_ath(self):
         universe = {code: {"name": name, "market": "KOSPI", "is_etf": True}

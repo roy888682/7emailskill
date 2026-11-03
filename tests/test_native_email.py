@@ -13,8 +13,14 @@ from tools.preview_email import sample_data, make_stock, manifest_for
 from src.main import validate_etf_market_dates
 
 
-def fixture(count=218, long_names=False):
+def fixture(count=218, long_names=False, etf_count=None):
     data = sample_data()
+    if etf_count is not None:
+        base = data["etf_info"]["rows"]
+        rows = [dict(copy.deepcopy(base[index % len(base)]), ticker="ETF%03d" % index)
+                for index in range(etf_count)]
+        data["etf_info"].update(rows=rows, pool=etf_count, with_ret=etf_count,
+                                eligible_count=etf_count, below_minimum_years=0)
     data["us"] = [make_stock("US%04d" % number, number=number) for number in range(count)]
     # Keep the full row/column coverage with realistic compact display labels;
     # the unrelated long-label overflow fixture belongs to browser layout QA.
@@ -144,8 +150,8 @@ class NativeEmailTests(unittest.TestCase):
         self.assertTrue(native_email.clipping_risk(compact))
         native_email.validate_delivery_size(compact)
 
-    def test_all_218_us_rows_and_other_tables_remain_native_with_every_field(self):
-        source, expected = fixture()
+    def test_all_218_us_rows_and_300_etfs_remain_native_with_every_field(self):
+        source, expected = fixture(etf_count=300)
         with tempfile.TemporaryDirectory() as directory:
             delivery, meta = native_email.prepare(source, expected, directory)
             self.assertEqual(native_email.verify_package(source, delivery, expected, meta, directory), {})
@@ -154,6 +160,13 @@ class NativeEmailTests(unittest.TestCase):
             self.assertEqual(len(doc.select("#us tbody tr")), 218)
             self.assertEqual([row.find("td").get_text(strip=True) for row in doc.select("#us tbody tr")],
                              [str(number) for number in range(1, 219)])
+            ranked = doc.select("#returns tbody tr")
+            self.assertEqual(len(ranked), 300)
+            self.assertEqual([row.find("td").get_text(strip=True) for row in ranked],
+                             [str(number) for number in range(1, 301)])
+            self.assertEqual(expected["etf"], ["ETF%03d" % number for number in range(300)])
+            self.assertEqual([row.find_all("td", recursive=False)[2].get_text() for row in ranked],
+                             expected["etf"])
             self.assertEqual(native_email.semantic_digest(doc),
                              native_email.semantic_digest(BeautifulSoup(source, "html5lib")))
             self.assertFalse(doc.select("#us-display"))

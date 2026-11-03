@@ -11,6 +11,8 @@ else:
     from email_flags import flag_html
 
 MAX_BODY_BYTES = 85000
+ETF_MINIMUM_YEARS = 3
+ETF_COMPARISON_LIMIT = 300
 CSS = """
 body{margin:0;background:#f2f5f8;color:#17263d;font-family:Arial,'Malgun Gothic','Apple SD Gothic Neo',sans-serif;font-size:15.6px;line-height:1.4}
 table{border-collapse:collapse}a{color:#1260ad;text-decoration:none}
@@ -281,13 +283,13 @@ def validate_management_style_evidence(row):
 def etf_section_html(etf_info, include_details=False, info=None):
     rows = etf_info.get("rows", [])
     head = ('<div class="section" id="etf"><h2>ETF 수익률 비교</h2>'
-            f'<p class="intro">수집 대상 비채권 ETF · 누적연수 1년 이상 · 연평균 누적수익률 내림차순 · 상위 {len(rows)}개'
-            f' · 1년 이상 {etf_info.get("eligible_count", len(rows))} / 산출 가능 {etf_info.get("with_ret", 0)} / 후보 {etf_info.get("pool", 0)}개</p>'
+            f'<p class="intro">수집 대상 비채권 ETF · 누적연수 {ETF_MINIMUM_YEARS}년 이상 · 연평균 누적수익률 내림차순 · 상위 {len(rows)}개'
+            f' · {ETF_MINIMUM_YEARS}년 이상 {etf_info.get("eligible_count", len(rows))} / 산출 가능 {etf_info.get("with_ret", 0)} / 후보 {etf_info.get("pool", 0)}개</p>'
             '<p class="etf-caption">연초: 전년 마지막 시세 대비 · 1·3·5·10년: 각 기간 누적수익률 · 누적: 정확한 최초·최근주가의 수익률 · 연평균: 같은 가격 기간을 복리 환산 · 수익률 단위: %</p>')
     if info is not None:
         head += market_date_caption(info)
     if not rows:
-        note = " · 누적연수 1년 미만 ETF는 순위에서 제외하며, 유효한 가격 이력이 없는 ETF는 후보에 유지하고 수익률 계산 불가로 처리합니다." if etf_info.get("pool", 0) else ""
+        note = f" · 누적연수 {ETF_MINIMUM_YEARS}년 미만 ETF는 순위에서 제외하며, 유효한 가격 이력이 없는 ETF는 후보에 유지하고 수익률 계산 불가로 처리합니다." if etf_info.get("pool", 0) else ""
         return head + '<p class="muted">해당 ETF 없음' + note + '</p></div>'
     labels = (("ytd", "연초", "return_ytd"), ("1y", "1년", "return1y"),
               ("3y", "3년", "return3y"), ("5y", "5년", "return5y"), ("10y", "10년", "return10y"),
@@ -323,14 +325,14 @@ def etf_section_html(etf_info, include_details=False, info=None):
                   f'<td class="number" title="{first_title}">{price_text(row.get("initial_adjusted_price"), initial=True)}</td>'
                   f'<td class="number" title="{last_title}">{price_text(row.get("latest_adjusted_price"))}</td></tr>')
     table += '</tbody></table></div>'
-    notes = ('<p class="notes">ETF 비교는 ATH 괴리율과 무관하게 수집 대상 한국·미국 비채권 ETF 중 누적연수 1년 이상이며 연평균 누적수익률 산출 가능한 종목을 내림차순으로 최대 100개 표시합니다. '
+    notes = (f'<p class="notes">ETF 비교는 ATH 괴리율과 무관하게 수집 대상 한국·미국 비채권 ETF 중 누적연수 {ETF_MINIMUM_YEARS}년 이상이며 연평균 누적수익률 산출 가능한 종목을 내림차순으로 최대 {ETF_COMPARISON_LIMIT}개 표시합니다. '
              '운용방식은 Active·Passive로 표시하며 근거가 없으면 미확인으로 표시합니다. 마우스를 올리면 분류 근거·출처와 공식자료 확인 여부를 볼 수 있습니다. 레버리지 사용만으로 Active로 분류하지 않습니다.<br>'
              '연초는 실제 수익률 기준일의 전년도 마지막 확보 시세부터, 1·3·5·10년은 실제 수익률 기준일에서 해당 연수 전 같은 날짜(휴장일이면 그 이전 최근 시세)부터의 누적수익률입니다. 각 기간 수익률 = (최근주가 ÷ 기간 시작주가 - 1) × 100이며 연환산하지 않습니다. 기간 이력이 부족하면 -로 표시합니다.<br>'
              '국가 시장 기준일의 시세가 없으면 재조회 후 이전 가능 시세일로 계산합니다. ETF별 실제 날짜는 오른쪽 수익률 기준일을 참고하세요. 유효한 가격을 확보하지 못한 ETF는 후보에 유지하며 수익률은 계산 불가로 처리합니다.<br>'
              '누적수익률 = (최근주가 ÷ 최초주가 - 1) × 100이며, 연환산하지 않음. 두 가격은 같은 제공업체·같은 조정 기준입니다. '
              '최초주가가 1 미만이면 소수점 둘째 자리까지 표시하고, 그 외 최초주가·최근주가는 소수점 이하를 버리고 천 단위 쉼표로 표시합니다. 수익률 계산에는 표시값이 아닌 정확한 원값을 사용합니다.<br>'
              '연평균 누적수익률 = [(1 + 누적수익률/100)^(1/누적연수) - 1] × 100. '
-             '누적연수는 표시된 최초·최근 가격의 실제 기준일 차이 ÷ 365.25이며, 반올림 전 누적연수가 1년 미만이면 순위에서 제외합니다. 계산은 반올림 전 값으로 합니다.<br>'
+             f'누적연수는 표시된 최초·최근 가격의 실제 기준일 차이 ÷ 365.25이며, 반올림 전 누적연수가 {ETF_MINIMUM_YEARS}년 미만이면 순위에서 제외합니다. 계산은 반올림 전 값으로 합니다.<br>'
              '연평균 누적수익률은 누적수익률을 연수로 나눈 값이 아니라 복리 연환산(CAGR)입니다. 원금과 수익이 매년 함께 재투자된다고 가정합니다.<br>'
              '미국과 수정주가 확보 한국 ETF는 Yahoo 제공 수정주가(auto_adjust) 기준입니다. 수정주가 확보 불가 한국 ETF는 네이버 차트 종가이며 배당조정 미확인으로 구분합니다.<br>'
              '설립일 당일 가격이 없으면 실제 최초 확보일 가격을 표시합니다. 각 가격에 마우스를 올리면 소수점이 포함된 정확값·기준일·통화·가격 기준을 확인할 수 있습니다. 설립일 출처가 불명확하면 미확인으로 표시합니다.<br>'
@@ -760,9 +762,9 @@ def validate_etf_date_proof(source, manifest, proof):
                 raise ValueError("elapsed years differ from actual price dates")
         except (KeyError, TypeError, ValueError) as error:
             raise RuntimeError(f"ETF {key[0]}:{key[1]} has invalid ranking price dates or elapsed years") from error
-        if years >= 1:
+        if years >= ETF_MINIMUM_YEARS:
             eligible.append((key, cagr))
-    expected_cagrs = sorted((cagr for _, cagr in eligible), reverse=True)[:100]
+    expected_cagrs = sorted((cagr for _, cagr in eligible), reverse=True)[:ETF_COMPARISON_LIMIT]
     eligible_keys = {key for key, _ in eligible}
     displayed_keys, displayed_cagrs = set(), []
     for row in doc.select("#returns tbody tr"):
@@ -782,7 +784,7 @@ def validate_etf_date_proof(source, manifest, proof):
             raise RuntimeError(f"Unavailable ETF {country}:{ticker} must not claim a ranked return")
         key = (country, ticker)
         if key not in eligible_keys:
-            raise RuntimeError(f"Displayed ETF {country}:{ticker} must have at least one unrounded elapsed year")
+            raise RuntimeError(f"Displayed ETF {country}:{ticker} must have at least {ETF_MINIMUM_YEARS} unrounded elapsed years")
         if key in displayed_keys:
             raise RuntimeError("The ETF comparison contains duplicate ranked securities")
         displayed_keys.add(key)
@@ -826,10 +828,10 @@ def validate_etf_date_proof(source, manifest, proof):
         if (date_cell.get_text() != return_date_text(record) or date_cell.get("title") != date_detail
                 or clip is None or clip.get("title") != return_date_text(record) + " · " + date_detail):
             raise RuntimeError(f"Displayed ETF {country}:{ticker} return date differs from its actual price date")
-    # Comparing the raw CAGR sequence requires the complete top 100 while
+    # Comparing the raw CAGR sequence requires the complete eligible ranking while
     # permitting any legitimate identity/order tie at the cutoff.
     if displayed_cagrs != expected_cagrs:
-        raise RuntimeError("ETF comparison must show the complete top 100 eligible one-year-or-older ETFs in CAGR order")
+        raise RuntimeError(f"ETF comparison must show the complete top {ETF_COMPARISON_LIMIT} eligible ETFs with at least {ETF_MINIMUM_YEARS} years in CAGR order")
     return dict(market_dates)
 
 

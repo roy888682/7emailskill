@@ -106,8 +106,8 @@ class EmailLayoutTests(unittest.TestCase):
         end = date(2026, 10, 7)
         template = next(row for row in self.data["us"] if row.get("asset_type") == "ETF")
         items = []
-        for ticker, days, latest in (("SHORT365", 365, 300.0), ("LONG366", 366, 120.0),
-                                     ("LONGLOW", 731, 110.0)):
+        for ticker, days, latest in (("SHORT1095", 1095, 300.0), ("LONG1096", 1096, 150.0),
+                                     ("LONGLOW", 1461, 110.0)):
             item = copy.deepcopy(template)
             start = end - timedelta(days=days)
             item.update(ticker=ticker, name=ticker, market="US", asset_type="ETF",
@@ -122,20 +122,20 @@ class EmailLayoutTests(unittest.TestCase):
         data["etf_info"] = build_etf_info(items, [], comparison_etfs=items)
         return data, items
 
-    def test_one_year_ranking_keeps_short_etfs_in_country_new_and_complete_audit(self):
+    def test_three_year_ranking_keeps_short_etfs_in_country_new_and_complete_audit(self):
         data, items = self.minimum_year_data()
         source, manifest = render_email(**data), manifest_for(data)
         proof = validate_etf_market_dates(data["us"], data["kr"], data["info"], comparison_etfs=items)
-        self.assertEqual(manifest["etf"], ["LONG366", "LONGLOW"])
-        self.assertIn("SHORT365", manifest["us"])
-        self.assertIn("US:SHORT365", manifest["new"])
-        record = next(row for row in proof["etfs"] if row["ticker"] == "SHORT365")
+        self.assertEqual(manifest["etf"], ["LONG1096", "LONGLOW"])
+        self.assertIn("SHORT1095", manifest["us"])
+        self.assertIn("US:SHORT1095", manifest["new"])
+        record = next(row for row in proof["etfs"] if row["ticker"] == "SHORT1095")
         self.assertTrue(record["in_comparison_universe"])
-        self.assertEqual(elapsed_years_text(record["lifetime_years"]), "1.00년")
-        self.assertLess(record["lifetime_years"], 1)
-        self.assertEqual(elapsed_years_text(items[1]["lifetime_years"]), "1.00년")
-        self.assertGreater(items[1]["lifetime_years"], 1)
-        self.assertIn("누적연수 1년 이상", BeautifulSoup(source, "html5lib").get_text())
+        self.assertEqual(elapsed_years_text(record["lifetime_years"]), "3.00년")
+        self.assertLess(record["lifetime_years"], 3)
+        self.assertEqual(elapsed_years_text(items[1]["lifetime_years"]), "3.00년")
+        self.assertGreater(items[1]["lifetime_years"], 3)
+        self.assertIn("누적연수 3년 이상", BeautifulSoup(source, "html5lib").get_text())
         self.assertEqual(validate_etf_date_proof(source, manifest, proof), proof["market_dates"])
 
     def test_rank_proof_rejects_rounded_short_age_reintroduction_missing_rows_and_wrong_order(self):
@@ -151,7 +151,7 @@ class EmailLayoutTests(unittest.TestCase):
             elif kind == "wrong_order":
                 altered["etf_info"]["rows"].reverse()
             else:
-                next(row for row in altered_proof["etfs"] if row["ticker"] == "SHORT365")["lifetime_years"] = 1.0
+                next(row for row in altered_proof["etfs"] if row["ticker"] == "SHORT1095")["lifetime_years"] = 3.0
             source, manifest = render_email(**altered), manifest_for(altered)
             with self.subTest(kind=kind), self.assertRaises(RuntimeError):
                 validate_etf_date_proof(source, manifest, altered_proof)
@@ -512,18 +512,19 @@ class EmailLayoutTests(unittest.TestCase):
                 self.assertEqual(cell.select_one(".iwc").get_text(), cell.get_text())
         self.assertIn(".data-table .iw{width:126px;max-width:126px}", CSS)
 
-    def test_top_hundred_table_keeps_the_last_rank_and_all_nineteen_columns(self):
+    def test_top_three_hundred_table_keeps_the_last_rank_and_all_nineteen_columns(self):
         base = self.data["etf_info"]["rows"][0]
-        rows = [dict(base, ticker=f"ETF{index:03d}", lifetime_cagr=100-index)
-                for index in range(100)]
-        data = dict(self.data, etf_info={"rows": rows, "pool": 125, "with_ret": 125})
+        rows = [dict(base, ticker=f"ETF{index:03d}", lifetime_cagr=400-index)
+                for index in range(300)]
+        data = dict(self.data, etf_info={"rows": rows, "pool": 325, "with_ret": 325,
+                                      "eligible_count": 325})
         doc = BeautifulSoup(render_email(**data), "html5lib")
         rendered = doc.select("#returns tbody tr")
-        self.assertEqual(len(rendered), 100)
+        self.assertEqual(len(rendered), 300)
         self.assertTrue(all(len(row.find_all("td", recursive=False)) == 19 for row in rendered))
-        self.assertEqual(rendered[-1].find_all("td", recursive=False)[0].get_text(), "100")
+        self.assertEqual(rendered[-1].find_all("td", recursive=False)[0].get_text(), "300")
         self.assertEqual(inventory(str(doc))["etf"], [row["ticker"] for row in rows])
-        self.assertIn("내림차순 · 상위 100개", doc.get_text())
+        self.assertIn("내림차순 · 상위 300개", doc.get_text())
 
     def test_all_columns_retain_full_values_in_one_line_clipping_containers(self):
         doc = BeautifulSoup(render_email(**self.data), "html5lib")

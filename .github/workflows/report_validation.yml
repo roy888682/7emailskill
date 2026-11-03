@@ -24,7 +24,7 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -65,7 +65,7 @@ jobs:
                   row["price_end_date"] = row["last_date"] = row["return_as_of"] = actual_end
                   row["lifetime_years"] = (date.fromisoformat(actual_end) - date.fromisoformat(row["price_start_date"])).days / 365.25
               if index in (0, 1, 2):
-                  start_date = ("2026-04-01", "2025-10-07", "2025-10-06")[index]
+                  start_date = ("2025-04-01", "2023-10-08", "2023-10-07")[index]
                   row["price_start_date"] = row["first_date"] = start_date
                   row["lifetime_years"] = (date.fromisoformat(row["price_end_date"]) - date.fromisoformat(start_date)).days / 365.25
               row["lifetime_cagr"] = 40.0 - index * .2
@@ -96,20 +96,33 @@ jobs:
           tqqq.update(management_style_metadata(tqqq))
           tqqq.update(_etf_lifetime_metrics(tqqq))
           set_sample_period_returns(tqqq)
+          comparison_only = []
+          for index in range(200):
+              row = dict(base_etfs[0])
+              row.update(make_stock("ONLY%04d" % index, asset_type="ETF"))
+              row["lifetime_cagr"] = 30.5 - index * .05
+              row["initial_adjusted_price"] = 100.123456789
+              row["latest_adjusted_price"] = row["initial_adjusted_price"] * (1 + row["lifetime_cagr"] / 100) ** row["lifetime_years"]
+              row["cumulative_growth"] = row["latest_adjusted_price"] / row["initial_adjusted_price"]
+              row["cumulative_return"] = (row["cumulative_growth"] - 1) * 100
+              row.update(_etf_lifetime_metrics(row))
+              set_sample_period_returns(row)
+              set_sample_management_style(row, index)
+              comparison_only.append(row)
           unavailable = make_stock("NOHISTORY", asset_type="ETF")
           for field in ETF_CALCULATION_FIELDS:
               unavailable[field] = None
           unavailable.update(period_returns={key: None for key in ETF_PERIOD_FIELDS},
                              requested_market_date="2026-10-07", date_status="unavailable")
           set_sample_management_style(unavailable, 2)
-          comparison_etfs = cohort + [tqqq, unavailable]
+          comparison_etfs = cohort + comparison_only + [tqqq, unavailable]
           data["etf_info"] = build_etf_info(data["us"], data["kr"], comparison_etfs=comparison_etfs)
           assert data["etf_info"]["rows"][0]["ticker"] == "TQQQ"
           assert all(row["ticker"] != "TQQQ" for row in data["us"])
-          assert data["etf_info"]["pool"] == 163 and data["etf_info"]["with_ret"] == 162
-          assert data["etf_info"]["eligible_count"] == 160 and data["etf_info"]["under_one_year"] == 2
-          assert len(data["etf_info"]["rows"]) == 100
-          assert all(row["lifetime_years"] >= 1 for row in data["etf_info"]["rows"])
+          assert data["etf_info"]["pool"] == 363 and data["etf_info"]["with_ret"] == 362
+          assert data["etf_info"]["eligible_count"] == 360 and data["etf_info"]["below_minimum_years"] == 2
+          assert len(data["etf_info"]["rows"]) == 300
+          assert all(row["lifetime_years"] >= 3 for row in data["etf_info"]["rows"])
           assert not {cohort[0]["ticker"], cohort[1]["ticker"]} & {row["ticker"] for row in data["etf_info"]["rows"]}
           assert cohort[2]["ticker"] in {row["ticker"] for row in data["etf_info"]["rows"]}
           data["new_us"] = data["us"][:5] + data["us"][75:99]
@@ -126,8 +139,8 @@ jobs:
           (directory / "email-reference.html").write_text(render_email(**data, compact=False), encoding="utf-8")
           (directory / "report-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
           market_proof = bind_market_date_proof(html, manifest, validate_etf_market_dates(data["us"], data["kr"], data["info"], comparison_etfs=comparison_etfs))
-          assert len(market_proof["etfs"]) == 163
-          assert sum(row.get("lifetime_years") is not None and row["lifetime_years"] < 1 for row in market_proof["etfs"]) == 2
+          assert len(market_proof["etfs"]) == 363
+          assert sum(row.get("lifetime_years") is not None and row["lifetime_years"] < 3 for row in market_proof["etfs"]) == 2
           assert next(row for row in market_proof["etfs"] if row["ticker"] == "TQQQ")["in_ath_report"] is False
           assert next(row for row in market_proof["etfs"] if row["ticker"] == "TQQQ")["in_comparison_universe"] is True
           assert market_proof["status_counts"]["unavailable"] == 1

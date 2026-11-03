@@ -51,9 +51,9 @@ class MarketDateValidationTests(unittest.TestCase):
         self.assertTrue(tqqq["in_comparison_universe"])
         self.assertEqual(tqqq["management_style"], "Passive")
 
-    def test_independent_comparison_inventory_beyond_top_hundred_is_still_checked(self):
-        pool = [etf(f"EXAMPLE{index}") for index in range(125)]
-        self.assertEqual(len(build_etf_info([], [], pool)["rows"]), 100)
+    def test_independent_comparison_inventory_beyond_top_three_hundred_is_still_checked(self):
+        pool = [etf(f"EXAMPLE{index}") for index in range(325)]
+        self.assertEqual(len(build_etf_info([], [], pool)["rows"]), 300)
         pool[-1]["price_end_date"] = "2026-10-29"
         with self.assertRaises(RuntimeError):
             validate_etf_market_dates([], [], market_info(), pool)
@@ -149,19 +149,19 @@ class MarketDateValidationTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     validate_etf_market_dates([item], [], market_info())
 
-    def test_every_candidate_is_checked_including_etfs_outside_the_top_hundred(self):
-        candidates = [etf("ETF%03d" % index, latest=1000.0-index) for index in range(101)]
-        stale = etf("STALE_OUTSIDE_TOP_100", end="2026-10-27", latest=100.01)
+    def test_every_candidate_is_checked_including_etfs_outside_the_top_three_hundred(self):
+        candidates = [etf("ETF%03d" % index, latest=1000.0-index) for index in range(301)]
+        stale = etf("STALE_OUTSIDE_TOP_300", end="2026-10-27", latest=100.01)
         candidates.append(stale)
         self.assertNotIn(stale["ticker"], [row["ticker"] for row in build_etf_info(candidates, [])["rows"]])
         proof = validate_etf_market_dates(candidates, [], market_info())
-        self.assertEqual(len(proof["etfs"]), 102)
+        self.assertEqual(len(proof["etfs"]), 302)
         audited = next(row for row in proof["etfs"] if row["ticker"] == stale["ticker"])
         self.assertEqual((audited["date_status"], audited["price_end_date"]), ("latest_available", "2026-10-27"))
         stale.update(price_end_date="2026-10-29", last_date="2026-10-29")
         with self.assertRaises(RuntimeError):
             validate_etf_market_dates(candidates, [], market_info())
-        self.assertEqual(len(candidates), 102)
+        self.assertEqual(len(candidates), 302)
 
     def test_missing_market_date_fails_when_that_market_has_an_etf(self):
         for value in (None, "bad", "2026-02-30"):
@@ -316,7 +316,7 @@ class MarketDateSynchronizationTests(unittest.TestCase):
             self.assertIsNone(item.get(key), key)
         self.assertEqual(item["period_returns"], {key:None for key in ("ytd", "1y", "3y", "5y", "10y")})
         self.assertEqual(build_etf_info(candidates, []), {"rows":[], "pool":1, "with_ret":0,
-                                                        "eligible_count":0, "under_one_year":0})
+                                                        "eligible_count":0, "below_minimum_years":0})
         mixed = dict(item, latest_adjusted_price=123.0)
         with self.assertRaises(RuntimeError):
             validate_etf_market_dates([mixed], [], market_info())

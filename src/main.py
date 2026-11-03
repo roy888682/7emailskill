@@ -569,7 +569,7 @@ def _etf_audit_universes(us, kr, comparison_etfs=None):
 
 
 def validate_etf_market_dates(us, kr, info, comparison_etfs=None):
-    """Audit every collected ETF, including those outside the comparison's top 100."""
+    """Audit every collected ETF, including those outside the displayed ranking."""
     anchors = {"US": _performance_date(info.get("us_last")),
                "KR": _performance_date(info.get("kr_last"))}
     audit, errors, seen = [], [], set()
@@ -1140,25 +1140,25 @@ def _etf_aum(v):
     return f"{v:,.2f}조" if v < 10 else f"{v:,.1f}조"
 
 def build_etf_info(us, kr, comparison_etfs=None):
-    """실제 가격 누적연수 1년 이상 ETF의 연평균 수익률 내림차순 상위 100개."""
+    """Rank ETFs meeting the shared actual-history minimum before applying the shared row limit."""
     pool = ([s for s in kr + us if s.get("asset_type") == "ETF"] if comparison_etfs is None
             else list(comparison_etfs))
     ranked = []
     with_ret = 0
-    under_one_year = 0
+    below_minimum_years = 0
     for item in pool:
         metrics = _etf_lifetime_metrics(item)
         if metrics is not None:
             with_ret += 1
             # Eligibility uses the original price interval, never its rounded
             # display text or an earlier official fund inception date.
-            if metrics["lifetime_years"] < 1:
-                under_one_year += 1
+            if metrics["lifetime_years"] < email_layout.ETF_MINIMUM_YEARS:
+                below_minimum_years += 1
                 continue
             ranked.append({**item, **metrics, **etf_strategy.management_style_metadata(item)})
     ranked.sort(key=lambda s: s["lifetime_cagr"], reverse=True)
-    return {"rows": ranked[:100], "pool": len(pool), "with_ret": with_ret,
-            "eligible_count": len(ranked), "under_one_year": under_one_year}
+    return {"rows": ranked[:email_layout.ETF_COMPARISON_LIMIT], "pool": len(pool), "with_ret": with_ret,
+            "eligible_count": len(ranked), "below_minimum_years": below_minimum_years}
 
 
 def etf_section_html(etf_info):
@@ -1891,7 +1891,7 @@ def send_email(html, subject, inline_images=None, source_html=None):
     log.info("SMTP_ACCEPTED: %s", json.dumps(receipt, ensure_ascii=False))
     log.info("✅ SMTP 접수 성공 · 수신함 도착 여부는 별도 확인")
 
-CODE_VERSION = "2026-11-03-etf-minimum-one-year-ranking"
+CODE_VERSION = "2026-11-03-etf-minimum-three-year-top300"
 
 def main(prepare_only=False):
     log.info(f"=== ATH 리포트 시작 (코드버전: {CODE_VERSION}) ===")
@@ -1932,7 +1932,8 @@ def main(prepare_only=False):
     # ETF 비교는 ATH와 독립된 수집 비채권 ETF 전체의 연평균 내림차순입니다.
     etf_info = build_etf_info(us, kr, comparison_etfs)
     log.info(f"ETF 섹션: 풀 {etf_info['pool']}개 / 연평균 누적수익률 산출 {etf_info['with_ret']}개 / "
-             f"누적연수 1년 이상 {etf_info['eligible_count']}개 / 1년 미만 {etf_info['under_one_year']}개 / "
+             f"누적연수 {email_layout.ETF_MINIMUM_YEARS}년 이상 {etf_info['eligible_count']}개 / "
+             f"{email_layout.ETF_MINIMUM_YEARS}년 미만 {etf_info['below_minimum_years']}개 / "
              f"표시 {len(etf_info['rows'])}개")
     for item in comparison_etfs:
         if item.get("ticker") == "TQQQ" and item.get("market") == "US":

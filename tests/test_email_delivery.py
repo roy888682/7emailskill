@@ -63,6 +63,11 @@ class EmailDeliveryTests(unittest.TestCase):
 
     def test_large_live_sized_report_reaches_smtp_with_every_row_without_attachment(self):
         data = sample_data()
+        base_etfs = data["etf_info"]["rows"]
+        compared = [dict(base_etfs[index % len(base_etfs)], ticker="ETF%03d" % index)
+                    for index in range(300)]
+        data["etf_info"].update(rows=compared, pool=300, with_ret=300,
+                                eligible_count=300, below_minimum_years=0)
         data["us"] = [make_stock("US%04d" % number, number=number) for number in range(240)]
         for row in data["us"]:
             row["name"] = "Example Semiconductor Company " + row["ticker"]
@@ -70,6 +75,7 @@ class EmailDeliveryTests(unittest.TestCase):
         data["new_us"] = data["us"][:25]
         source = render_email(**data)
         expected = inventory(source)
+        self.assertEqual(expected["etf"], ["ETF%03d" % number for number in range(300)])
         with tempfile.TemporaryDirectory() as directory:
             delivery, _ = native_email.prepare(source, expected, directory)
             self.assertTrue(native_email.clipping_risk(delivery))
