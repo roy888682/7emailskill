@@ -1,6 +1,13 @@
 name: 📈 Daily ATH Stock Email
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/daily_ath_email.yml'
+      - 'src/**'
+      - 'tests/**'
+      - 'tools/**'
   schedule:
     - cron: '0 22 * * 1-5'   # UTC 월~금 22:00 = KST 화~토 07:00 (일·월 발송 없음)
   workflow_dispatch:
@@ -10,7 +17,7 @@ permissions:
 
 concurrency:
   group: daily-ath-email
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   send-ath-email:
@@ -81,6 +88,32 @@ jobs:
 
       - name: 📄 전체 본문 준비 (아직 발송하지 않음)
         run: python src/main.py --prepare-only
+
+      - name: Verify the minimum history and complete eligible top ranking
+        run: |
+          python - <<'PY'
+          import json, math
+          from datetime import date
+          from pathlib import Path
+          from src.email_layout import ETF_MINIMUM_YEARS, ETF_COMPARISON_LIMIT
+          proof = json.loads(Path("work/market-date-proof.json").read_text())
+          manifest = json.loads(Path("work/report-manifest.json").read_text())
+          pool = [row for row in proof["etfs"] if row["in_comparison_universe"]]
+          calculable = [row for row in pool if isinstance(row.get("lifetime_cagr"), (int, float)) and math.isfinite(row["lifetime_cagr"])]
+          def years(row):
+              return (date.fromisoformat(row["price_end_date"]) - date.fromisoformat(row["price_start_date"])).days / 365.25
+          eligible = sorted([row for row in calculable if years(row) >= ETF_MINIMUM_YEARS], key=lambda row: row["lifetime_cagr"], reverse=True)
+          records = {row["ticker"]: row for row in pool}
+          selected = [records[ticker] for ticker in manifest["etf"]]
+          assert len(selected) == min(ETF_COMPARISON_LIMIT, len(eligible))
+          assert all(years(row) >= ETF_MINIMUM_YEARS for row in selected)
+          assert [row["lifetime_cagr"] for row in selected] == [row["lifetime_cagr"] for row in eligible[:ETF_COMPARISON_LIMIT]]
+          print("ETF_SELECTION_VERIFIED:" + json.dumps({"minimum_years": ETF_MINIMUM_YEARS, "limit": ETF_COMPARISON_LIMIT, "pool": len(pool), "calculable": len(calculable), "eligible": len(eligible), "excluded_below_minimum": len(calculable) - len(eligible), "displayed": len(selected), "minimum_displayed_years": min((years(row) for row in selected), default=None)}, ensure_ascii=False), flush=True)
+          for ticker in ("225040", "418660", "409820"):
+              row = records[ticker]
+              rank = next((index for index, candidate in enumerate(eligible, 1) if candidate is row), None)
+              print("KR_ETF_SELECTION_RANK:" + json.dumps({"ticker": ticker, "lifetime_cagr": row["lifetime_cagr"], "lifetime_years": years(row), "eligible_rank": rank, "displayed_rank": manifest["etf"].index(ticker) + 1 if ticker in manifest["etf"] else None}, ensure_ascii=False), flush=True)
+          PY
 
       - name: 🖥️ 한미 HTML 글자·양식·전체 종목·확대 글꼴 검증
         run: python tools/preview_email.py --html work/email-body.html --manifest work/report-manifest.json --reference work/email-reference.html
