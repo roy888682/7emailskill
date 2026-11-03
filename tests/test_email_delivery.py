@@ -226,10 +226,12 @@ class EmailDeliveryTests(unittest.TestCase):
         us = [next(row for row in data["us"] if row.get("asset_type") == "ETF")]
         tqqq = dict(next(row for row in data["us"] if row.get("ticker") == "TQQQ"), gap=-28.6)
         comparison_etfs = [us[0], tqqq]
-        html = render_email(us, [], info, 1342, etf_info=build_etf_info(us, [], comparison_etfs=comparison_etfs))
+        etf_info = build_etf_info(us, [], comparison_etfs=comparison_etfs)
+        html = render_email(us, [], info, 1342, etf_info=etf_info, etf_low_rows=etf_info["rows_low"])
         manifest = inventory(html)
         self.assertNotIn("TQQQ", manifest["us"])
         self.assertIn("TQQQ", manifest["etf"])
+        self.assertIn("TQQQ", manifest["etf_low"])
         market_proof = bind_market_date_proof(html, manifest, validate_etf_market_dates(us, [], info, comparison_etfs=comparison_etfs))
         self.assertEqual(market_proof["etfs"][0]["date_status"], "latest_available")
         comparison_only = next(row for row in market_proof["etfs"] if row["ticker"] == "TQQQ")
@@ -249,6 +251,12 @@ class EmailDeliveryTests(unittest.TestCase):
                 os.chdir(directory)
                 Path("work").mkdir()
                 Path("work/email-body.html").write_text(html, encoding="utf-8")
+                old_manifest = {key: values for key, values in manifest.items() if key != "etf_low"}
+                Path("work/report-manifest.json").write_text(json.dumps(old_manifest), encoding="utf-8")
+                with patch("src.main.send_email") as send:
+                    with self.assertRaisesRegex(RuntimeError, "missing the low-to-high ETF comparison"):
+                        send_prepared()
+                    send.assert_not_called()
                 Path("work/report-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
                 Path("work/market-date-proof.json").write_bytes(market_bytes)
                 Path("work/email-subject.txt").write_text("test", encoding="utf-8")

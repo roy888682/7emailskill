@@ -24,7 +24,7 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -68,7 +68,7 @@ jobs:
                   start_date = ("2025-04-01", "2023-10-08", "2023-10-07")[index]
                   row["price_start_date"] = row["first_date"] = start_date
                   row["lifetime_years"] = (date.fromisoformat(row["price_end_date"]) - date.fromisoformat(start_date)).days / 365.25
-              row["lifetime_cagr"] = 40.0 - index * .2
+              row["lifetime_cagr"] = 40.0 - index * .4
               if index in (0, 1):
                   row["lifetime_cagr"] = 400.0 - index
               row["cumulative_return"] = ((1 + row["lifetime_cagr"] / 100) ** row["lifetime_years"] - 1) * 100
@@ -122,19 +122,28 @@ jobs:
           assert data["etf_info"]["pool"] == 363 and data["etf_info"]["with_ret"] == 362
           assert data["etf_info"]["eligible_count"] == 360 and data["etf_info"]["below_minimum_years"] == 2
           assert len(data["etf_info"]["rows"]) == 300
+          low_rows = data["etf_info"]["rows_low"]
+          assert len(low_rows) == 300
+          assert low_rows[0]["ticker"] == cohort[-1]["ticker"]
+          assert low_rows[0]["lifetime_cagr"] < 0
+          assert all(row["lifetime_years"] >= 3 for row in low_rows)
+          assert [row["lifetime_cagr"] for row in low_rows] == sorted(row["lifetime_cagr"] for row in low_rows)
+          assert len({row["ticker"] for row in low_rows} & {row["ticker"] for row in data["etf_info"]["rows"]}) == 240
           assert all(row["lifetime_years"] >= 3 for row in data["etf_info"]["rows"])
           assert not {cohort[0]["ticker"], cohort[1]["ticker"]} & {row["ticker"] for row in data["etf_info"]["rows"]}
           assert cohort[2]["ticker"] in {row["ticker"] for row in data["etf_info"]["rows"]}
           data["new_us"] = data["us"][:5] + data["us"][75:99]
           data["new_kr"] = data["kr"][:1] + data["kr"][4:7]
-          for row in data["us"] + data["kr"] + data["etf_info"]["rows"]:
+          for row in data["us"] + data["kr"] + data["etf_info"]["rows"] + low_rows:
               row["name"] = ("한국반도체인공지능산업솔루션 " if row["market"] != "US" else "Semiconductor Infrastructure Holdings ") + row["ticker"]
               row["industry"] = row["investment_area"] = "반도체 장비 및 인공지능 인프라"
               row["index"] = ["S&P500", "NASDAQ"] if row["market"] == "US" else ["KOSPI"]
           directory = Path("work")
           directory.mkdir(exist_ok=True)
+          data["etf_low_rows"] = low_rows
           html = render_email(**data)
           manifest = manifest_for(data)
+          assert manifest["etf_low"] == [row["ticker"] for row in low_rows]
           (directory / "email-body.html").write_text(html, encoding="utf-8")
           (directory / "email-reference.html").write_text(render_email(**data, compact=False), encoding="utf-8")
           (directory / "report-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")

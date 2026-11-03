@@ -1,6 +1,12 @@
 name: 📈 Daily ATH Stock Email
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'tools/**'
   schedule:
     - cron: '0 22 * * 1-5'   # UTC 월~금 22:00 = KST 화~토 07:00 (일·월 발송 없음)
   workflow_dispatch:
@@ -81,6 +87,42 @@ jobs:
 
       - name: 📄 전체 본문 준비 (아직 발송하지 않음)
         run: python src/main.py --prepare-only
+
+      - name: Verify both ETF rankings against the complete audit
+        run: |
+          python - <<'PY'
+          import json
+          import math
+          from datetime import date
+          from pathlib import Path
+          from src.email_layout import ETF_COMPARISON_LIMIT, ETF_MINIMUM_YEARS
+
+          work = Path("work")
+          proof = json.loads((work / "market-date-proof.json").read_text(encoding="utf-8"))
+          manifest = json.loads((work / "report-manifest.json").read_text(encoding="utf-8"))
+          eligible = {}
+          for row in proof["etfs"]:
+              value = row.get("lifetime_cagr")
+              if not row["in_comparison_universe"] or not isinstance(value, (int, float)) or not math.isfinite(value):
+                  continue
+              elapsed_days = (date.fromisoformat(row["price_end_date"]) - date.fromisoformat(row["price_start_date"])).days
+              if elapsed_days / 365.25 >= ETF_MINIMUM_YEARS:
+                  eligible[row["ticker"]] = value
+          rankings = {}
+          for key, descending in (("etf", True), ("etf_low", False)):
+              tickers = manifest[key]
+              observed = [eligible[ticker] for ticker in tickers]
+              expected = sorted(eligible.values(), reverse=descending)[:ETF_COMPARISON_LIMIT]
+              assert len(tickers) == len(set(tickers)) and observed == expected
+              rankings[key] = {"count": len(tickers),
+                               "first": [tickers[0], observed[0]] if tickers else None,
+                               "last": [tickers[-1], observed[-1]] if tickers else None}
+          print("ETF_RANKINGS_VERIFIED:" + json.dumps({
+              "eligible": len(eligible), "minimum_years": ETF_MINIMUM_YEARS,
+              "limit": ETF_COMPARISON_LIMIT, "rankings": rankings,
+              "overlap": len(set(manifest["etf"]) & set(manifest["etf_low"])),
+          }), flush=True)
+          PY
 
       - name: 🖥️ 한미 HTML 글자·양식·전체 종목·확대 글꼴 검증
         run: python tools/preview_email.py --html work/email-body.html --manifest work/report-manifest.json --reference work/email-reference.html

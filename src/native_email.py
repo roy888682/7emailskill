@@ -14,11 +14,10 @@ else:
 CLIPPING_HTML_BYTES = 75000
 CLIPPING_CANONICAL_BYTES = 90000
 # Bound resource usage separately from a mail client's display threshold.
-# A complete 300-ETF comparison plus country/new tables exceeds the former
-# 1 MB resource guard. Keep every row inline within an explicit bounded budget.
-MAX_SOURCE_BYTES = 2000000
-MAX_HTML_BYTES = 2000000
-MAX_CANONICAL_BYTES = 2500000
+# Both 300-row ETF rankings and the country tables share this inline budget.
+MAX_SOURCE_BYTES = 3500000
+MAX_HTML_BYTES = 3500000
+MAX_CANONICAL_BYTES = 4500000
 MAX_STYLE_CHARACTERS = 8192
 
 def validate_source_size(html):

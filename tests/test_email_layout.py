@@ -124,9 +124,11 @@ class EmailLayoutTests(unittest.TestCase):
 
     def test_three_year_ranking_keeps_short_etfs_in_country_new_and_complete_audit(self):
         data, items = self.minimum_year_data()
+        data["etf_low_rows"] = data["etf_info"]["rows_low"]
         source, manifest = render_email(**data), manifest_for(data)
         proof = validate_etf_market_dates(data["us"], data["kr"], data["info"], comparison_etfs=items)
         self.assertEqual(manifest["etf"], ["LONG1096", "LONGLOW"])
+        self.assertEqual(manifest["etf_low"], ["LONGLOW", "LONG1096"])
         self.assertIn("SHORT1095", manifest["us"])
         self.assertIn("US:SHORT1095", manifest["new"])
         record = next(row for row in proof["etfs"] if row["ticker"] == "SHORT1095")
@@ -141,7 +143,7 @@ class EmailLayoutTests(unittest.TestCase):
     def test_rank_proof_rejects_rounded_short_age_reintroduction_missing_rows_and_wrong_order(self):
         data, items = self.minimum_year_data()
         proof = validate_etf_market_dates(data["us"], data["kr"], data["info"], comparison_etfs=items)
-        for kind in ("reintroduce_short", "omit_eligible", "wrong_order", "rounded_age"):
+        for kind in ("reintroduce_short", "omit_eligible", "wrong_order", "wrong_low_order", "rounded_age"):
             altered = copy.deepcopy(data)
             altered_proof = copy.deepcopy(proof)
             if kind == "reintroduce_short":
@@ -150,6 +152,8 @@ class EmailLayoutTests(unittest.TestCase):
                 altered["etf_info"]["rows"].pop()
             elif kind == "wrong_order":
                 altered["etf_info"]["rows"].reverse()
+            elif kind == "wrong_low_order":
+                altered["etf_low_rows"] = altered["etf_info"]["rows"]
             else:
                 next(row for row in altered_proof["etfs"] if row["ticker"] == "SHORT1095")["lifetime_years"] = 3.0
             source, manifest = render_email(**altered), manifest_for(altered)
@@ -243,13 +247,22 @@ class EmailLayoutTests(unittest.TestCase):
         doc = BeautifulSoup(body, "html5lib")
         self.assertNotIn("n",doc.select("#us th")[3].get("class",[]))
     def test_etf_is_the_first_data_table_and_new_lists_stay_complete(self):
+        self.data["etf_low_rows"] = list(reversed(self.data["etf_info"]["rows"]))
         body = render_email(**self.data)
         self.assertEqual(inventory(body)["new"],
                          ["KR:"+row["ticker"] for row in self.data["new_kr"]] +
                          ["US:"+row["ticker"] for row in self.data["new_us"]])
         doc = BeautifulSoup(body, "html5lib")
         self.assertEqual([table.get("id") for table in doc.select("table.data-table")],
-                         ["returns", "new-kr", "new-us", "kr", "us"])
+                         ["returns", "returns-low", "new-kr", "new-us", "kr", "us"])
+        self.assertEqual([title.get_text() for title in doc.select("#etf h2, #etf-low h2")],
+                         ["ETF 연평균수익률 비교 <높은순>", "ETF 연평균수익률 비교 <낮은순>"])
+        self.assertEqual(doc.select_one("#etf").find_next_sibling()["id"], "etf-low")
+        self.assertEqual([cell.get_text() for cell in doc.select("#returns thead th")],
+                         [cell.get_text() for cell in doc.select("#returns-low thead th")])
+        self.assertEqual([cell.get_text() for cell in doc.select("#returns-low tbody tr > td:first-child")],
+                         [str(rank) for rank in range(1, len(self.data["etf_low_rows"]) + 1)])
+        self.assertEqual(inventory(body)["etf_low"], [row["ticker"] for row in self.data["etf_low_rows"]])
         self.assertLess(body.index('id=etf'), body.index('id=new-stocks'))
         self.assertIn("ATH 후보 · ETF 연환산 순위", doc.get_text())
         self.assertNotIn("All Time High −10% 이내", doc.get_text())
@@ -427,8 +440,8 @@ class EmailLayoutTests(unittest.TestCase):
         self.assertEqual(row_size({"asset_type":"ETF","aum":1.4,"mcap":9}),"1조원")
         self.assertEqual(row_size({"asset_type":"ETF","aum":None,"mcap":.0034}),"34억원")
         self.assertEqual(industry_text({"asset_type":"ETF","investment_area":"반도체"}),"반도체")
-        body=render_email([],[],self.data["info"],1342)
-        self.assertEqual(inventory(body),{"us":[],"kr":[],"new":[],"etf":[]})
+        body=render_email([],[],self.data["info"],1342,etf_low_rows=[])
+        self.assertEqual(inventory(body),{"us":[],"kr":[],"new":[],"etf":[],"etf_low":[]})
         self.assertIn("해당 ETF 없음",body)
     def test_long_untrusted_text_is_escaped(self):
         row = self.data["etf_info"]["rows"][0]

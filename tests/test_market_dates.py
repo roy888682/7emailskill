@@ -338,7 +338,7 @@ class MarketDateSynchronizationTests(unittest.TestCase):
                     "initial_adjusted_price", "latest_adjusted_price"):
             self.assertIsNone(item.get(key), key)
         self.assertEqual(item["period_returns"], {key:None for key in ("ytd", "1y", "3y", "5y", "10y")})
-        self.assertEqual(build_etf_info(candidates, []), {"rows":[], "pool":1, "with_ret":0,
+        self.assertEqual(build_etf_info(candidates, []), {"rows":[], "rows_low":[], "pool":1, "with_ret":0,
                                                         "eligible_count":0, "below_minimum_years":0})
         mixed = dict(item, latest_adjusted_price=123.0)
         with self.assertRaises(RuntimeError):
