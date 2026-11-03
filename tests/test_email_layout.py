@@ -6,7 +6,7 @@ from bs4 import BeautifulSoup
 from src.email_layout import (render_email, etf_section_html, inception_text,
                               row_size, row_size_html, aum, industry_text, inventory, validate_size,
                               validate_inventory, MAX_EMAIL_BYTES, CSS, compact_transport_html, security_count,
-                              elapsed_years_text, price_text, brief_investment_text,
+                              elapsed_years_text, price_text, initial_price_html, brief_investment_text,
                               validate_etf_date_proof, validate_period_return_evidence,
                               management_style_text, management_style_title, validate_management_style_evidence)
 from tools.preview_email import sample_data, make_stock, manifest_for, set_sample_period_returns
@@ -594,6 +594,46 @@ class EmailLayoutTests(unittest.TestCase):
             self.assertEqual(price_text(value), "-")
             self.assertEqual(price_text(value, initial=True), "-")
         self.assertEqual(inception_text({"inception":"2026-10-02","inception_verified":False}), "미확인")
+
+    def test_subunit_initial_prices_are_red_using_the_exact_value_before_rounding(self):
+        cases = ((.2051851749420166, "0.21", True), (.999, "1.00", True),
+                 (.9999999999996, "1.00", True), (1.0, "1", False),
+                 (1.999, "1", False), (None, "-", False), (0, "-", False),
+                 (float("nan"), "-", False), (True, "-", False))
+        for value, text, red in cases:
+            with self.subTest(value=value):
+                doc = BeautifulSoup(initial_price_html(value), "html5lib")
+                self.assertEqual(doc.get_text(), text)
+                self.assertEqual(len(doc.select(".initial-price-small")), int(red))
+        self.assertIn(".initial-price-small{color:#c23932}", CSS)
+        row = self.data["etf_info"]["rows"][0]
+        row.update(initial_adjusted_price=.999, latest_adjusted_price=.5)
+        doc = BeautifulSoup(render_email(**self.data), "html5lib")
+        cells = doc.select_one("#returns tbody tr").find_all("td", recursive=False)
+        self.assertEqual(cells[17].select_one(".initial-price-small").get_text(), "1.00")
+        self.assertIsNone(cells[18].select_one(".initial-price-small"))
+        self.assertEqual(cells[18].get_text(), "0")
+
+    def test_exact_price_audit_rejects_missing_or_misplaced_subunit_red_markers(self):
+        source = render_email(**self.data)
+        manifest, proof = manifest_for(self.data), self.market_proof()
+        self.assertEqual(validate_etf_date_proof(source, manifest, proof), proof["market_dates"])
+        for change in ("remove_initial_marker", "mark_latest_price"):
+            with self.subTest(change=change):
+                doc = BeautifulSoup(source, "html5lib")
+                if change == "remove_initial_marker":
+                    marker = doc.select_one("#returns .initial-price-small")
+                    self.assertIsNotNone(marker)
+                    marker.unwrap()
+                else:
+                    cell = doc.select_one("#returns tbody tr").find_all("td", recursive=False)[18]
+                    marker = doc.new_tag("span", attrs={"class": "initial-price-small"})
+                    clip = cell.select_one(".cl")
+                    for child in list(clip.contents):
+                        marker.append(child.extract())
+                    clip.append(marker)
+                with self.assertRaisesRegex(RuntimeError, "sub-unit initial price emphasis"):
+                    validate_etf_date_proof(str(doc), manifest, proof)
 
     def test_brief_etf_investment_labels_are_next_to_the_security_name(self):
         self.assertEqual(brief_investment_text({"asset_type":"ETF","etf_index":"NASDAQ-100 Index"}), "나스닥100")

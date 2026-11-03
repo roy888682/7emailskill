@@ -32,6 +32,19 @@ class EtfMetadataTests(unittest.TestCase):
         self.assertEqual(enrich_us_etf("TEST", "Example ETF", 1400)["investment_area"], "미국 대형 성장")
 
     @patch("src.main.yf.Ticker")
+    def test_gbtc_keeps_trust_and_public_quote_dates_separate_from_etf_listing(self, ticker):
+        ticker.return_value.info = {"fundInceptionDate": 1380067200}
+        result = enrich_us_etf("GBTC", "Grayscale Bitcoin Trust ETF", 1400)
+        self.assertEqual(result["inception"], "2024-01-11")
+        self.assertEqual(result["inception_label"], "ETF 전환·상장일")
+        self.assertTrue(result["inception_verified"])
+        self.assertEqual(result["trust_inception"], "2013-09-25")
+        self.assertEqual(result["public_quotation_date"], "2015-05-04")
+        self.assertEqual(result["etf_listing_date"], "2024-01-11")
+        self.assertEqual(result["inception_url"], "https://etfs.grayscale.com/gbtc")
+        self.assertNotIn("predecessor_inception", result)
+
+    @patch("src.main.yf.Ticker")
     def test_lookup_failure_keeps_explicit_name_based_fallback(self, ticker):
         ticker.side_effect = RuntimeError("unavailable")
         result = enrich_us_etf("TEST", "Example ETF", 1400)

@@ -83,6 +83,30 @@ class NativeEmailTests(unittest.TestCase):
             delivered = BeautifulSoup(delivery, "html5lib").select_one("#etf-market-dates")
             self.assertEqual(str(delivered), str(original))
 
+    def test_native_delivery_preserves_only_subunit_initial_price_red_text(self):
+        data = sample_data()
+        cases = ((.2051851749420166, "0.21", True), (.999, "1.00", True),
+                 (.9999999999996, "1.00", True), (1.0, "1", False),
+                 (1.999, "1", False), (None, "-", False))
+        for row, (initial, _, _) in zip(data["etf_info"]["rows"], cases):
+            row.update(initial_adjusted_price=initial, latest_adjusted_price=.5)
+        source, manifest = render_email(**data), manifest_for(data)
+        with tempfile.TemporaryDirectory() as directory:
+            delivery, meta = native_email.prepare(source, manifest, directory)
+            self.assertEqual(native_email.verify_package(source, delivery, manifest, meta, directory), {})
+            for html in (source, delivery):
+                doc = BeautifulSoup(html, "html5lib")
+                css = "".join(str(tag.string or "") for tag in doc.find_all("style"))
+                self.assertIn(".initial-price-small{color:#c23932}", css)
+                for tr, (_, text, red) in zip(doc.select("#returns tbody tr"), cases):
+                    cells = tr.find_all("td", recursive=False)
+                    markers = cells[17].select(".initial-price-small")
+                    self.assertEqual(len(markers), int(red))
+                    self.assertEqual(cells[17].get_text(), text)
+                    self.assertEqual(cells[18].get_text(), "0")
+                    self.assertIsNone(cells[18].select_one(".initial-price-small"))
+                    self.assertEqual(cells[17]["title"], cells[17].select_one(".cl")["title"].split(" · ", 1)[1])
+
     def test_native_css_centers_the_two_date_columns_and_aligns_ytd_numbers(self):
         css = native_email._column_css()
         for column in (16, 17):

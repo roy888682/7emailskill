@@ -316,6 +316,14 @@ US_ETF_VERIFIED_LAUNCH = {
     "TQQQ": {"inception": "2010-02-09", "inception_label": "ETF 설립일",
              "inception_source": "ProShares 상품 공시 설립일",
              "inception_url": "https://www.proshares.com/our-etfs/leveraged-and-inverse/tqqq"},
+    # The legal trust began in 2013 and its shares were quoted OTC in 2015.
+    # Grayscale's current ETP performance explicitly starts at the 2024 uplisting;
+    # do not combine the former OTC premium/discount history with ETF returns.
+    "GBTC": {"inception": "2024-01-11", "inception_label": "ETF 전환·상장일",
+             "trust_inception": "2013-09-25", "public_quotation_date": "2015-05-04",
+             "etf_listing_date": "2024-01-11",
+             "inception_source": "Grayscale ETF 전환·상장일(신탁 설립 2013-09-25·OTC 공개호가 2015-05-04)",
+             "inception_url": "https://etfs.grayscale.com/gbtc"},
     # DFAC's 2026-10-02 date is a share-class reorganization. Its original ETF
     # launch was 2021-06-14; the predecessor mutual fund began on 2007-10-04.
     # Price returns below start with exchange-traded ETF history, not its
@@ -574,7 +582,8 @@ def validate_etf_market_dates(us, kr, info, comparison_etfs=None):
                "KR": _performance_date(info.get("kr_last"))}
     audit, errors, seen = [], [], set()
     groups, ath_members, comparison_members = _etf_audit_universes(us, kr, comparison_etfs)
-    keys = ("inception", "inception_source", "inception_verified", "inception_label",
+    keys = ("inception", "inception_source", "inception_verified", "inception_label", "inception_url",
+            "trust_inception", "public_quotation_date", "etf_listing_date",
             "return_ytd", "return1y", "return3y", "return5y", "return10y", "period_returns", "cumulative_return",
             "cumulative_growth", "lifetime_cagr", "lifetime_years", "return_as_of",
             "initial_adjusted_price", "latest_adjusted_price", "price_basis", "price_currency",
@@ -656,7 +665,7 @@ def _refresh_etf_market_history(item, country, anchor):
         raise RuntimeError("refetched price dates are not strictly increasing")
     original_first = _performance_date(item.get("price_start_date") or item.get("first_date"))
     if cutoff is not None and original_first is not None and original_first < cutoff:
-        original_first = cutoff  # The explicitly excluded predecessor NAV is not ETF price history.
+        original_first = cutoff  # Excluded predecessor NAV/OTC observations are not ETF price history.
     if original_first is not None and pairs[0][0] > original_first:
         raise RuntimeError("refetched history would discard previously available initial prices")
     dates, prices = [day for day, _ in pairs], [price for _, price in pairs]
@@ -1891,7 +1900,7 @@ def send_email(html, subject, inline_images=None, source_html=None):
     log.info("SMTP_ACCEPTED: %s", json.dumps(receipt, ensure_ascii=False))
     log.info("✅ SMTP 접수 성공 · 수신함 도착 여부는 별도 확인")
 
-CODE_VERSION = "2026-11-03-etf-minimum-three-year-top300"
+CODE_VERSION = "2026-11-03-gbtc-etf-period-and-subunit-price-color"
 
 def main(prepare_only=False):
     log.info(f"=== ATH 리포트 시작 (코드버전: {CODE_VERSION}) ===")
