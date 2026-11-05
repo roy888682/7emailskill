@@ -77,8 +77,8 @@ class NativeEmailTests(unittest.TestCase):
                 for row in BeautifulSoup(html, "html5lib").select("#returns tbody tr"):
                     cells = row.find_all("td", recursive=False)
                     self.assertEqual(len(cells), 19)
-                    self.assertEqual(cells[16].get_text(), "26-10-07")
-                    self.assertIn("2026-10-07", cells[16]["title"])
+                    self.assertEqual(cells[14].get_text(), "26-10-07")
+                    self.assertIn("2026-10-07", cells[14]["title"])
             original = BeautifulSoup(source, "html5lib").select_one("#etf-market-dates")
             delivered = BeautifulSoup(delivery, "html5lib").select_one("#etf-market-dates")
             self.assertEqual(str(delivered), str(original))
@@ -100,41 +100,39 @@ class NativeEmailTests(unittest.TestCase):
                 self.assertIn(".initial-price-small{color:#c23932}", css)
                 for tr, (_, text, red) in zip(doc.select("#returns tbody tr"), cases):
                     cells = tr.find_all("td", recursive=False)
-                    markers = cells[17].select(".initial-price-small")
+                    markers = cells[15].select(".initial-price-small")
                     self.assertEqual(len(markers), int(red))
-                    self.assertEqual(cells[17].get_text(), text)
-                    self.assertEqual(cells[18].get_text(), "0")
-                    self.assertIsNone(cells[18].select_one(".initial-price-small"))
-                    self.assertEqual(cells[17]["title"], cells[17].select_one(".cl")["title"].split(" · ", 1)[1])
+                    self.assertEqual(cells[15].get_text(), text)
+                    self.assertEqual(cells[16].get_text(), "0")
+                    self.assertIsNone(cells[16].select_one(".initial-price-small"))
+                    self.assertEqual(cells[15]["title"], cells[15].select_one(".cl")["title"].split(" · ", 1)[1])
 
     def test_native_css_centers_the_two_date_columns_and_aligns_ytd_numbers(self):
         css = native_email._column_css()
-        for column in (16, 17):
+        for column in (14, 15):
             self.assertIn(native_email._selectors((".v",), column) +
-                          "{text-align:center;font-variant-numeric:normal;font-size:12.35px}", css)
-        self.assertIn(native_email._selectors((".v",), 18) +
-                      "{text-align:right;font-variant-numeric:tabular-nums;font-size:13px}", css)
-        self.assertIn(native_email._selectors((".v",), 7) +
+                          "{text-align:center;font-variant-numeric:normal;font-size:10.4975px}", css)
+        self.assertIn(native_email._selectors((".v",), 16) +
+                      "{text-align:right;font-variant-numeric:tabular-nums;font-size:11.05px}", css)
+        self.assertIn(native_email._selectors((".v",), 5) +
                       "{text-align:right;font-variant-numeric:tabular-nums}", css)
-        self.assertIn(native_email._selectors((".v",), 6) +
-                      "{text-align:center;font-variant-numeric:normal}", css)
+        self.assertIn(native_email._selectors((".v",), 19) +
+                      "{text-align:center}", css)
         source, expected = fixture(3)
         with tempfile.TemporaryDirectory() as directory:
             delivery, meta = native_email.prepare(source, expected, directory)
             self.assertEqual(native_email.verify_package(source, delivery, expected, meta, directory), {})
             table = BeautifulSoup(delivery, "html5lib").select_one("#returns")
             headings = [cell.get_text() for cell in table.select("thead th")]
-            self.assertEqual(headings[5], "운용방식")
-            self.assertEqual(headings[6:11], ["연초", "1년", "2년", "3년", "10년"])
-            self.assertEqual(headings[12], "연평균")
-            self.assertIn("cagr", table.select("thead th")[12].get("class", []))
+            self.assertEqual(headings, ["No", "국가", "티커", "종목명", "연환산", "연초", "1년", "2년", "3년", "10년",
+                                        "누적", "누적년수", "시총", "설립일", "수익률기준일", "최초가", "최근가", "업종,투자", "운용방식"])
+            self.assertIn("cagr", table.select("thead th")[4].get("class", []))
             css_text = "\n".join(str(style.string or "") for style in table.find_parent("html").find_all("style"))
             self.assertIn(".data-table .cagr{font-weight:bold;background:#fff2cc}", css_text)
             self.assertIn(".data-table th.cagr{background:#76551b;color:#fff}", css_text)
-            self.assertEqual(headings[13:19], ["누적연수", "AUM·시총(원화)", "설립·상장일", "수익률 기준일", "최초주가", "최근주가"])
             for row in table.select("tbody tr"):
                 cells = row.find_all("td", recursive=False)
-                self.assertEqual([i for i, cell in enumerate(cells) if "cagr" in cell.get("class", [])], [12])
+                self.assertEqual([i for i, cell in enumerate(cells) if "cagr" in cell.get("class", [])], [4])
 
     def test_long_ticker_cells_keep_the_bold_clipping_parent_only_in_column_three(self):
         data = sample_data()
@@ -238,7 +236,7 @@ class NativeEmailTests(unittest.TestCase):
                 rows = doc.select("#" + table_id + " tbody tr")
                 self.assertEqual([row.find("td").get_text(strip=True) for row in rows],
                                  [str(number) for number in range(1, count + 1)])
-            prices = doc.select_one("#returns tbody tr").find_all("td", recursive=False)[17:19]
+            prices = doc.select_one("#returns tbody tr").find_all("td", recursive=False)[15:17]
             for cell, displayed, exact in zip(prices, ("0.00", "123,456"),
                                               ("1.23456789012e-05", "123456.987654")):
                 self.assertEqual(cell.get_text(), displayed)

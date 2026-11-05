@@ -1900,7 +1900,7 @@ def send_email(html, subject, inline_images=None, source_html=None):
     log.info("SMTP_ACCEPTED: %s", json.dumps(receipt, ensure_ascii=False))
     log.info("✅ SMTP 접수 성공 · 수신함 도착 여부는 별도 확인")
 
-CODE_VERSION = "2026-11-05-one-year-etf-ranking-highlighted-cagr"
+CODE_VERSION = "2026-11-05-reordered-etf-columns-85-percent-fonts"
 
 def main(prepare_only=False):
     log.info(f"=== ATH 리포트 시작 (코드버전: {CODE_VERSION}) ===")

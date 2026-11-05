@@ -72,16 +72,17 @@ def _column_css():
         (1, "text-align:right;font-variant-numeric:tabular-nums"),
         (2, "text-align:center;font-variant-numeric:normal"),
         (3, "text-align:left"),
-        (6, "text-align:center;font-variant-numeric:normal"),
-        (7, "text-align:right;font-variant-numeric:tabular-nums"),
-        (8, "text-align:right;font-variant-numeric:tabular-nums;background:#eaf1fb;color:#c23932"),
-        (9, "background:transparent;color:#245ba6"),
-        (10, "color:#087d67"),
-        (11, "color:#7944b0"),
-        (12, "color:#17263d"),
-        (16, "text-align:center;font-variant-numeric:normal;font-size:12.35px"),
-        (17, "text-align:center;font-variant-numeric:normal;font-size:12.35px"),
-        (18, "text-align:right;font-variant-numeric:tabular-nums;font-size:13px"),
+        (5, "text-align:right;font-variant-numeric:tabular-nums"),
+        (7, "background:#eaf1fb;color:#c23932"),
+        (8, "background:transparent;color:#245ba6"),
+        (9, "color:#087d67"),
+        (10, "color:#7944b0"),
+        (11, "color:#17263d"),
+        (14, "text-align:center;font-variant-numeric:normal;font-size:10.4975px"),
+        (15, "text-align:center;font-variant-numeric:normal;font-size:10.4975px"),
+        (16, "text-align:right;font-variant-numeric:tabular-nums;font-size:11.05px"),
+        (18, "text-align:left;font-variant-numeric:normal"),
+        (19, "text-align:center"),
     )
     for column, declarations in rules:
         groups.append(_selectors(etfs, column) + "{" + declarations + "}")
@@ -90,7 +91,8 @@ def _column_css():
 def _numbers(doc):
     for table in doc.select("table.data-table"):
         heading = table.select_one("thead th")
-        if heading is None or heading.get_text(strip=True) != "No.":
+        expected_heading = "No" if table.get("id") == "returns" else "No."
+        if heading is None or heading.get_text(strip=True) != expected_heading:
             raise RuntimeError("A native table is missing its No. heading")
         for number, row in enumerate(table.select("tbody tr"), 1):
             cells = row.find_all("td", recursive=False)

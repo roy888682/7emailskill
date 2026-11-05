@@ -177,20 +177,20 @@ class EmailLayoutTests(unittest.TestCase):
                     node = doc.select_one('#etf-market-dates [aria-label="US market date"]')
                     node["title"] = "2026-10-06"
                 elif field == "period_date":
-                    cell = doc.select_one("#returns tbody tr").find_all("td", recursive=False)[8]
+                    cell = doc.select_one("#returns tbody tr").find_all("td", recursive=False)[7]
                     cell["title"] = cell["title"] + " changed"
                 elif field == "return_date":
-                    cell = doc.select_one("#returns tbody tr").find_all("td", recursive=False)[16]
+                    cell = doc.select_one("#returns tbody tr").find_all("td", recursive=False)[14]
                     cell.select_one(".cl").string = "26-10-06"
                 elif field == "period_heading":
-                    doc.select("#returns thead th")[8].select_one(".cl").string = "5년"
+                    doc.select("#returns thead th")[7].select_one(".cl").string = "5년"
                 elif field == "annualized_weight":
-                    cell = doc.select_one("#returns tbody tr").find_all("td", recursive=False)[12]
+                    cell = doc.select_one("#returns tbody tr").find_all("td", recursive=False)[4]
                     cell["class"].remove("cagr")
                 elif field == "obsolete_section":
                     doc.select_one("#etf").insert_after(doc.new_tag("div", id="etf-low"))
                 else:
-                    cell = doc.select_one("#returns tbody tr").find_all("td", recursive=False)[18]
+                    cell = doc.select_one("#returns tbody tr").find_all("td", recursive=False)[16]
                     if field == "date":
                         cell["title"] = cell["title"].replace("2026-10-07", "2026-10-06")
                     else:
@@ -281,38 +281,37 @@ class EmailLayoutTests(unittest.TestCase):
         for item,row in zip(self.data["etf_info"]["rows"],rows):
             cells=row.find_all("td",recursive=False)
             self.assertEqual(len(cells),19)
-            for index,key in zip((6,7,8,9,10,11,12),("return_ytd","return1y","return2y","return3y","return10y","cumulative_return","lifetime_cagr")):
+            for index,key in zip((5,6,7,8,9,10,4),("return_ytd","return1y","return2y","return3y","return10y","cumulative_return","lifetime_cagr")):
                 value=item.get(key)
                 self.assertEqual(cells[index].get_text(),f"{value:.1f}" if value is not None else "-")
-            self.assertEqual(cells[4].get_text(),brief_investment_text(item))
-            self.assertEqual(cells[5].get_text(),management_style_text(item))
-            self.assertEqual(cells[17].get_text(),price_text(item.get("initial_adjusted_price"), initial=True))
-            self.assertEqual(cells[18].get_text(),price_text(item.get("latest_adjusted_price")))
-            self.assertEqual(cells[13].get_text(),elapsed_years_text(item.get("lifetime_years")))
-            self.assertEqual(cells[14].get_text(),row_size(dict(item,asset_type="ETF")))
-            self.assertEqual(cells[15].get_text(),inception_text(item))
-            self.assertEqual(cells[16].get_text(), item["price_end_date"][2:])
-            self.assertIn(item["price_end_date"], cells[16]["title"])
-            self.assertIn(item["price_end_date"], cells[16].select_one(".cl")["title"])
-            self.assertEqual([cells[i].get("class",[])[-1] for i in range(7,11)],["p1","p2","p3","p10"])
-            self.assertEqual([index for index, cell in enumerate(cells) if "cagr" in cell.get("class", [])], [12])
+            self.assertEqual(cells[17].get_text(),brief_investment_text(item))
+            self.assertEqual(cells[18].get_text(),management_style_text(item))
+            self.assertEqual(cells[15].get_text(),price_text(item.get("initial_adjusted_price"), initial=True))
+            self.assertEqual(cells[16].get_text(),price_text(item.get("latest_adjusted_price")))
+            self.assertEqual(cells[11].get_text(),elapsed_years_text(item.get("lifetime_years")))
+            self.assertEqual(cells[12].get_text(),row_size(dict(item,asset_type="ETF")))
+            self.assertEqual(cells[13].get_text(),inception_text(item))
+            self.assertEqual(cells[14].get_text(), item["price_end_date"][2:])
+            self.assertIn(item["price_end_date"], cells[14]["title"])
+            self.assertIn(item["price_end_date"], cells[14].select_one(".cl")["title"])
+            self.assertEqual([cells[i].get("class",[])[-1] for i in range(6,10)],["p1","p2","p3","p10"])
+            self.assertEqual([index for index, cell in enumerate(cells) if "cagr" in cell.get("class", [])], [4])
     def test_short_headings_ytd_order_and_centered_dates_keep_readable_fonts(self):
         doc = BeautifulSoup(render_email(**self.data), "html5lib")
         table = doc.select_one("#returns")
         headings = [cell.get_text() for cell in table.select("thead th")]
-        self.assertEqual(headings[5], "운용방식")
-        self.assertEqual(headings[6:13], ["연초", "1년", "2년", "3년", "10년", "누적", "연평균"])
-        self.assertEqual(headings[13:19], ["누적연수", "AUM·시총(원화)", "설립·상장일", "수익률 기준일", "최초주가", "최근주가"])
+        self.assertEqual(headings, ["No", "국가", "티커", "종목명", "연환산", "연초", "1년", "2년", "3년", "10년",
+                                    "누적", "누적년수", "시총", "설립일", "수익률기준일", "최초가", "최근가", "업종,투자", "운용방식"])
         columns = table.select("col")
-        for index, width in ((5, "6%"), (6, "4%"), (11, "5.1%"), (12, "4%"), (13, "5.1%"), (15, "7%"), (16, "6.5%"), (17, "5%"), (18, "5%")):
+        for index, width in ((18, "6%"), (5, "4%"), (10, "5.1%"), (4, "4%"), (11, "5.1%"), (13, "7%"), (14, "6.5%"), (15, "5%"), (16, "5%")):
             self.assertEqual(columns[index].get("style"), "width:" + width)
         for row in table.select("tbody tr"):
-            for index in (15, 16):
+            for index in (13, 14):
                 self.assertIn("d", row.find_all("td", recursive=False)[index].get("class", []))
-        for index in (15, 16):
+        for index in (13, 14):
             self.assertNotIn("d", table.select("thead th")[index].get("class", []))
-        self.assertRegex(CSS, r"\.data-table th\{[^}]*font-size:13px;[^}]*text-align:center!important")
-        self.assertIn(".data-table .d{font-size:12.35px;text-align:center}", CSS)
+        self.assertRegex(CSS, r"\.data-table th\{[^}]*font-size:11.05px;[^}]*text-align:center!important")
+        self.assertIn(".data-table .d{font-size:10.4975px;text-align:center}", CSS)
         self.assertIn("1·2·3·10년: 각 기간 누적수익률", doc.get_text())
         self.assertIn(".data-table .cagr{font-weight:bold;background:#fff2cc}", CSS)
         self.assertIn(".data-table th.cagr{background:#76551b;color:#fff}", CSS)
@@ -321,7 +320,7 @@ class EmailLayoutTests(unittest.TestCase):
         doc = BeautifulSoup(render_email(**self.data), "html5lib")
         item = self.data["etf_info"]["rows"][0]
         cells = doc.select_one("#returns tbody tr").find_all("td", recursive=False)
-        for column, period in ((6, "ytd"), (7, "1y"), (8, "2y"), (9, "3y"), (10, "10y")):
+        for column, period in ((5, "ytd"), (6, "1y"), (7, "2y"), (8, "3y"), (9, "10y")):
             detail = item["period_returns"][period]
             title = cells[column]["title"]
             if detail is None:
@@ -346,10 +345,10 @@ class EmailLayoutTests(unittest.TestCase):
                        management_style_evidence=None if style == "미확인" else "Explicit management policy")
         source = render_email(**self.data)
         doc = BeautifulSoup(source, "html5lib")
-        self.assertEqual([cell.get_text() for cell in doc.select("#returns thead th")][4:7],
-                         ["업종·투자분야", "운용방식", "연초"])
+        self.assertEqual([cell.get_text() for cell in doc.select("#returns thead th")][17:19],
+                         ["업종,투자", "운용방식"])
         for row, displayed, style in zip(rows, doc.select("#returns tbody tr"), styles):
-            cell = displayed.find_all("td", recursive=False)[5]
+            cell = displayed.find_all("td", recursive=False)[18]
             self.assertEqual(cell.get_text(), style)
             self.assertEqual(cell["title"], management_style_title(row))
             self.assertEqual(cell.select_one(".cl")["title"], style + " · " + management_style_title(row))
@@ -363,7 +362,7 @@ class EmailLayoutTests(unittest.TestCase):
         for change in ("display", "hover", "unknown_verified", "missing_source"):
             with self.subTest(change=change):
                 doc, altered = BeautifulSoup(source, "html5lib"), copy.deepcopy(proof)
-                cell = doc.select_one("#returns tbody tr").find_all("td", recursive=False)[5]
+                cell = doc.select_one("#returns tbody tr").find_all("td", recursive=False)[18]
                 if change == "display":
                     cell.select_one(".cl").string = "Active" if cell.get_text() != "Active" else "Passive"
                 elif change == "hover":
@@ -402,7 +401,7 @@ class EmailLayoutTests(unittest.TestCase):
         for table_id, count, columns in (("us",218,11),("kr",17,11),
                                          ("new-kr",4,10),("new-us",29,10),("returns",20,19)):
             table = doc.find("table", id=table_id)
-            self.assertEqual(table.select_one("thead th").get_text(strip=True), "No.")
+            self.assertEqual(table.select_one("thead th").get_text(strip=True), "No" if table_id == "returns" else "No.")
             rows = table.select("tbody tr")
             self.assertEqual(len(rows), count)
             self.assertEqual([row.find_all("td",recursive=False)[0].get_text(strip=True) for row in rows],
@@ -478,7 +477,7 @@ class EmailLayoutTests(unittest.TestCase):
             delivery,_=native_email.prepare(source,inventory(source),directory)
         for html in (body,delivery):
             doc=BeautifulSoup(html,"html5lib")
-            for table_id,column in (("us",6),("kr",6),("new-kr",6),("new-us",6),("returns",14)):
+            for table_id,column in (("us",6),("kr",6),("new-kr",6),("new-us",6),("returns",12)):
                 cell=doc.select_one("#"+table_id+" tbody tr").find_all("td",recursive=False)[column]
                 self.assertEqual(cell.get_text(),"5,530억원")
                 self.assertEqual(cell.find("span",style=True)["style"],"color:#c23932")
@@ -486,12 +485,12 @@ class EmailLayoutTests(unittest.TestCase):
         self.assertLessEqual(MAX_EMAIL_BYTES,85000)
         with self.assertRaises(RuntimeError):
             validate_size("가"*30000)
-    def test_existing_drawn_flags_and_larger_fonts_are_preserved(self):
+    def test_existing_drawn_flags_and_reduced_fonts_are_preserved(self):
         body=render_email(**self.data)
         self.assertIn('src=cid:u',body)
         self.assertIn('src=cid:k',body)
         self.assertNotRegex(body,r"display\s*:\s*(?:flex|grid)")
-        self.assertRegex(body,r"\.shell\{[^}]*font-size:15\.6px")
+        self.assertRegex(body,r"\.shell\{[^}]*font-size:13\.26px")
         self.assertNotIn("data-key=",body)
         self.assertNotIn("data-period=",body)
 
@@ -553,7 +552,7 @@ class EmailLayoutTests(unittest.TestCase):
         source = render_email(**self.data)
         doc = BeautifulSoup(source, "html5lib")
         for table_id, column, width in (("us",6,"84px"),("kr",6,"84px"),
-                                         ("new-kr",6,"84px"),("new-us",6,"84px"),("returns",14,"96px")):
+                                         ("new-kr",6,"84px"),("new-us",6,"84px"),("returns",12,"96px")):
             self.assertEqual(doc.select_one("#" + table_id).select("col")[column].get("style"), "width:" + width)
         for table_id in ("new-kr", "new-us"):
             self.assertEqual(doc.select_one("#" + table_id).select("col")[3].get("style"), "width:19%")
@@ -588,12 +587,12 @@ class EmailLayoutTests(unittest.TestCase):
                     price_start_date="2016-05-19", price_end_date="2026-10-07",
                     price_basis="Yahoo 제공 수정주가(auto_adjust)", price_currency="USD")
         doc = BeautifulSoup(render_email(**self.data), "html5lib")
-        self.assertEqual([cell.get_text() for cell in doc.select("#returns thead th")][17:19],
-                         ["최초주가", "최근주가"])
-        self.assertEqual(doc.select("#returns thead th")[16].get_text(), "수익률 기준일")
+        self.assertEqual([cell.get_text() for cell in doc.select("#returns thead th")][15:17],
+                         ["최초가", "최근가"])
+        self.assertEqual(doc.select("#returns thead th")[14].get_text(), "수익률기준일")
         cells = doc.select_one("#returns tbody tr").find_all("td", recursive=False)
-        for index,key,date_value in ((17,"initial_adjusted_price","2016-05-19"),(18,"latest_adjusted_price","2026-10-07")):
-            self.assertEqual(cells[index].get_text(), "0.00" if index == 17 else "123,456")
+        for index,key,date_value in ((15,"initial_adjusted_price","2016-05-19"),(16,"latest_adjusted_price","2026-10-07")):
+            self.assertEqual(cells[index].get_text(), "0.00" if index == 15 else "123,456")
             expected_detail = (f'정확값 {format(item[key], ".12g")} · {date_value} · '
                                'Yahoo 제공 수정주가(auto_adjust) · USD')
             self.assertEqual(cells[index]["title"], expected_detail)
@@ -623,9 +622,9 @@ class EmailLayoutTests(unittest.TestCase):
         row.update(initial_adjusted_price=.999, latest_adjusted_price=.5)
         doc = BeautifulSoup(render_email(**self.data), "html5lib")
         cells = doc.select_one("#returns tbody tr").find_all("td", recursive=False)
-        self.assertEqual(cells[17].select_one(".initial-price-small").get_text(), "1.00")
-        self.assertIsNone(cells[18].select_one(".initial-price-small"))
-        self.assertEqual(cells[18].get_text(), "0")
+        self.assertEqual(cells[15].select_one(".initial-price-small").get_text(), "1.00")
+        self.assertIsNone(cells[16].select_one(".initial-price-small"))
+        self.assertEqual(cells[16].get_text(), "0")
 
     def test_exact_price_audit_rejects_missing_or_misplaced_subunit_red_markers(self):
         source = render_email(**self.data)
@@ -639,7 +638,7 @@ class EmailLayoutTests(unittest.TestCase):
                     self.assertIsNotNone(marker)
                     marker.unwrap()
                 else:
-                    cell = doc.select_one("#returns tbody tr").find_all("td", recursive=False)[18]
+                    cell = doc.select_one("#returns tbody tr").find_all("td", recursive=False)[16]
                     marker = doc.new_tag("span", attrs={"class": "initial-price-small"})
                     clip = cell.select_one(".cl")
                     for child in list(clip.contents):
@@ -648,7 +647,7 @@ class EmailLayoutTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "sub-unit initial price emphasis"):
                     validate_etf_date_proof(str(doc), manifest, proof)
 
-    def test_brief_etf_investment_labels_are_next_to_the_security_name(self):
+    def test_brief_etf_investment_labels_remain_in_the_final_columns(self):
         self.assertEqual(brief_investment_text({"asset_type":"ETF","etf_index":"NASDAQ-100 Index"}), "나스닥100")
         self.assertEqual(brief_investment_text({"asset_type":"ETF","name":"KODEX 반도체","market":"KOSPI"}), "한국반도체")
         self.assertEqual(brief_investment_text({"asset_type":"ETF","name":"글로벌반도체","market":"KOSPI"}), "글로벌반도체")
@@ -718,7 +717,7 @@ class PeriodReturnEvidenceTests(unittest.TestCase):
             validate_period_return_evidence(record)
 
 
-BASELINE_CSS = "\nbody{margin:0;background:#f2f5f8;color:#17263d;font-family:Arial,'Malgun Gothic','Apple SD Gothic Neo',sans-serif;font-size:15.6px;line-height:1.4}\ntable{border-collapse:collapse}a{color:#1260ad;text-decoration:none}\n.shell{max-width:1360px;margin:0 auto;padding:12px;color:#17263d;background:#f2f5f8;font-family:Arial,'Malgun Gothic','Apple SD Gothic Neo',sans-serif;font-size:15.6px;line-height:1.4}.layout{width:100%;table-layout:fixed}\n.hero{background:#11243c;color:#fff;border-radius:9px;padding:12px 16px}.hero .eyebrow{display:none}\n.hero h1{font-size:24.7px;line-height:1.2;margin:0 0 5px}.date{font-size:14.3px;color:#c5d5e4}\n.hero .foot{font-size:13px;color:#9eb5cc;border-top:1px solid #30465f;padding-top:6px;margin-top:7px}\n.summary{margin-top:8px;background:#fff;border:1px solid #dfe7ef;border-radius:8px;padding:8px 10px}\n.summary td{width:50%;padding:0 3px;vertical-align:top}.count{font-size:22.1px;font-weight:bold}\n.market{font-weight:bold;font-size:14.3px;margin-bottom:2px}.muted{font-size:13px;color:#667a90}\n.section{margin-top:14px}.section h2{margin:0;font-size:20.8px;line-height:1.25}\n.intro,.etf-caption{font-size:13px;color:#64778b;margin:4px 0 7px}\n.data-table{width:100%;table-layout:fixed;background:#fff;border:1px solid #dce5ee;font-size:12.35px;line-height:1.25}\n.data-table th,.data-table td{white-space:nowrap;overflow:hidden;padding:3px 1px;text-align:left;vertical-align:middle;border-right:1px solid #000}\n.data-table th:last-child,.data-table td:last-child{border-right:0}\n.data-table th{background:#163b68;color:#fff;font-weight:bold;font-size:13px;white-space:nowrap;text-align:center!important}\n.data-table .cl,.data-table .nm,.data-table .iwc{display:block;width:100%;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\n.data-table .iw{width:126px;max-width:126px}\n.data-table .nm{text-align:left}\n.stock-table th{background:#ee990b;color:#fff}\n.asset{display:inline-block;border-radius:3px;padding:1px 3px;font-size:11.7px;font-weight:bold}.s{background:#dff3ee;color:#087569}.e{background:#eee5fa;color:#753caf}\n.data-table td{border-bottom:1px solid #e7edf3}.data-table tbody tr:nth-child(even){background:#f6f8fb}\n.data-table .n{text-align:right;font-variant-numeric:tabular-nums}\n.data-table .f{text-align:center;padding-left:1px;padding-right:1px}.f img{width:20px;height:auto;vertical-align:middle}\n.data-table .t{font-weight:bold}.data-table .y{background:#eaf1fb}\n.data-table th.y{background:#2b4665;color:#fff}.data-table .d{font-size:12.35px;text-align:center}\n.etf-comparison .data-table{font-size:13px}.metric-label{display:none}.m{display:block;font-size:13px;font-weight:inherit;line-height:1.25}\n.data-table .cagr{font-weight:bold;background:#fff2cc}\n.data-table th.cagr{background:#76551b;color:#fff}\n.etf-details{margin-top:12px}.etf-details h3{font-size:16.9px;margin:0 0 6px}\n.up{color:#c04840}.down{color:#2862a6}.flat{color:#52677d}\n.initial-price-small{color:#c23932}\n.new-section{border-top:3px solid #ee990b;padding-top:8px}.new-table th{background:#ee990b}.r{color:#c23932}.data-table .p1{color:#c23932}.data-table .p2{color:#245ba6}.data-table .p3{color:#087d67}.data-table .p10{color:#7944b0}.data-table .z{background:#f6f8fb}\n.new{background:#e6f3ed;color:#237353;border-radius:3px;padding:0 3px;margin-left:3px;font-size:10.4px;font-weight:bold}\n.notice{background:#fff4dc;color:#796438;border-radius:6px;padding:8px 10px;font-size:13px;margin:8px 0}\n.report-note{padding:8px 10px;background:#e8f0f8;border-radius:6px;color:#405d7a;font-size:13px}\n.notes{font-size:11.7px;line-height:1.5;color:#75869a;margin:8px 0}.footer{text-align:center;color:#8a9aab;font-size:11.7px;padding:16px 0 8px}\n"
+BASELINE_CSS = "\nbody{margin:0;background:#f2f5f8;color:#17263d;font-family:Arial,'Malgun Gothic','Apple SD Gothic Neo',sans-serif;font-size:13.26px;line-height:1.4}\ntable{border-collapse:collapse}a{color:#1260ad;text-decoration:none}\n.shell{max-width:1360px;margin:0 auto;padding:12px;color:#17263d;background:#f2f5f8;font-family:Arial,'Malgun Gothic','Apple SD Gothic Neo',sans-serif;font-size:13.26px;line-height:1.4}.layout{width:100%;table-layout:fixed}\n.hero{background:#11243c;color:#fff;border-radius:9px;padding:12px 16px}.hero .eyebrow{display:none}\n.hero h1{font-size:20.995px;line-height:1.2;margin:0 0 5px}.date{font-size:12.155px;color:#c5d5e4}\n.hero .foot{font-size:11.05px;color:#9eb5cc;border-top:1px solid #30465f;padding-top:6px;margin-top:7px}\n.summary{margin-top:8px;background:#fff;border:1px solid #dfe7ef;border-radius:8px;padding:8px 10px}\n.summary td{width:50%;padding:0 3px;vertical-align:top}.count{font-size:18.785px;font-weight:bold}\n.market{font-weight:bold;font-size:12.155px;margin-bottom:2px}.muted{font-size:11.05px;color:#667a90}\n.section{margin-top:14px}.section h2{margin:0;font-size:17.68px;line-height:1.25}\n.intro,.etf-caption{font-size:11.05px;color:#64778b;margin:4px 0 7px}\n.data-table{width:100%;table-layout:fixed;background:#fff;border:1px solid #dce5ee;font-size:10.4975px;line-height:1.25}\n.data-table th,.data-table td{white-space:nowrap;overflow:hidden;padding:3px 1px;text-align:left;vertical-align:middle;border-right:1px solid #000}\n.data-table th:last-child,.data-table td:last-child{border-right:0}\n.data-table th{background:#163b68;color:#fff;font-weight:bold;font-size:11.05px;white-space:nowrap;text-align:center!important}\n.data-table .cl,.data-table .nm,.data-table .iwc{display:block;width:100%;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\n.data-table .iw{width:126px;max-width:126px}\n.data-table .nm{text-align:left}\n.stock-table th{background:#ee990b;color:#fff}\n.asset{display:inline-block;border-radius:3px;padding:1px 3px;font-size:9.945px;font-weight:bold}.s{background:#dff3ee;color:#087569}.e{background:#eee5fa;color:#753caf}\n.data-table td{border-bottom:1px solid #e7edf3}.data-table tbody tr:nth-child(even){background:#f6f8fb}\n.data-table .n{text-align:right;font-variant-numeric:tabular-nums}\n.data-table .f{text-align:center;padding-left:1px;padding-right:1px}.f img{width:20px;height:auto;vertical-align:middle}\n.data-table .t{font-weight:bold}.data-table .y{background:#eaf1fb}\n.data-table th.y{background:#2b4665;color:#fff}.data-table .d{font-size:10.4975px;text-align:center}\n.etf-comparison .data-table{font-size:11.05px}.metric-label{display:none}.m{display:block;font-size:11.05px;font-weight:inherit;line-height:1.25}\n.data-table .cagr{font-weight:bold;background:#fff2cc}\n.data-table th.cagr{background:#76551b;color:#fff}\n.etf-details{margin-top:12px}.etf-details h3{font-size:14.365px;margin:0 0 6px}\n.up{color:#c04840}.down{color:#2862a6}.flat{color:#52677d}\n.initial-price-small{color:#c23932}\n.new-section{border-top:3px solid #ee990b;padding-top:8px}.new-table th{background:#ee990b}.r{color:#c23932}.data-table .p1{color:#c23932}.data-table .p2{color:#245ba6}.data-table .p3{color:#087d67}.data-table .p10{color:#7944b0}.data-table .z{background:#f6f8fb}\n.new{background:#e6f3ed;color:#237353;border-radius:3px;padding:0 3px;margin-left:3px;font-size:8.84px;font-weight:bold}\n.notice{background:#fff4dc;color:#796438;border-radius:6px;padding:8px 10px;font-size:11.05px;margin:8px 0}\n.report-note{padding:8px 10px;background:#e8f0f8;border-radius:6px;color:#405d7a;font-size:11.05px}\n.notes{font-size:9.945px;line-height:1.5;color:#75869a;margin:8px 0}.footer{text-align:center;color:#8a9aab;font-size:9.945px;padding:16px 0 8px}\n"
 
 if __name__=="__main__":
     unittest.main()

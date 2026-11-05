@@ -22,42 +22,42 @@ _ETF_PERIOD_COLUMNS = (
 _ETF_METRICS = (*_ETF_PERIOD_COLUMNS, ("cumulative", "누적", "cumulative_return"))
 _ETF_PERIOD_CAPTION = "1·2·3·10년: 각 기간 누적수익률"
 CSS = """
-body{margin:0;background:#f2f5f8;color:#17263d;font-family:Arial,'Malgun Gothic','Apple SD Gothic Neo',sans-serif;font-size:15.6px;line-height:1.4}
+body{margin:0;background:#f2f5f8;color:#17263d;font-family:Arial,'Malgun Gothic','Apple SD Gothic Neo',sans-serif;font-size:13.26px;line-height:1.4}
 table{border-collapse:collapse}a{color:#1260ad;text-decoration:none}
-.shell{max-width:1360px;margin:0 auto;padding:12px;color:#17263d;background:#f2f5f8;font-family:Arial,'Malgun Gothic','Apple SD Gothic Neo',sans-serif;font-size:15.6px;line-height:1.4}.layout{width:100%;table-layout:fixed}
+.shell{max-width:1360px;margin:0 auto;padding:12px;color:#17263d;background:#f2f5f8;font-family:Arial,'Malgun Gothic','Apple SD Gothic Neo',sans-serif;font-size:13.26px;line-height:1.4}.layout{width:100%;table-layout:fixed}
 .hero{background:#11243c;color:#fff;border-radius:9px;padding:12px 16px}.hero .eyebrow{display:none}
-.hero h1{font-size:24.7px;line-height:1.2;margin:0 0 5px}.date{font-size:14.3px;color:#c5d5e4}
-.hero .foot{font-size:13px;color:#9eb5cc;border-top:1px solid #30465f;padding-top:6px;margin-top:7px}
+.hero h1{font-size:20.995px;line-height:1.2;margin:0 0 5px}.date{font-size:12.155px;color:#c5d5e4}
+.hero .foot{font-size:11.05px;color:#9eb5cc;border-top:1px solid #30465f;padding-top:6px;margin-top:7px}
 .summary{margin-top:8px;background:#fff;border:1px solid #dfe7ef;border-radius:8px;padding:8px 10px}
-.summary td{width:50%;padding:0 3px;vertical-align:top}.count{font-size:22.1px;font-weight:bold}
-.market{font-weight:bold;font-size:14.3px;margin-bottom:2px}.muted{font-size:13px;color:#667a90}
-.section{margin-top:14px}.section h2{margin:0;font-size:20.8px;line-height:1.25}
-.intro,.etf-caption{font-size:13px;color:#64778b;margin:4px 0 7px}
-.data-table{width:100%;table-layout:fixed;background:#fff;border:1px solid #dce5ee;font-size:12.35px;line-height:1.25}
+.summary td{width:50%;padding:0 3px;vertical-align:top}.count{font-size:18.785px;font-weight:bold}
+.market{font-weight:bold;font-size:12.155px;margin-bottom:2px}.muted{font-size:11.05px;color:#667a90}
+.section{margin-top:14px}.section h2{margin:0;font-size:17.68px;line-height:1.25}
+.intro,.etf-caption{font-size:11.05px;color:#64778b;margin:4px 0 7px}
+.data-table{width:100%;table-layout:fixed;background:#fff;border:1px solid #dce5ee;font-size:10.4975px;line-height:1.25}
 .data-table th,.data-table td{white-space:nowrap;overflow:hidden;padding:3px 1px;text-align:left;vertical-align:middle;border-right:1px solid #000}
 .data-table th:last-child,.data-table td:last-child{border-right:0}
-.data-table th{background:#163b68;color:#fff;font-weight:bold;font-size:13px;white-space:nowrap;text-align:center!important}
+.data-table th{background:#163b68;color:#fff;font-weight:bold;font-size:11.05px;white-space:nowrap;text-align:center!important}
 .data-table .cl,.data-table .nm,.data-table .iwc{display:block;width:100%;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .data-table .iw{width:126px;max-width:126px}
 .data-table .nm{text-align:left}
 .stock-table th{background:#ee990b;color:#fff}
-.asset{display:inline-block;border-radius:3px;padding:1px 3px;font-size:11.7px;font-weight:bold}.s{background:#dff3ee;color:#087569}.e{background:#eee5fa;color:#753caf}
+.asset{display:inline-block;border-radius:3px;padding:1px 3px;font-size:9.945px;font-weight:bold}.s{background:#dff3ee;color:#087569}.e{background:#eee5fa;color:#753caf}
 .data-table td{border-bottom:1px solid #e7edf3}.data-table tbody tr:nth-child(even){background:#f6f8fb}
 .data-table .n{text-align:right;font-variant-numeric:tabular-nums}
 .data-table .f{text-align:center;padding-left:1px;padding-right:1px}.f img{width:20px;height:auto;vertical-align:middle}
 .data-table .t{font-weight:bold}.data-table .y{background:#eaf1fb}
-.data-table th.y{background:#2b4665;color:#fff}.data-table .d{font-size:12.35px;text-align:center}
-.etf-comparison .data-table{font-size:13px}.metric-label{display:none}.m{display:block;font-size:13px;font-weight:inherit;line-height:1.25}
+.data-table th.y{background:#2b4665;color:#fff}.data-table .d{font-size:10.4975px;text-align:center}
+.etf-comparison .data-table{font-size:11.05px}.metric-label{display:none}.m{display:block;font-size:11.05px;font-weight:inherit;line-height:1.25}
 .data-table .cagr{font-weight:bold;background:#fff2cc}
 .data-table th.cagr{background:#76551b;color:#fff}
-.etf-details{margin-top:12px}.etf-details h3{font-size:16.9px;margin:0 0 6px}
+.etf-details{margin-top:12px}.etf-details h3{font-size:14.365px;margin:0 0 6px}
 .up{color:#c04840}.down{color:#2862a6}.flat{color:#52677d}
 .initial-price-small{color:#c23932}
 .new-section{border-top:3px solid #ee990b;padding-top:8px}.new-table th{background:#ee990b}.r{color:#c23932}.data-table .p1{color:#c23932}.data-table .p2{color:#245ba6}.data-table .p3{color:#087d67}.data-table .p10{color:#7944b0}.data-table .z{background:#f6f8fb}
-.new{background:#e6f3ed;color:#237353;border-radius:3px;padding:0 3px;margin-left:3px;font-size:10.4px;font-weight:bold}
-.notice{background:#fff4dc;color:#796438;border-radius:6px;padding:8px 10px;font-size:13px;margin:8px 0}
-.report-note{padding:8px 10px;background:#e8f0f8;border-radius:6px;color:#405d7a;font-size:13px}
-.notes{font-size:11.7px;line-height:1.5;color:#75869a;margin:8px 0}.footer{text-align:center;color:#8a9aab;font-size:11.7px;padding:16px 0 8px}
+.new{background:#e6f3ed;color:#237353;border-radius:3px;padding:0 3px;margin-left:3px;font-size:8.84px;font-weight:bold}
+.notice{background:#fff4dc;color:#796438;border-radius:6px;padding:8px 10px;font-size:11.05px;margin:8px 0}
+.report-note{padding:8px 10px;background:#e8f0f8;border-radius:6px;color:#405d7a;font-size:11.05px}
+.notes{font-size:9.945px;line-height:1.5;color:#75869a;margin:8px 0}.footer{text-align:center;color:#8a9aab;font-size:9.945px;padding:16px 0 8px}
 """
 
 def h(value):
@@ -170,10 +170,10 @@ def price_exact_text(value):
 
 def table_columns(kind):
     if kind == "returns":
-        # Both cumulative-return and elapsed-year widths are 85% of their
-        # former 6%; fonts, price widths and the fixed AUM/flag columns stay.
-        widths = ("3%", "3%", "6%", None, "8%", "6%", "4%", "4%", "4%", "4%", "4%",
-                  "5.1%", "4%", "5.1%", "96px", "7%", "6.5%", "5%", "5%")
+        # Keep each field's width with it when moving the annualized return
+        # beside the name and the investment/management fields to the end.
+        widths = ("3%", "3%", "6%", None, "4%", "4%", "4%", "4%", "4%", "4%",
+                  "5.1%", "5.1%", "96px", "7%", "6.5%", "5%", "5%", "8%", "6%")
     elif kind == "new":
         # Before this change the auto name width was 54% of the table minus
         # 168px. A fixed 19% is 46–55% of that width across 900–1920px hosts.
@@ -306,20 +306,21 @@ def etf_section_html(etf_info, include_details=False, info=None):
     head = ('<div class="section" id="etf"><h2>ETF 연평균수익률 비교 &lt;높은순&gt;</h2>'
             f'<p class="intro">수집 대상 비채권 ETF · 누적연수 {ETF_MINIMUM_YEARS}년 이상 · 연평균 누적수익률 내림차순 · 전체 {len(rows)}개'
             f' · {ETF_MINIMUM_YEARS}년 이상 {etf_info.get("eligible_count", len(rows))} / 산출 가능 {etf_info.get("with_ret", 0)} / 후보 {etf_info.get("pool", 0)}개</p>'
-            f'<p class="etf-caption">연초: 전년 마지막 시세 대비 · {_ETF_PERIOD_CAPTION} · 누적: 정확한 최초·최근주가의 수익률 · 연평균: 같은 가격 기간을 복리 환산 · 수익률 단위: %</p>')
+            f'<p class="etf-caption">연초: 전년 마지막 시세 대비 · {_ETF_PERIOD_CAPTION} · 누적: 정확한 최초·최근주가의 수익률 · 연환산: 같은 가격 기간을 복리 환산 · 수익률 단위: %</p>')
     if info is not None:
         head += market_date_caption(info)
     if not rows:
         note = f" · 누적연수 {ETF_MINIMUM_YEARS}년 미만 ETF는 순위에서 제외하며, 유효한 가격 이력이 없는 ETF는 후보에 유지하고 수익률 계산 불가로 처리합니다." if etf_info.get("pool", 0) else ""
         return head + '<p class="muted">해당 ETF 없음' + note + '</p></div>'
     table = ('<div class="etf-comparison"><table class="data-table etf-table" id="returns">' + table_columns("returns") + '<thead><tr>'
-             '<th class="number">No.</th><th class="flag-cell">국가</th><th>티커</th><th>종목명</th><th>업종·투자분야</th><th>운용방식</th>' +
+             '<th class="number">No</th><th class="flag-cell">국가</th><th>티커</th><th>종목명</th>'
+             '<th class="number cagr">연환산</th>' +
              "".join(f'<th class="number {"one-year" if period == "1y" else ""}">{label}</th>'
                      for period, label, _ in _ETF_METRICS) +
-             '<th class="number cagr">연평균</th>'
-             '<th class="number" data-field="lifetime_years">누적연수</th>'
-             '<th class="number" data-field="aum">AUM·시총(원화)</th><th data-field="inception">설립·상장일</th>'
-             '<th>수익률 기준일</th><th class="number">최초주가</th><th class="number">최근주가</th></tr></thead><tbody>')
+             '<th class="number" data-field="lifetime_years">누적년수</th>'
+             '<th class="number" data-field="aum">시총</th><th data-field="inception">설립일</th>'
+             '<th>수익률기준일</th><th class="number">최초가</th><th class="number">최근가</th>'
+             '<th>업종,투자</th><th>운용방식</th></tr></thead><tbody>')
     for rank, row in enumerate(rows, 1):
         country = "US" if row.get("market") == "US" else "KR"
         ticker = h(row.get("ticker"))
@@ -329,19 +330,19 @@ def etf_section_html(etf_info, include_details=False, info=None):
                   f'<td class="flag-cell">{flag_icon(country)}</td>'
                   f'<td class="ticker-cell"><a href="{safe_url(row.get("url"))}">{ticker}</a></td>'
                   f'<td class="name-cell"><span class="nm">{h(row.get("name"))}</span></td>'
-                  f'<td title="{h(row.get("etf_index") or industry_text(row))}">{h(brief_investment_text(row))}</td>'
-                  f'<td class="flag-cell" title="{h(management_style_title(row))}">{h(management_style_text(row))}</td>' +
+                  f'<td class="number cagr">{compact_metric("lifetime", "연환산", row.get("lifetime_cagr"))}</td>' +
                   "".join(f'<td class="number {"one-year" if period == "1y" else ""}" title="{h(period_return_title(row, period))}">'
                           f'{compact_metric(period, label, row.get(key))}</td>'
                           for period, label, key in _ETF_METRICS) +
-                  f'<td class="number cagr">{compact_metric("lifetime", "연평균", row.get("lifetime_cagr"))}</td>'
                   f'<td class="number" data-field="lifetime_years">{elapsed_years_text(row.get("lifetime_years"))}</td>'
                   f'<td class="number" data-field="aum">{row_size_html(dict(row, asset_type="ETF"))}</td>'
                   f'<td class="date-cell" data-field="inception" title="{h(row.get("inception_source") or "설립일 출처 미확인")}">{h(inception_text(row))}</td>'
                   f'<td class="date-cell" title="{h(return_date_title(row, (info or {}).get(country.lower() + "_last")))}">'
                   f'{h(return_date_text(row))}</td>'
                   f'<td class="number" title="{first_title}">{initial_price_html(row.get("initial_adjusted_price"))}</td>'
-                  f'<td class="number" title="{last_title}">{price_text(row.get("latest_adjusted_price"))}</td></tr>')
+                  f'<td class="number" title="{last_title}">{price_text(row.get("latest_adjusted_price"))}</td>'
+                  f'<td title="{h(row.get("etf_index") or industry_text(row))}">{h(brief_investment_text(row))}</td>'
+                  f'<td class="flag-cell" title="{h(management_style_title(row))}">{h(management_style_text(row))}</td></tr>')
     table += '</tbody></table></div>'
     notes = (f'<p class="notes">ETF 비교는 ATH 괴리율과 무관하게 수집 대상 한국·미국 비채권 ETF 중 누적연수 {ETF_MINIMUM_YEARS}년 이상이며 연평균 누적수익률 산출 가능한 종목 전체를 내림차순으로 표시합니다. '
              '운용방식은 Active·Passive로 표시하며 근거가 없으면 미확인으로 표시합니다. 마우스를 올리면 분류 근거·출처와 공식자료 확인 여부를 볼 수 있습니다. 레버리지 사용만으로 Active로 분류하지 않습니다.<br>'
@@ -449,10 +450,10 @@ def _summary(us, kr, info, indices):
         v = indices.get(key)
         return f"{v:,.1f}" if v else "-"
     return ('<div class="summary"><table role="presentation" class="layout"><tr><td>'
-            f'<div class="market">{flag_html("KR")}한국 <span class="count">{len(kr)}<span style="font-size:15.6px">종목</span></span><span style="font-size:15.6px">{asset_breakdown(kr)}</span></div>'
+            f'<div class="market">{flag_html("KR")}한국 <span class="count">{len(kr)}<span style="font-size:13.26px">종목</span></span><span style="font-size:13.26px">{asset_breakdown(kr)}</span></div>'
             f'<div class="muted">KOSPI {value("kospi")} {pct(indices.get("kospi_chg"))}<br>{h(info.get("kr_last_str"))}</div>'
             '</td><td>'
-            f'<div class="market">{flag_html("US")}미국 <span class="count">{len(us)}<span style="font-size:15.6px">종목</span></span><span style="font-size:15.6px">{asset_breakdown(us)}</span></div>'
+            f'<div class="market">{flag_html("US")}미국 <span class="count">{len(us)}<span style="font-size:13.26px">종목</span></span><span style="font-size:13.26px">{asset_breakdown(us)}</span></div>'
             f'<div class="muted">S&amp;P 500 {value("sp500")} {pct(indices.get("sp500_chg"))}<br>{h(info.get("us_last_str"))}</div>'
             '</td></tr></table></div>')
 
@@ -786,9 +787,9 @@ def validate_etf_date_proof(source, manifest, proof):
     if len(tables) > 1 or (tables and section not in tables[0].parents):
         raise RuntimeError("An ETF return table is duplicated or outside its ranking section")
     if tables:
-        headings = ["No.", "국가", "티커", "종목명", "업종·투자분야", "운용방식",
-                    *(label for _, label, _ in _ETF_METRICS), "연평균", "누적연수", "AUM·시총(원화)",
-                    "설립·상장일", "수익률 기준일", "최초주가", "최근주가"]
+        headings = ["No", "국가", "티커", "종목명", "연환산",
+                    *(label for _, label, _ in _ETF_METRICS), "누적년수", "시총",
+                    "설립일", "수익률기준일", "최초가", "최근가", "업종,투자", "운용방식"]
         if [cell.get_text() for cell in tables[0].select("thead th")] != headings:
             raise RuntimeError("The ETF comparison columns do not match the current return periods and layout")
     caption = section.find(id="etf-market-dates")
@@ -824,13 +825,13 @@ def validate_etf_date_proof(source, manifest, proof):
             raise RuntimeError("The ETF comparison contains duplicate ranked securities")
         displayed_keys.add(key)
         displayed_cagrs.append(record["lifetime_cagr"])
-        style_cell, style_text, style_detail = cells[5], management_style_text(record), management_style_title(record)
+        style_cell, style_text, style_detail = cells[18], management_style_text(record), management_style_title(record)
         style_clip = style_cell.select_one(".cl")
         if (style_cell.get_text() != style_text or style_cell.get("title") != style_detail
                 or style_clip is None or style_clip.get("title") != style_text + " · " + style_detail):
             raise RuntimeError(f"Displayed ETF {country}:{ticker} management style differs from its audited evidence")
-        for column, key, date_key in ((17, "initial_adjusted_price", "price_start_date"),
-                                      (18, "latest_adjusted_price", "price_end_date")):
+        for column, key, date_key in ((15, "initial_adjusted_price", "price_start_date"),
+                                      (16, "latest_adjusted_price", "price_end_date")):
             value = record.get(key)
             currency = record.get("price_currency")
             detail = (f'정확값 {price_exact_text(value)} · {record.get(date_key)} · '
@@ -847,7 +848,7 @@ def validate_etf_date_proof(source, manifest, proof):
             if (len(small_prices) != int(expected_small)
                     or (small_prices and small_prices[0].get_text() != visible)):
                 raise RuntimeError(f"Displayed ETF {country}:{ticker} sub-unit initial price emphasis differs from its exact value")
-        for column, (period, _, key) in enumerate((*_ETF_METRICS, ("lifetime", "연평균", "lifetime_cagr")), 6):
+        for column, (period, _, key) in enumerate((("lifetime", "연환산", "lifetime_cagr"), *_ETF_METRICS), 4):
             value = record.get(key)
             text = f"{value:.1f}" if isinstance(value, (int, float)) and math.isfinite(value) else "-"
             if cells[column].get_text() != text:
@@ -861,9 +862,9 @@ def validate_etf_date_proof(source, manifest, proof):
                 if (cells[column].get("title") != detail or clip is None
                         or clip.get("title") != text + " · " + detail):
                     raise RuntimeError(f"Displayed ETF {country}:{ticker} {key} period dates or prices differ from its audit")
-        if cells[13].get_text() != elapsed_years_text(record.get("lifetime_years")):
+        if cells[11].get_text() != elapsed_years_text(record.get("lifetime_years")):
             raise RuntimeError(f"Displayed ETF {country}:{ticker} elapsed years differ from its audited dates")
-        date_cell, date_detail = cells[16], return_date_title(record, market_dates[country])
+        date_cell, date_detail = cells[14], return_date_title(record, market_dates[country])
         clip = date_cell.select_one(".cl")
         if (date_cell.get_text() != return_date_text(record) or date_cell.get("title") != date_detail
                 or clip is None or clip.get("title") != return_date_text(record) + " · " + date_detail):

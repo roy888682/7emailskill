@@ -198,7 +198,7 @@ class EtfRankingAndHtmlTests(unittest.TestCase):
                "inception": "2016-10-07", "lifetime_years": 10.0}
         html = etf_section_html({"rows": [row], "pool": 1, "with_ret": 1})
         periods = re.findall(r'data-period="([^"]+)"', html)
-        self.assertEqual(periods, ["ytd", "1y", "2y", "3y", "10y", "cumulative", "lifetime"])
+        self.assertEqual(periods, ["lifetime", "ytd", "1y", "2y", "3y", "10y", "cumulative"])
         for expected in [">11.5</span>", ">12.3</span>", ">9.1</span>", ">8.0</span>", ">6.0</span>",
                          ">159.4</span>", ">10.0</span>"]:
             self.assertIn(expected, html)

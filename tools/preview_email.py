@@ -197,13 +197,15 @@ LAYOUT_CHECK = r"""expected => {
  for(const [key,id,tickerColumn,cellCount,country] of specs){
    const rows=getRows(id),wanted=key==="new"?expected.new.filter(ticker=>ticker.startsWith(country+":")):expected[key];
    const table=document.getElementById(id);
-   if(table&&table.querySelector("th")?.textContent.trim()!=="No.")
+   if(table&&table.querySelector("th")?.textContent.trim()!==(id==="returns"?"No":"No."))
      problems.push(id+" is missing the No. heading");
    if(table&&getComputedStyle(table).tableLayout!=="fixed")
      problems.push(id+" must use fixed column widths for bounded ellipses");
    for(const heading of table?.querySelectorAll("thead th")||[]){
      if(getComputedStyle(heading).textAlign!=="center")
        problems.push(id+" column heading must be centered: "+heading.textContent.trim());
+     if(Math.abs(parseFloat(getComputedStyle(heading).fontSize)-11.05)>.01)
+       problems.push(id+" column heading must use 85% of its former 13px font");
      const clip=heading.querySelector(".cl");
      if(!clip||clip.textContent!==heading.textContent||getComputedStyle(heading).whiteSpace!=="nowrap")
        problems.push(id+" heading must retain its full text in a one-line ellipsis container");
@@ -274,12 +276,10 @@ LAYOUT_CHECK = r"""expected => {
  if(document.body.textContent.includes("첨부"))problems.push("Attachment-related copy remains");
  if(returns){
    const headings=Array.from(returns.querySelectorAll("thead th")).map(cell=>cell.textContent.trim());
-   if(headings.length!==19||!/업종|투자/.test(headings[4])||headings[5]!=="운용방식"||headings[6]!=="연초"||
-      JSON.stringify(headings.slice(7,11))!==JSON.stringify(["1년","2년","3년","10년"])||!headings[11].includes("누적")||
-      headings[12]!=="연평균"||!/연수|기간/.test(headings[13])||
-      !/AUM|시총/.test(headings[14])||!headings[15].includes("설립")||headings[16]!=="수익률 기준일"||
-      headings[17]!=="최초주가"||headings[18]!=="최근주가")
-     problems.push("ETF return columns must follow YTD, 1y, 2y, 3y, 10y, cumulative, lifetime CAGR, with the audited date and price columns retained");
+   const wanted=["No","국가","티커","종목명","연환산","연초","1년","2년","3년","10년","누적",
+     "누적년수","시총","설립일","수익률기준일","최초가","최근가","업종,투자","운용방식"];
+   if(JSON.stringify(headings)!==JSON.stringify(wanted))
+     problems.push("ETF columns must exactly match the requested order and compact headings");
  }
  const number=text=>{
    const cleaned=String(text||"").replace(/[^\deE.+-]/g,"");
@@ -298,24 +298,24 @@ LAYOUT_CHECK = r"""expected => {
  let previousLifetime=Infinity;
  getRows("returns").forEach((row,index)=>{
    const colors=[];
-   for(const [column,cls] of [[7,"p1"],[8,"p2"],[9,"p3"],[10,"p10"]]){
+   for(const [column,cls] of [[6,"p1"],[7,"p2"],[8,"p3"],[9,"p10"]]){
      const cell=row.cells[column];
      if(!cell||!cell.classList.contains(cls))
        problems.push("ETF "+index+" is missing "+cls+" on the correct return column");
      if(cell)colors.push(getComputedStyle(cell).color);
    }
    if(new Set(colors).size!==4)problems.push("ETF "+index+" return colors are not distinct");
-   const lifetime=number(row.cells[12]?.textContent);
-   const years=number(row.cells[13]?.textContent);
+   const lifetime=number(row.cells[4]?.textContent);
+   const years=number(row.cells[11]?.textContent);
    if(!Number.isFinite(lifetime)||lifetime>previousLifetime)
      problems.push("ETF lifetime CAGR must be finite and sorted descending");
    if(!Number.isFinite(years)||years<0)
      problems.push("ETF displayed elapsed years must be nonnegative");
-   const initial=exactPriceIn(row.cells[17]),latest=exactPriceIn(row.cells[18]);
-   for(const [column,exact] of [[17,initial],[18,latest]]){
+   const initial=exactPriceIn(row.cells[15]),latest=exactPriceIn(row.cells[16]);
+   for(const [column,exact] of [[15,initial],[16,latest]]){
      const cell=row.cells[column],visible=cell?.textContent.trim()||"",shown=number(visible);
      const serializationTolerance=Math.max(1e-12,Math.abs(exact)*5e-12);
-     const fractionalInitial=column===17&&(exact<1||
+     const fractionalInitial=column===15&&(exact<1||
        (Math.abs(exact-1)<=serializationTolerance&&visible==="1.00"));
      const format=fractionalInitial?{useGrouping:true,minimumFractionDigits:2,maximumFractionDigits:2}:
        {useGrouping:true,maximumFractionDigits:0};
@@ -332,15 +332,15 @@ LAYOUT_CHECK = r"""expected => {
      if(!/정확값\s+/.test(title)||!/\b(?:USD|KRW)\b/.test(title)||!/(?:Yahoo|네이버)/.test(title))
        problems.push("ETF "+index+" price title must preserve the exact value, currency and provider basis");
    }
-   const cumulative=number(row.cells[11]?.textContent);
+   const cumulative=number(row.cells[10]?.textContent);
    // Prices carry 12 significant digits; account only for that bounded
    // serialization error and the returns' one-decimal display rounding.
    const cumulativeTolerance=Math.max(.051,(Math.abs(cumulative)+100)*2e-11);
    if(!(initial>0)||!(latest>0)||!Number.isFinite(cumulative)||
       Math.abs((latest/initial-1)*100-cumulative)>cumulativeTolerance)
      problems.push("ETF "+index+" cumulative return does not match its exact starting and latest prices preserved in titles");
-   const start=dateIn(row.cells[17]),end=dateIn(row.cells[18]);
-   const inceptionText=row.cells[15]?.textContent.trim()||"";
+   const start=dateIn(row.cells[15]),end=dateIn(row.cells[16]);
+   const inceptionText=row.cells[13]?.textContent.trim()||"";
    const knownInception=/^\d{4}-\d{2}-\d{2}$/.test(inceptionText);
    const inception=knownInception?Date.parse(inceptionText+"T00:00:00Z"):NaN;
    const observedYears=(end-start)/(86400000*365.25);
@@ -354,7 +354,7 @@ LAYOUT_CHECK = r"""expected => {
       Math.abs((Math.pow(latest/initial,1/observedYears)-1)*100-lifetime)>
         Math.max(.051,(Math.abs(lifetime)+100)*2e-11/observedYears))
      problems.push("ETF "+index+" lifetime CAGR does not match its exact prices and dated interval");
-   for(const [column,period] of [[7,1],[8,2],[9,3],[10,10]])
+   for(const [column,period] of [[6,1],[7,2],[8,3],[9,10]])
      if(Number.isFinite(number(row.cells[column]?.textContent))&&observedYears+.004<period)
        problems.push("ETF "+index+" reports a "+period+"-year return before that much price history exists");
    previousLifetime=lifetime;
@@ -384,21 +384,21 @@ LAYOUT_CHECK = r"""expected => {
      const style=getComputedStyle(cell),bounds=cell.getBoundingClientRect();
      if(style.whiteSpace!=="nowrap")
        problems.push("Row "+index+" must keep every column on one line: "+column);
-     const expectedFont=isEtf&&![15,16].includes(column)?13:12.35;
+     const expectedFont=isEtf&&![13,14].includes(column)?11.05:10.4975;
      if(Math.abs(parseFloat(style.fontSize)-expectedFont)>.01)
-       problems.push("Row "+index+" font differs from the enlarged design: "+style.fontSize);
-     if(isEtf&&[15,16].includes(column)&&style.textAlign!=="center")
+       problems.push("Row "+index+" font differs from the requested 85% size: "+style.fontSize);
+     if(isEtf&&[13,14].includes(column)&&style.textAlign!=="center")
        problems.push("ETF date values must be centered in column "+column);
-     if(isEtf&&column===5&&style.textAlign!=="center")
+     if(isEtf&&column===18&&style.textAlign!=="center")
        problems.push("ETF Active/Passive values must be centered beside the investment area");
-     if(isEtf&&[11,13].includes(column)){
+     if(isEtf&&[10,11].includes(column)){
        const tableWidth=table.getBoundingClientRect().width;
        if(Math.abs(bounds.width-tableWidth*.051)>tolerance)
          problems.push("ETF cumulative return and elapsed years must be 15% narrower than the former 6% width: "+column);
      }
-     if(isEtf&&[12,15,16].includes(column)){
+     if(isEtf&&[4,13,14].includes(column)){
        const tableWidth=table.getBoundingClientRect().width;
-       const maximum=column===12?.045:column===15?.075:.07;
+       const maximum=column===4?.045:column===13?.075:.07;
        if(bounds.width>tableWidth*maximum+tolerance)
          problems.push("ETF shortened heading/date column has not been narrowed: "+column);
      }
@@ -412,7 +412,7 @@ LAYOUT_CHECK = r"""expected => {
        if(previousNameWidth<=0||bounds.width/previousNameWidth<.43||bounds.width/previousNameWidth>.58)
          problems.push("Row "+index+" new-security name column must be approximately half its previous width");
      }
-     const aumColumn=isEtf?14:6;
+     const aumColumn=isEtf?12:6;
      if(column===aumColumn&&Math.abs(bounds.width-(isEtf?96:84))>tolerance)
        problems.push("Row "+index+" AUM column must use the restored 96px ETF or 84px stock/new width");
      const clip=cell.querySelector(column===3?".nm":".cl,.iwc");
@@ -496,10 +496,10 @@ MARKET_DATE_CHECK = r"""expected => {
  for(const row of document.querySelectorAll('#returns tbody tr')){
    const flag=row.cells[1]?.querySelector('img');
    const country=flag?.alt==='성조기'?'US':flag?.alt==='태극기'?'KR':null;
-   const cell=row.cells[18];
+   const cell=row.cells[16];
    const titles=[cell?.getAttribute('title')||'',...Array.from(cell?.querySelectorAll('[title]')||[]).map(node=>node.title)];
    const dates=titles.map(title=>title.match(/\d{4}-\d{2}-\d{2}/)?.[0]).filter(Boolean);
-   const actual=dates[0],anchor=expected[country],dateCell=row.cells[16];
+   const actual=dates[0],anchor=expected[country],dateCell=row.cells[14];
    const shortDate=actual?.slice(2),status=actual===anchor?'market_close':'latest_available';
    const label=status==='market_close'?'시장 기준일 시세':'이전 가능 시세일';
    const detail=actual+' · '+label+' · 시장 기준일 '+anchor;
@@ -536,7 +536,7 @@ PERIOD_RETURN_CHECK = r"""proof => {
    const ticker=row.cells[2]?.querySelector('a')?.textContent.trim();
    const record=records.get(country+':'+ticker);
    if(!record){problems.push('Missing ETF period evidence for '+country+':'+ticker);continue;}
-   for(const [key,column,field] of [['ytd',6,'return_ytd'],['1y',7,'return1y'],['2y',8,'return2y'],['3y',9,'return3y'],['10y',10,'return10y']]){
+   for(const [key,column,field] of [['ytd',5,'return_ytd'],['1y',6,'return1y'],['2y',7,'return2y'],['3y',8,'return3y'],['10y',9,'return10y']]){
      const value=record.period_returns?.[key],visible=numeric(row.cells[column]?.textContent);
      const target=targetFor(record.price_end_date,key);
      const required=record.price_start_date<=target;
@@ -617,25 +617,25 @@ MANAGEMENT_STYLE_CHECK = r"""proof => {
      problems.push('Displayed ETF elapsed years do not match its actual price dates: '+ticker);
    if(displayedKeys.has(identity))problems.push('Duplicate ETF in the ranking: '+ticker);
    displayedKeys.add(identity);displayedCagrs.push(record.lifetime_cagr);
-   const cell=row.cells[5],style=record.management_style;
+   const cell=row.cells[18],style=record.management_style;
    let detail=style+' · '+record.management_style_source+' · '+(record.management_style_evidence||'분류 근거 없음')+
        ' · '+(record.management_style_verified?'공식자료 확인':'공식자료 미확인');
    if(record.management_style_url)detail+=' · '+record.management_style_url;
    if(cell?.textContent!==style||cell?.getAttribute('title')!==detail||
       cell?.querySelector('.cl')?.getAttribute('title')!==style+' · '+detail)
      problems.push('Displayed ETF management style or source differs from its audit: '+ticker);
-   for(const column of [6,7,8,9,10,11,12]){
+   for(const column of [4,5,6,7,8,9,10]){
      const metricCell=row.cells[column],clip=metricCell?.querySelector('.cl'),value=clip?.querySelector('b');
-     const weight=column===12?'700':'400';
+     const weight=column===4?'700':'400';
      if(!value||!value.textContent.trim()||value.textContent!==metricCell.textContent||
         getComputedStyle(metricCell).fontWeight!==weight||getComputedStyle(clip).fontWeight!==weight||
         getComputedStyle(value).fontWeight!==weight)
        problems.push('Only the lifetime CAGR return column must be bold: '+ticker+' column '+column);
-     else if(column===12)boldCagrs++;
-     if(column===12&&getComputedStyle(metricCell).backgroundColor!=='rgb(255, 242, 204)')
+     else if(column===4)boldCagrs++;
+     if(column===4&&getComputedStyle(metricCell).backgroundColor!=='rgb(255, 242, 204)')
        problems.push('The annualized return values must have the pale yellow background: '+ticker);
    }
-   const initial=record.initial_adjusted_price,initialCell=row.cells[17],latestCell=row.cells[18];
+   const initial=record.initial_adjusted_price,initialCell=row.cells[15],latestCell=row.cells[16];
    const expectedSmall=typeof initial==='number'&&Number.isFinite(initial)&&initial>0&&initial<1;
    const smallPrices=Array.from(initialCell?.querySelectorAll('.initial-price-small')||[]);
    const initialPaint=expectedSmall?smallPrices[0]:(initialCell?.querySelector('.cl')||initialCell);
