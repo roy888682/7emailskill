@@ -105,6 +105,88 @@ class NaverUSLinkTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "no exact US security"):
                 links.resolve_us_url("NOTLISTED")
 
+    def duplicated_listing(self):
+        return {"items": [
+            {"code": "HLT", "nationCode": "USA", "typeCode": "NASDAQ",
+             "url": "/worldstock/stock/HLT.O/total"},
+            {"code": "HLT", "nationCode": "USA", "typeCode": "NYSE",
+             "url": "/worldstock/stock/HLT/total"},
+        ]}
+
+    def chart_identity(self, **overrides):
+        meta = {"symbol": "HLT", "exchangeName": "NYQ", "instrumentType": "EQUITY"}
+        meta.update(overrides)
+        return {"chart": {"result": [{"meta": meta}], "error": None}}
+
+    def test_ambiguous_symbol_requires_explicit_exchange_and_stays_order_independent(self):
+        payload = self.duplicated_listing()
+        for items in (payload["items"], list(reversed(payload["items"]))):
+            with self.subTest(items=items):
+                with self.assertRaises(links.AmbiguousNaverSymbol):
+                    links.matching_url({"items": items}, "HLT")
+                self.assertEqual(links.matching_url({"items": items}, "HLT", exchange="NYSE"),
+                                 links.NAVER_ORIGIN + "/worldstock/stock/HLT/total")
+                self.assertIsNone(links.matching_url({"items": items}, "HLT", exchange="UNKNOWN"))
+
+    def test_ambiguous_listing_uses_yahoo_identity_then_rechecks_naver_exchange(self):
+        basic = {"symbolCode": "HLT", "reutersCode": "HLT", "stockEndType": "stock",
+                 "nationType": "USA", "stockExchangeName": "NYSE",
+                 "stockExchangeType": {"name": "NYSE", "code": "NYS"},
+                 "stockEndUrl": links.NAVER_ORIGIN + "/worldstock/stock/HLT"}
+        def response(url, params=None):
+            if url.startswith("https://query1.finance.yahoo.com/v8/finance/chart/"):
+                self.assertEqual(params, {"range": "5d", "interval": "1d"})
+                return self.chart_identity()
+            self.assertEqual(url, "https://api.stock.naver.com/stock/HLT/basic")
+            return basic
+        with patch.object(links, "_search", return_value=self.duplicated_listing()), \
+             patch.object(links, "_request_json", side_effect=response) as request:
+            self.assertEqual(links.resolve_us_url("HLT"), basic["stockEndUrl"] + "/total")
+        self.assertEqual(request.call_count, 2)
+
+    def test_ambiguous_listing_blocks_unverified_yahoo_symbol_type_or_exchange(self):
+        for changed in ({"symbol": "HLTH"}, {"instrumentType": "INDEX"},
+                        {"exchangeName": "UNKNOWN"}, {"exchangeName": None},
+                        {"instrumentType": "ETF"}):
+            links.resolve_us_url.cache_clear()
+            with self.subTest(changed=changed), \
+                 patch.object(links, "_search", return_value=self.duplicated_listing()), \
+                 patch.object(links, "_request_json", return_value=self.chart_identity(**changed)), \
+                 patch.object(links, "_verify_url") as verify:
+                with self.assertRaises(RuntimeError):
+                    links.resolve_us_url("HLT")
+                verify.assert_not_called()
+
+    def test_listing_lookup_failure_or_remaining_ambiguity_never_chooses_first_candidate(self):
+        payload = self.duplicated_listing()
+        payload["items"].append({"code": "HLT", "nationCode": "USA", "typeCode": "NYSE",
+                                 "url": "/worldstock/stock/HLT.NEW/total"})
+        for response in (self.chart_identity(), {"chart": {"result": [], "error": None}},
+                         {"chart": {"result": [{"meta": {}}], "error": {"code": "Not Found"}}}):
+            links.resolve_us_url.cache_clear()
+            with self.subTest(response=response), \
+                 patch.object(links, "_search", return_value=payload), \
+                 patch.object(links, "_request_json", return_value=response), \
+                 patch.object(links, "_verify_url") as verify:
+                with self.assertRaises(RuntimeError):
+                    links.resolve_us_url("HLT")
+                verify.assert_not_called()
+        with patch.object(links, "_search", return_value=payload), \
+             patch.object(links, "_request_json", side_effect=RuntimeError("lookup unavailable")), \
+             patch.object(links, "_verify_url") as verify:
+            with self.assertRaisesRegex(RuntimeError, "lookup unavailable"):
+                links.resolve_us_url("HLT")
+            verify.assert_not_called()
+
+    def test_basic_exchange_must_match_chart_evidence_and_not_conflict_in_detail(self):
+        url = links.NAVER_ORIGIN + "/worldstock/stock/HLT/total"
+        basic = {"symbolCode": "HLT", "reutersCode": "HLT", "stockEndType": "stock",
+                 "nationType": "USA", "stockEndUrl": url.removesuffix("/total")}
+        for venue in ({}, {"stockExchangeName": "NASDAQ"},
+                      {"stockExchangeName": "NYSE", "stockExchangeType": {"name": "NASDAQ"}}):
+            with self.subTest(venue=venue), self.assertRaisesRegex(RuntimeError, "exchange mismatch"):
+                links.validate_basic({**basic, **venue}, "HLT", url, exchange="NYSE")
+
 
 if __name__ == "__main__":
     unittest.main()
