@@ -314,7 +314,8 @@ class EmailLayoutTests(unittest.TestCase):
         self.assertRegex(CSS, r"\.data-table th\{[^}]*font-size:13px;[^}]*text-align:center!important")
         self.assertIn(".data-table .d{font-size:12.35px;text-align:center}", CSS)
         self.assertIn("1·2·3·10년: 각 기간 누적수익률", doc.get_text())
-        self.assertIn(".data-table .cagr{font-weight:bold}", CSS)
+        self.assertIn(".data-table .cagr{font-weight:bold;background:#fff2cc}", CSS)
+        self.assertIn(".data-table th.cagr{background:#76551b;color:#fff}", CSS)
 
     def test_period_hover_dates_and_exact_prices_are_available_without_rounding(self):
         doc = BeautifulSoup(render_email(**self.data), "html5lib")
