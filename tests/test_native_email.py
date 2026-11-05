@@ -127,6 +127,10 @@ class NativeEmailTests(unittest.TestCase):
             self.assertEqual(headings[5], "운용방식")
             self.assertEqual(headings[6:11], ["연초", "1년", "2년", "3년", "10년"])
             self.assertEqual(headings[12], "연평균")
+            self.assertIn("cagr", table.select("thead th")[12].get("class", []))
+            css_text = "\n".join(str(style.string or "") for style in table.find_parent("html").find_all("style"))
+            self.assertIn(".data-table .cagr{font-weight:bold;background:#fff2cc}", css_text)
+            self.assertIn(".data-table th.cagr{background:#76551b;color:#fff}", css_text)
             self.assertEqual(headings[13:19], ["누적연수", "AUM·시총(원화)", "설립·상장일", "수익률 기준일", "최초주가", "최근주가"])
             for row in table.select("tbody tr"):
                 cells = row.find_all("td", recursive=False)

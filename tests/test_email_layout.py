@@ -106,7 +106,7 @@ class EmailLayoutTests(unittest.TestCase):
         end = date(2026, 10, 7)
         template = next(row for row in self.data["us"] if row.get("asset_type") == "ETF")
         items = []
-        for ticker, days, latest in (("SHORT1095", 1095, 300.0), ("LONG1096", 1096, 150.0),
+        for ticker, days, latest in (("SHORT365", 365, 300.0), ("LONG366", 366, 150.0),
                                      ("LONGLOW", 1461, 110.0)):
             item = copy.deepcopy(template)
             start = end - timedelta(days=days)
@@ -122,20 +122,20 @@ class EmailLayoutTests(unittest.TestCase):
         data["etf_info"] = build_etf_info(items, [], comparison_etfs=items)
         return data, items
 
-    def test_three_year_ranking_keeps_short_etfs_in_country_new_and_complete_audit(self):
+    def test_one_year_ranking_keeps_short_etfs_in_country_new_and_complete_audit(self):
         data, items = self.minimum_year_data()
         source, manifest = render_email(**data), manifest_for(data)
         proof = validate_etf_market_dates(data["us"], data["kr"], data["info"], comparison_etfs=items)
-        self.assertEqual(manifest["etf"], ["LONG1096", "LONGLOW"])
-        self.assertIn("SHORT1095", manifest["us"])
-        self.assertIn("US:SHORT1095", manifest["new"])
-        record = next(row for row in proof["etfs"] if row["ticker"] == "SHORT1095")
+        self.assertEqual(manifest["etf"], ["LONG366", "LONGLOW"])
+        self.assertIn("SHORT365", manifest["us"])
+        self.assertIn("US:SHORT365", manifest["new"])
+        record = next(row for row in proof["etfs"] if row["ticker"] == "SHORT365")
         self.assertTrue(record["in_comparison_universe"])
-        self.assertEqual(elapsed_years_text(record["lifetime_years"]), "3.00년")
-        self.assertLess(record["lifetime_years"], 3)
-        self.assertEqual(elapsed_years_text(items[1]["lifetime_years"]), "3.00년")
-        self.assertGreater(items[1]["lifetime_years"], 3)
-        self.assertIn("누적연수 3년 이상", BeautifulSoup(source, "html5lib").get_text())
+        self.assertEqual(elapsed_years_text(record["lifetime_years"]), "1.00년")
+        self.assertLess(record["lifetime_years"], 1)
+        self.assertEqual(elapsed_years_text(items[1]["lifetime_years"]), "1.00년")
+        self.assertGreater(items[1]["lifetime_years"], 1)
+        self.assertIn("누적연수 1년 이상", BeautifulSoup(source, "html5lib").get_text())
         self.assertEqual(validate_etf_date_proof(source, manifest, proof), proof["market_dates"])
 
     def test_rank_proof_rejects_rounded_short_age_reintroduction_missing_rows_and_wrong_order(self):
@@ -151,7 +151,7 @@ class EmailLayoutTests(unittest.TestCase):
             elif kind == "wrong_order":
                 altered["etf_info"]["rows"].reverse()
             else:
-                next(row for row in altered_proof["etfs"] if row["ticker"] == "SHORT1095")["lifetime_years"] = 3.0
+                next(row for row in altered_proof["etfs"] if row["ticker"] == "SHORT365")["lifetime_years"] = 1.0
             source, manifest = render_email(**altered), manifest_for(altered)
             with self.subTest(kind=kind), self.assertRaises(RuntimeError):
                 validate_etf_date_proof(source, manifest, altered_proof)
@@ -717,7 +717,7 @@ class PeriodReturnEvidenceTests(unittest.TestCase):
             validate_period_return_evidence(record)
 
 
-BASELINE_CSS = "\nbody{margin:0;background:#f2f5f8;color:#17263d;font-family:Arial,'Malgun Gothic','Apple SD Gothic Neo',sans-serif;font-size:15.6px;line-height:1.4}\ntable{border-collapse:collapse}a{color:#1260ad;text-decoration:none}\n.shell{max-width:1360px;margin:0 auto;padding:12px;color:#17263d;background:#f2f5f8;font-family:Arial,'Malgun Gothic','Apple SD Gothic Neo',sans-serif;font-size:15.6px;line-height:1.4}.layout{width:100%;table-layout:fixed}\n.hero{background:#11243c;color:#fff;border-radius:9px;padding:12px 16px}.hero .eyebrow{display:none}\n.hero h1{font-size:24.7px;line-height:1.2;margin:0 0 5px}.date{font-size:14.3px;color:#c5d5e4}\n.hero .foot{font-size:13px;color:#9eb5cc;border-top:1px solid #30465f;padding-top:6px;margin-top:7px}\n.summary{margin-top:8px;background:#fff;border:1px solid #dfe7ef;border-radius:8px;padding:8px 10px}\n.summary td{width:50%;padding:0 3px;vertical-align:top}.count{font-size:22.1px;font-weight:bold}\n.market{font-weight:bold;font-size:14.3px;margin-bottom:2px}.muted{font-size:13px;color:#667a90}\n.section{margin-top:14px}.section h2{margin:0;font-size:20.8px;line-height:1.25}\n.intro,.etf-caption{font-size:13px;color:#64778b;margin:4px 0 7px}\n.data-table{width:100%;table-layout:fixed;background:#fff;border:1px solid #dce5ee;font-size:12.35px;line-height:1.25}\n.data-table th,.data-table td{white-space:nowrap;overflow:hidden;padding:3px 1px;text-align:left;vertical-align:middle;border-right:1px solid #000}\n.data-table th:last-child,.data-table td:last-child{border-right:0}\n.data-table th{background:#163b68;color:#fff;font-weight:bold;font-size:13px;white-space:nowrap;text-align:center!important}\n.data-table .cl,.data-table .nm,.data-table .iwc{display:block;width:100%;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\n.data-table .iw{width:126px;max-width:126px}\n.data-table .nm{text-align:left}\n.stock-table th{background:#ee990b;color:#fff}\n.asset{display:inline-block;border-radius:3px;padding:1px 3px;font-size:11.7px;font-weight:bold}.s{background:#dff3ee;color:#087569}.e{background:#eee5fa;color:#753caf}\n.data-table td{border-bottom:1px solid #e7edf3}.data-table tbody tr:nth-child(even){background:#f6f8fb}\n.data-table .n{text-align:right;font-variant-numeric:tabular-nums}\n.data-table .f{text-align:center;padding-left:1px;padding-right:1px}.f img{width:20px;height:auto;vertical-align:middle}\n.data-table .t{font-weight:bold}.data-table .y{background:#eaf1fb}\n.data-table th.y{background:#2b4665;color:#fff}.data-table .d{font-size:12.35px;text-align:center}\n.etf-comparison .data-table{font-size:13px}.metric-label{display:none}.m{display:block;font-size:13px;font-weight:inherit;line-height:1.25}\n.data-table .cagr{font-weight:bold}\n.etf-details{margin-top:12px}.etf-details h3{font-size:16.9px;margin:0 0 6px}\n.up{color:#c04840}.down{color:#2862a6}.flat{color:#52677d}\n.initial-price-small{color:#c23932}\n.new-section{border-top:3px solid #ee990b;padding-top:8px}.new-table th{background:#ee990b}.r{color:#c23932}.data-table .p1{color:#c23932}.data-table .p2{color:#245ba6}.data-table .p3{color:#087d67}.data-table .p10{color:#7944b0}.data-table .z{background:#f6f8fb}\n.new{background:#e6f3ed;color:#237353;border-radius:3px;padding:0 3px;margin-left:3px;font-size:10.4px;font-weight:bold}\n.notice{background:#fff4dc;color:#796438;border-radius:6px;padding:8px 10px;font-size:13px;margin:8px 0}\n.report-note{padding:8px 10px;background:#e8f0f8;border-radius:6px;color:#405d7a;font-size:13px}\n.notes{font-size:11.7px;line-height:1.5;color:#75869a;margin:8px 0}.footer{text-align:center;color:#8a9aab;font-size:11.7px;padding:16px 0 8px}\n"
+BASELINE_CSS = "\nbody{margin:0;background:#f2f5f8;color:#17263d;font-family:Arial,'Malgun Gothic','Apple SD Gothic Neo',sans-serif;font-size:15.6px;line-height:1.4}\ntable{border-collapse:collapse}a{color:#1260ad;text-decoration:none}\n.shell{max-width:1360px;margin:0 auto;padding:12px;color:#17263d;background:#f2f5f8;font-family:Arial,'Malgun Gothic','Apple SD Gothic Neo',sans-serif;font-size:15.6px;line-height:1.4}.layout{width:100%;table-layout:fixed}\n.hero{background:#11243c;color:#fff;border-radius:9px;padding:12px 16px}.hero .eyebrow{display:none}\n.hero h1{font-size:24.7px;line-height:1.2;margin:0 0 5px}.date{font-size:14.3px;color:#c5d5e4}\n.hero .foot{font-size:13px;color:#9eb5cc;border-top:1px solid #30465f;padding-top:6px;margin-top:7px}\n.summary{margin-top:8px;background:#fff;border:1px solid #dfe7ef;border-radius:8px;padding:8px 10px}\n.summary td{width:50%;padding:0 3px;vertical-align:top}.count{font-size:22.1px;font-weight:bold}\n.market{font-weight:bold;font-size:14.3px;margin-bottom:2px}.muted{font-size:13px;color:#667a90}\n.section{margin-top:14px}.section h2{margin:0;font-size:20.8px;line-height:1.25}\n.intro,.etf-caption{font-size:13px;color:#64778b;margin:4px 0 7px}\n.data-table{width:100%;table-layout:fixed;background:#fff;border:1px solid #dce5ee;font-size:12.35px;line-height:1.25}\n.data-table th,.data-table td{white-space:nowrap;overflow:hidden;padding:3px 1px;text-align:left;vertical-align:middle;border-right:1px solid #000}\n.data-table th:last-child,.data-table td:last-child{border-right:0}\n.data-table th{background:#163b68;color:#fff;font-weight:bold;font-size:13px;white-space:nowrap;text-align:center!important}\n.data-table .cl,.data-table .nm,.data-table .iwc{display:block;width:100%;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\n.data-table .iw{width:126px;max-width:126px}\n.data-table .nm{text-align:left}\n.stock-table th{background:#ee990b;color:#fff}\n.asset{display:inline-block;border-radius:3px;padding:1px 3px;font-size:11.7px;font-weight:bold}.s{background:#dff3ee;color:#087569}.e{background:#eee5fa;color:#753caf}\n.data-table td{border-bottom:1px solid #e7edf3}.data-table tbody tr:nth-child(even){background:#f6f8fb}\n.data-table .n{text-align:right;font-variant-numeric:tabular-nums}\n.data-table .f{text-align:center;padding-left:1px;padding-right:1px}.f img{width:20px;height:auto;vertical-align:middle}\n.data-table .t{font-weight:bold}.data-table .y{background:#eaf1fb}\n.data-table th.y{background:#2b4665;color:#fff}.data-table .d{font-size:12.35px;text-align:center}\n.etf-comparison .data-table{font-size:13px}.metric-label{display:none}.m{display:block;font-size:13px;font-weight:inherit;line-height:1.25}\n.data-table .cagr{font-weight:bold;background:#fff2cc}\n.data-table th.cagr{background:#76551b;color:#fff}\n.etf-details{margin-top:12px}.etf-details h3{font-size:16.9px;margin:0 0 6px}\n.up{color:#c04840}.down{color:#2862a6}.flat{color:#52677d}\n.initial-price-small{color:#c23932}\n.new-section{border-top:3px solid #ee990b;padding-top:8px}.new-table th{background:#ee990b}.r{color:#c23932}.data-table .p1{color:#c23932}.data-table .p2{color:#245ba6}.data-table .p3{color:#087d67}.data-table .p10{color:#7944b0}.data-table .z{background:#f6f8fb}\n.new{background:#e6f3ed;color:#237353;border-radius:3px;padding:0 3px;margin-left:3px;font-size:10.4px;font-weight:bold}\n.notice{background:#fff4dc;color:#796438;border-radius:6px;padding:8px 10px;font-size:13px;margin:8px 0}\n.report-note{padding:8px 10px;background:#e8f0f8;border-radius:6px;color:#405d7a;font-size:13px}\n.notes{font-size:11.7px;line-height:1.5;color:#75869a;margin:8px 0}.footer{text-align:center;color:#8a9aab;font-size:11.7px;padding:16px 0 8px}\n"
 
 if __name__=="__main__":
     unittest.main()

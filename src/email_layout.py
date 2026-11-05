@@ -11,7 +11,7 @@ else:
     from email_flags import flag_html
 
 MAX_BODY_BYTES = 85000
-ETF_MINIMUM_YEARS = 3
+ETF_MINIMUM_YEARS = 1
 _ETF_PERIOD_COLUMNS = (
     ("ytd", "연초", "return_ytd"),
     ("1y", "1년", "return1y"),
@@ -48,7 +48,8 @@ table{border-collapse:collapse}a{color:#1260ad;text-decoration:none}
 .data-table .t{font-weight:bold}.data-table .y{background:#eaf1fb}
 .data-table th.y{background:#2b4665;color:#fff}.data-table .d{font-size:12.35px;text-align:center}
 .etf-comparison .data-table{font-size:13px}.metric-label{display:none}.m{display:block;font-size:13px;font-weight:inherit;line-height:1.25}
-.data-table .cagr{font-weight:bold}
+.data-table .cagr{font-weight:bold;background:#fff2cc}
+.data-table th.cagr{background:#76551b;color:#fff}
 .etf-details{margin-top:12px}.etf-details h3{font-size:16.9px;margin:0 0 6px}
 .up{color:#c04840}.down{color:#2862a6}.flat{color:#52677d}
 .initial-price-small{color:#c23932}
@@ -315,7 +316,7 @@ def etf_section_html(etf_info, include_details=False, info=None):
              '<th class="number">No.</th><th class="flag-cell">국가</th><th>티커</th><th>종목명</th><th>업종·투자분야</th><th>운용방식</th>' +
              "".join(f'<th class="number {"one-year" if period == "1y" else ""}">{label}</th>'
                      for period, label, _ in _ETF_METRICS) +
-             '<th class="number">연평균</th>'
+             '<th class="number cagr">연평균</th>'
              '<th class="number" data-field="lifetime_years">누적연수</th>'
              '<th class="number" data-field="aum">AUM·시총(원화)</th><th data-field="inception">설립·상장일</th>'
              '<th>수익률 기준일</th><th class="number">최초주가</th><th class="number">최근주가</th></tr></thead><tbody>')

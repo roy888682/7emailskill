@@ -291,7 +291,7 @@ class MarketDateSynchronizationTests(unittest.TestCase):
         self.assertEqual((item["initial_adjusted_price"], item["latest_adjusted_price"]), (36.0, 59.09))
         self.assertFalse(item.get("price_history_inception_mismatch", False))
         self.assertIsNone(item["return3y"])
-        self.assertEqual(build_etf_info([], [], [item])["rows"], [])
+        self.assertEqual([row["ticker"] for row in build_etf_info([], [], [item])["rows"]], ["GBTC"])
         record = next(row for row in proof["etfs"] if row["ticker"] == "GBTC")
         self.assertTrue(record["in_comparison_universe"])
         self.assertEqual(record["trust_inception"], "2013-09-25")

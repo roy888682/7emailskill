@@ -65,7 +65,7 @@ jobs:
                   row["price_end_date"] = row["last_date"] = row["return_as_of"] = actual_end
                   row["lifetime_years"] = (date.fromisoformat(actual_end) - date.fromisoformat(row["price_start_date"])).days / 365.25
               if index in (0, 1, 2):
-                  start_date = ("2025-04-01", "2023-10-08", "2023-10-07")[index]
+                  start_date = ("2026-04-01", "2025-10-07", "2025-10-06")[index]
                   row["price_start_date"] = row["first_date"] = start_date
                   row["lifetime_years"] = (date.fromisoformat(row["price_end_date"]) - date.fromisoformat(start_date)).days / 365.25
               row["lifetime_cagr"] = 40.0 - index * .4
@@ -124,7 +124,7 @@ jobs:
           ranked = data["etf_info"]["rows"]
           assert len(ranked) == data["etf_info"]["eligible_count"]
           assert ranked[-1]["ticker"] == cohort[-1]["ticker"] and ranked[-1]["lifetime_cagr"] < 0
-          assert all(row["lifetime_years"] >= 3 for row in ranked)
+          assert all(row["lifetime_years"] >= 1 for row in ranked)
           assert [row["lifetime_cagr"] for row in ranked] == sorted((row["lifetime_cagr"] for row in ranked), reverse=True)
           assert not {cohort[0]["ticker"], cohort[1]["ticker"]} & {row["ticker"] for row in ranked}
           assert cohort[2]["ticker"] in {row["ticker"] for row in ranked}
@@ -144,7 +144,7 @@ jobs:
           (directory / "report-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
           market_proof = bind_market_date_proof(html, manifest, validate_etf_market_dates(data["us"], data["kr"], data["info"], comparison_etfs=comparison_etfs))
           assert len(market_proof["etfs"]) == 763
-          assert sum(row.get("lifetime_years") is not None and row["lifetime_years"] < 3 for row in market_proof["etfs"]) == 2
+          assert sum(row.get("lifetime_years") is not None and row["lifetime_years"] < 1 for row in market_proof["etfs"]) == 2
           assert next(row for row in market_proof["etfs"] if row["ticker"] == "TQQQ")["in_ath_report"] is False
           assert next(row for row in market_proof["etfs"] if row["ticker"] == "TQQQ")["in_comparison_universe"] is True
           assert market_proof["status_counts"]["unavailable"] == 1

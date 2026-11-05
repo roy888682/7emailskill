@@ -600,6 +600,10 @@ MANAGEMENT_STYLE_CHECK = r"""proof => {
    Number.isFinite(record.lifetime_cagr)&&yearsOf(record)>=__ETF_MINIMUM_YEARS__);
  const eligibleRecords=new Map(eligible);
  const expectedCagrs=eligible.map(([,record])=>record.lifetime_cagr).sort((a,b)=>b-a);
+ const cagrHeader=document.querySelector('#returns thead th.cagr');
+ if(eligible.length&&(!cagrHeader||getComputedStyle(cagrHeader).backgroundColor!=='rgb(118, 85, 27)'||
+    getComputedStyle(cagrHeader).color!=='rgb(255, 255, 255)'))
+   problems.push('The annualized return heading must use the highlighted background');
  const displayedCagrs=[],displayedKeys=new Set();
  for(const row of document.querySelectorAll('#returns tbody tr')){
    const label=row.cells[1]?.querySelector('img')?.alt,country=label==='성조기'?'US':label==='태극기'?'KR':null;
@@ -628,6 +632,8 @@ MANAGEMENT_STYLE_CHECK = r"""proof => {
         getComputedStyle(value).fontWeight!==weight)
        problems.push('Only the lifetime CAGR return column must be bold: '+ticker+' column '+column);
      else if(column===12)boldCagrs++;
+     if(column===12&&getComputedStyle(metricCell).backgroundColor!=='rgb(255, 242, 204)')
+       problems.push('The annualized return values must have the pale yellow background: '+ticker);
    }
    const initial=record.initial_adjusted_price,initialCell=row.cells[17],latestCell=row.cells[18];
    const expectedSmall=typeof initial==='number'&&Number.isFinite(initial)&&initial>0&&initial<1;

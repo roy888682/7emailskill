@@ -1900,7 +1900,7 @@ def send_email(html, subject, inline_images=None, source_html=None):
     log.info("SMTP_ACCEPTED: %s", json.dumps(receipt, ensure_ascii=False))
     log.info("✅ SMTP 접수 성공 · 수신함 도착 여부는 별도 확인")
 
-CODE_VERSION = "2026-11-05-complete-etf-cagr-ranking-and-two-year-return"
+CODE_VERSION = "2026-11-05-one-year-etf-ranking-highlighted-cagr"
 
 def main(prepare_only=False):
     log.info(f"=== ATH 리포트 시작 (코드버전: {CODE_VERSION}) ===")
@@ -1975,7 +1975,7 @@ def main(prepare_only=False):
     email_layout.validate_etf_date_proof(email_html, expected, market_dates)
     log.info(f"기본 표 검증: 미국 {len(expected['us'])} · 한국 {len(kr)} · "
              f"신규 {len(new_us) + len(new_kr)}개 / 단일 메일")
-    subject = build_subject(info) + " · 전체종목 기본표 " + datetime.now(KST).strftime("%H:%M:%S")
+    subject = build_subject(info) + f" · ETF {email_layout.ETF_MINIMUM_YEARS}년 이상 전체종목 " + datetime.now(KST).strftime("%H:%M:%S")
     if prepare_only:
         size = native_email.validate_source_size(email_html)
         directory = Path("work")
