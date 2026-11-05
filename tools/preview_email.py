@@ -475,7 +475,6 @@ LAYOUT_CHECK = r"""expected => {
  return {
    viewport,counts,new_country_numbering:newNumbering,
    etfHeight:Math.round(returns?.getBoundingClientRect().height||0),
-   etfLowHeight:Math.round(lowReturns?.getBoundingClientRect().height||0),
    shellFont:document.querySelector(".shell")?getComputedStyle(document.querySelector(".shell")).fontSize:null,
    problems
  };
