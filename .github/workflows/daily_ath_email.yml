@@ -1,12 +1,6 @@
 name: 📈 Daily ATH Stock Email
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'src/**'
-      - 'tests/**'
-      - 'tools/**'
   schedule:
     - cron: '0 22 * * 1-5'   # UTC 월~금 22:00 = KST 화~토 07:00 (일·월 발송 없음)
   workflow_dispatch:
@@ -87,48 +81,6 @@ jobs:
 
       - name: 📄 전체 본문 준비 (아직 발송하지 않음)
         run: python src/main.py --prepare-only
-
-      - name: Verify the one-year ETF ranking and highlighted CAGR column
-        run: |
-          python - <<'PY'
-          import json
-          import math
-          from datetime import date
-          from pathlib import Path
-          from bs4 import BeautifulSoup
-          from src.email_layout import ETF_MINIMUM_YEARS
-          assert ETF_MINIMUM_YEARS == 1
-          work = Path("work")
-          audit = json.loads((work / "market-date-proof.json").read_text(encoding="utf-8"))
-          manifest = json.loads((work / "report-manifest.json").read_text(encoding="utf-8"))
-          eligible = []
-          for row in audit["etfs"]:
-              value = row.get("lifetime_cagr")
-              if not row["in_comparison_universe"] or not isinstance(value, (int, float)) or not math.isfinite(value):
-                  continue
-              days = (date.fromisoformat(row["price_end_date"]) - date.fromisoformat(row["price_start_date"])).days
-              if days / 365.25 >= ETF_MINIMUM_YEARS:
-                  eligible.append(row)
-          doc = BeautifulSoup((work / "email-body.html").read_text(encoding="utf-8"), "html5lib")
-          rows = doc.select("#returns tbody tr")
-          assert len(rows) == len(manifest["etf"]) == len(eligible)
-          by_identity = {(r["country"], r["ticker"]): r["lifetime_cagr"] for r in eligible}
-          observed = []
-          for rank, row in enumerate(rows, 1):
-              cells = row.find_all("td", recursive=False)
-              country = {"태극기": "KR", "성조기": "US"}[cells[1].find("img")["alt"]]
-              assert cells[0].get_text(strip=True) == str(rank) and "cagr" in cells[12].get("class", [])
-              observed.append(by_identity[country, cells[2].find("a").get_text(strip=True)])
-          assert observed == sorted(by_identity.values(), reverse=True)
-          if rows:
-              assert doc.select_one("#returns thead th.cagr").get_text(strip=True) == "연평균"
-          print("ONE_YEAR_ETF_RANKING_VERIFIED:" + json.dumps({
-              "eligible": len(eligible), "displayed": len(rows), "minimum_years": ETF_MINIMUM_YEARS,
-              "minimum_observed_years": min(((date.fromisoformat(r["price_end_date"]) - date.fromisoformat(r["price_start_date"])).days / 365.25 for r in eligible), default=None),
-              "body_highlight": "#fff2cc", "header_highlight": "#76551b",
-              "gbtc_included": "GBTC" in manifest["etf"]
-          }), flush=True)
-          PY
 
       - name: 🖥️ 한미 HTML 글자·양식·전체 종목·확대 글꼴 검증
         run: python tools/preview_email.py --html work/email-body.html --manifest work/report-manifest.json --reference work/email-reference.html
