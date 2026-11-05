@@ -64,10 +64,11 @@ class EmailDeliveryTests(unittest.TestCase):
     def test_large_live_sized_report_reaches_smtp_with_every_row_without_attachment(self):
         data = sample_data()
         base_etfs = data["etf_info"]["rows"]
+        etf_count = 750
         compared = [dict(base_etfs[index % len(base_etfs)], ticker="ETF%03d" % index)
-                    for index in range(300)]
-        data["etf_info"].update(rows=compared, pool=300, with_ret=300,
-                                eligible_count=300, below_minimum_years=0)
+                    for index in range(etf_count)]
+        data["etf_info"].update(rows=compared, pool=etf_count, with_ret=etf_count,
+                                eligible_count=etf_count, below_minimum_years=0)
         data["us"] = [make_stock("US%04d" % number, number=number) for number in range(240)]
         for row in data["us"]:
             row["name"] = "Example Semiconductor Company " + row["ticker"]
@@ -75,7 +76,7 @@ class EmailDeliveryTests(unittest.TestCase):
         data["new_us"] = data["us"][:25]
         source = render_email(**data)
         expected = inventory(source)
-        self.assertEqual(expected["etf"], ["ETF%03d" % number for number in range(300)])
+        self.assertEqual(expected["etf"], ["ETF%03d" % number for number in range(etf_count)])
         with tempfile.TemporaryDirectory() as directory:
             delivery, _ = native_email.prepare(source, expected, directory)
             self.assertTrue(native_email.clipping_risk(delivery))
@@ -227,11 +228,11 @@ class EmailDeliveryTests(unittest.TestCase):
         tqqq = dict(next(row for row in data["us"] if row.get("ticker") == "TQQQ"), gap=-28.6)
         comparison_etfs = [us[0], tqqq]
         etf_info = build_etf_info(us, [], comparison_etfs=comparison_etfs)
-        html = render_email(us, [], info, 1342, etf_info=etf_info, etf_low_rows=etf_info["rows_low"])
+        html = render_email(us, [], info, 1342, etf_info=etf_info)
         manifest = inventory(html)
         self.assertNotIn("TQQQ", manifest["us"])
         self.assertIn("TQQQ", manifest["etf"])
-        self.assertIn("TQQQ", manifest["etf_low"])
+        self.assertEqual(set(manifest), {"us", "kr", "new", "etf"})
         market_proof = bind_market_date_proof(html, manifest, validate_etf_market_dates(us, [], info, comparison_etfs=comparison_etfs))
         self.assertEqual(market_proof["etfs"][0]["date_status"], "latest_available")
         comparison_only = next(row for row in market_proof["etfs"] if row["ticker"] == "TQQQ")
@@ -251,10 +252,10 @@ class EmailDeliveryTests(unittest.TestCase):
                 os.chdir(directory)
                 Path("work").mkdir()
                 Path("work/email-body.html").write_text(html, encoding="utf-8")
-                old_manifest = {key: values for key, values in manifest.items() if key != "etf_low"}
+                old_manifest = dict(manifest, etf_low=["TQQQ"])
                 Path("work/report-manifest.json").write_text(json.dumps(old_manifest), encoding="utf-8")
                 with patch("src.main.send_email") as send:
-                    with self.assertRaisesRegex(RuntimeError, "missing the low-to-high ETF comparison"):
+                    with self.assertRaisesRegex(RuntimeError, "requires the single complete ETF ranking"):
                         send_prepared()
                     send.assert_not_called()
                 Path("work/report-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
@@ -278,9 +279,12 @@ class EmailDeliveryTests(unittest.TestCase):
                             send.assert_not_called()
                 import copy
                 annualized_record = copy.deepcopy(market_proof["etfs"][0])
-                three_year = annualized_record["period_returns"]["3y"]
-                three_year["return_pct"] = ((three_year["end_price"] / three_year["start_price"]) ** (1 / 3) - 1) * 100
-                annualized_record["return3y"] = round(three_year["return_pct"], 1)
+                two_year = annualized_record["period_returns"]["2y"]
+                two_year["return_pct"] = ((two_year["end_price"] / two_year["start_price"]) ** (1 / 2) - 1) * 100
+                annualized_record["return2y"] = round(two_year["return_pct"], 1)
+                old_period_record = copy.deepcopy(market_proof["etfs"][0])
+                old_period_record["period_returns"]["5y"] = old_period_record["period_returns"].pop("2y")
+                old_period_record["return5y"] = old_period_record.pop("return2y")
                 wrong_ytd_record = copy.deepcopy(market_proof["etfs"][0])
                 wrong_ytd_record["period_returns"]["ytd"]["target_date"] = "2026-01-01"
                 wrong_strategy_record = copy.deepcopy(market_proof["etfs"][0])
@@ -296,7 +300,8 @@ class EmailDeliveryTests(unittest.TestCase):
                                {"market_dates":{"US":"2026-10-06","KR":"2026-10-07"}},
                                {"etfs":changed_first(dict(market_proof["etfs"][0], date_status="market_close"))},
                                {"etfs":changed_first(dict(market_proof["etfs"][0], return_as_of="2026-10-08"))},
-                               {"etfs":changed_first(annualized_record)}, {"etfs":changed_first(wrong_ytd_record)},
+                               {"etfs":changed_first(annualized_record)}, {"etfs":changed_first(old_period_record)},
+                               {"etfs":changed_first(wrong_ytd_record)},
                                {"etfs":changed_first(wrong_strategy_record)}, {"etfs":changed_first(unproven_strategy_record)},
                                {"etfs":forged_ath_records}, {"comparison_universe":["US:" + us[0]["ticker"]]}):
                     with self.subTest(market_audit=change):

@@ -51,9 +51,9 @@ class MarketDateValidationTests(unittest.TestCase):
         self.assertTrue(tqqq["in_comparison_universe"])
         self.assertEqual(tqqq["management_style"], "Passive")
 
-    def test_independent_comparison_inventory_beyond_top_three_hundred_is_still_checked(self):
+    def test_independent_comparison_inventory_beyond_old_limit_is_displayed_and_checked(self):
         pool = [etf(f"EXAMPLE{index}") for index in range(325)]
-        self.assertEqual(len(build_etf_info([], [], pool)["rows"]), 300)
+        self.assertEqual(len(build_etf_info([], [], pool)["rows"]), 325)
         pool[-1]["price_end_date"] = "2026-10-29"
         with self.assertRaises(RuntimeError):
             validate_etf_market_dates([], [], market_info(), pool)
@@ -66,10 +66,14 @@ class MarketDateValidationTests(unittest.TestCase):
     def test_period_evidence_is_bound_to_actual_dates_prices_and_cumulative_formula(self):
         item = etf()
         item.update(_etf_price_performance(
-            [date(2020, 10, 13), date(2023, 10, 27), date(2025, 12, 31), date(2026, 10, 28)],
-            [100, 150, 200, 260], price_basis="Yahoo 제공 수정주가(auto_adjust)", price_currency="USD"))
+            [date(2020, 10, 13), date(2023, 10, 27), date(2024, 10, 25),
+             date(2025, 12, 31), date(2026, 10, 28)],
+            [100, 150, 175, 200, 260], price_basis="Yahoo 제공 수정주가(auto_adjust)", price_currency="USD"))
         record = validate_etf_market_dates([item], [], market_info())["etfs"][0]
         self.assertEqual(record["return_ytd"], 30.0)
+        self.assertEqual(record["return2y"], 48.6)
+        self.assertEqual(record["period_returns"]["2y"]["target_date"], "2024-10-28")
+        self.assertEqual(record["period_returns"]["2y"]["start_date"], "2024-10-25")
         self.assertEqual(record["return3y"], 73.3)
         self.assertEqual(record["period_returns"]["3y"]["start_date"], "2023-10-27")
         mutations = [
@@ -79,6 +83,8 @@ class MarketDateValidationTests(unittest.TestCase):
             lambda row: row["period_returns"]["3y"].update(end_date="2026-10-27"),
             lambda row: row["period_returns"]["3y"].update(target_date="2023-10-29"),
             lambda row: row["period_returns"]["3y"].update(start_date="2023-10-29"),
+            lambda row: row.update(return2y=21.9),  # A two-year CAGR is not the cumulative return.
+            lambda row: row["period_returns"]["2y"].update(target_date="2021-10-28"),
             lambda row: row["period_returns"].pop("ytd"),
             lambda row: row.update(return10y=0.0),
         ]
@@ -149,11 +155,11 @@ class MarketDateValidationTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     validate_etf_market_dates([item], [], market_info())
 
-    def test_every_candidate_is_checked_including_etfs_outside_the_top_three_hundred(self):
+    def test_lowest_ranked_candidate_is_displayed_and_checked(self):
         candidates = [etf("ETF%03d" % index, latest=1000.0-index) for index in range(301)]
-        stale = etf("STALE_OUTSIDE_TOP_300", end="2026-10-27", latest=100.01)
+        stale = etf("STALE_LOWEST", end="2026-10-27", latest=100.01)
         candidates.append(stale)
-        self.assertNotIn(stale["ticker"], [row["ticker"] for row in build_etf_info(candidates, [])["rows"]])
+        self.assertEqual(build_etf_info(candidates, [])["rows"][-1]["ticker"], stale["ticker"])
         proof = validate_etf_market_dates(candidates, [], market_info())
         self.assertEqual(len(proof["etfs"]), 302)
         audited = next(row for row in proof["etfs"] if row["ticker"] == stale["ticker"])
@@ -267,7 +273,7 @@ class MarketDateSynchronizationTests(unittest.TestCase):
         self.assertEqual(item["inception"], "2021-06-14")
         self.assertFalse(item.get("price_history_inception_mismatch", False))
         self.assertEqual((item["initial_adjusted_price"], item["latest_adjusted_price"]), (20, 40))
-        self.assertIsNotNone(item["return5y"])
+        self.assertIsNotNone(item["return2y"])
         self.assertIsNone(item["return10y"])
 
     def test_gbtc_refetch_trims_otc_history_and_preserves_distinct_launch_dates(self):
@@ -332,13 +338,13 @@ class MarketDateSynchronizationTests(unittest.TestCase):
         self.assertEqual(len(candidates), 1)
         self.assertIs(candidates[0], item)
         self.assertEqual(proof["etfs"][0]["date_status"], "unavailable")
-        for key in ("price", "change", "gap", "return_ytd", "return1y", "return3y", "return5y", "return10y",
+        for key in ("price", "change", "gap", "return_ytd", "return1y", "return2y", "return3y", "return10y",
                     "cumulative_return", "cumulative_growth", "lifetime_cagr", "lifetime_years",
                     "price_start_date", "price_end_date", "first_date", "last_date", "return_as_of",
                     "initial_adjusted_price", "latest_adjusted_price"):
             self.assertIsNone(item.get(key), key)
-        self.assertEqual(item["period_returns"], {key:None for key in ("ytd", "1y", "3y", "5y", "10y")})
-        self.assertEqual(build_etf_info(candidates, []), {"rows":[], "rows_low":[], "pool":1, "with_ret":0,
+        self.assertEqual(item["period_returns"], {key:None for key in ("ytd", "1y", "2y", "3y", "10y")})
+        self.assertEqual(build_etf_info(candidates, []), {"rows":[], "pool":1, "with_ret":0,
                                                         "eligible_count":0, "below_minimum_years":0})
         mixed = dict(item, latest_adjusted_price=123.0)
         with self.assertRaises(RuntimeError):

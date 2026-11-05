@@ -122,11 +122,15 @@ class NativeEmailTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             delivery, meta = native_email.prepare(source, expected, directory)
             self.assertEqual(native_email.verify_package(source, delivery, expected, meta, directory), {})
-            headings = [cell.get_text() for cell in BeautifulSoup(delivery, "html5lib").select("#returns thead th")]
+            table = BeautifulSoup(delivery, "html5lib").select_one("#returns")
+            headings = [cell.get_text() for cell in table.select("thead th")]
             self.assertEqual(headings[5], "운용방식")
-            self.assertEqual(headings[6:11], ["연초", "1년", "3년", "5년", "10년"])
+            self.assertEqual(headings[6:11], ["연초", "1년", "2년", "3년", "10년"])
             self.assertEqual(headings[12], "연평균")
             self.assertEqual(headings[13:19], ["누적연수", "AUM·시총(원화)", "설립·상장일", "수익률 기준일", "최초주가", "최근주가"])
+            for row in table.select("tbody tr"):
+                cells = row.find_all("td", recursive=False)
+                self.assertEqual([i for i, cell in enumerate(cells) if "cagr" in cell.get("class", [])], [12])
 
     def test_long_ticker_cells_keep_the_bold_clipping_parent_only_in_column_three(self):
         data = sample_data()

@@ -14,10 +14,10 @@ else:
 CLIPPING_HTML_BYTES = 75000
 CLIPPING_CANONICAL_BYTES = 90000
 # Bound resource usage separately from a mail client's display threshold.
-# Both 300-row ETF rankings and the country tables share this inline budget.
-MAX_SOURCE_BYTES = 3500000
-MAX_HTML_BYTES = 3500000
-MAX_CANONICAL_BYTES = 4500000
+# Allow the full eligible ETF ranking and country tables to grow together.
+MAX_SOURCE_BYTES = 5000000
+MAX_HTML_BYTES = 5000000
+MAX_CANONICAL_BYTES = 6000000
 MAX_STYLE_CHARACTERS = 8192
 
 def validate_source_size(html):
@@ -74,8 +74,8 @@ def _column_css():
         (3, "text-align:left"),
         (6, "text-align:center;font-variant-numeric:normal"),
         (7, "text-align:right;font-variant-numeric:tabular-nums"),
-        (8, "text-align:right;font-variant-numeric:tabular-nums;background:#eaf1fb;font-weight:bold;color:#c23932"),
-        (9, "background:transparent;font-weight:normal;color:#245ba6"),
+        (8, "text-align:right;font-variant-numeric:tabular-nums;background:#eaf1fb;color:#c23932"),
+        (9, "background:transparent;color:#245ba6"),
         (10, "color:#087d67"),
         (11, "color:#7944b0"),
         (12, "color:#17263d"),
@@ -112,7 +112,7 @@ def _trim_css(css, doc):
     # supplied below, are removed. The accepted source stylesheet stays intact.
     unused = (".hero .eyebrow", ".metric-label", ".etf-details", ".etf-details h3",
               ".report-note", ".data-table .y", ".data-table .d", ".r",
-              ".data-table .p1", ".data-table .p3", ".data-table .p5", ".data-table .p10")
+              ".data-table .p1", ".data-table .p2", ".data-table .p3", ".data-table .p10")
     if not doc.select(".notice"):
         unused += (".notice",)
     if not doc.select(".flat"):
@@ -176,7 +176,7 @@ def _compact(source):
         table["class"] = list(table.get("class", [])) + ["v"]
     for cell in doc.select(".etf-comparison tbody td"):
         remaining = [item for item in cell.get("class", [])
-                     if item not in ("n", "f", "y", "p1", "p3", "p5", "p10", "d")]
+                     if item not in ("n", "f", "y", "p1", "p2", "p3", "p10", "d")]
         if remaining:
             cell["class"] = remaining
         else:

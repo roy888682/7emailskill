@@ -252,14 +252,14 @@ def get_trading_info():
 # 첫 응답 구조를 로그([진단ETF])로 남김. 못 찾으면 "-" 또는 대체값(브랜드→운용사,
 # 최초 거래일→설립일)으로 채움.
 
-ETF_PERIOD_FIELDS = {"ytd": "return_ytd", "1y": "return1y", "3y": "return3y",
-                     "5y": "return5y", "10y": "return10y"}
+ETF_PERIOD_FIELDS = {"ytd": "return_ytd", "1y": "return1y", "2y": "return2y",
+                     "3y": "return3y", "10y": "return10y"}
 
 
 def _etf_period_targets(end):
     """Use each ETF's actual last observation, including honest stale-date fallback."""
     targets = {"ytd": date(end.year - 1, 12, 31)}
-    for years in (1, 3, 5, 10):
+    for years in (1, 2, 3, 10):
         try:
             targets[f"{years}y"] = end.replace(year=end.year - years)
         except ValueError:  # February 29 has no counterpart in a non-leap year.
@@ -295,12 +295,12 @@ def _etf_period_returns(dates, closes):
 
 
 def _calc_perf(dates, closes):
-    """(1/3/5/10-year cumulative %, full cumulative %, first observation)."""
+    """(1/2/3/10-year cumulative %, full cumulative %, first observation)."""
     if not dates or len(dates) != len(closes) or len(closes) < 2:
         return None, None, None, None, None, None
     periods = _etf_period_returns(dates, closes)
     recent = [round(periods[key]["return_pct"], 1) if periods[key] is not None else None
-              for key in ("1y", "3y", "5y", "10y")]
+              for key in ("1y", "2y", "3y", "10y")]
     cumulative = None
     try:
         first_p, last_p = float(closes[0]), float(closes[-1])
@@ -347,7 +347,7 @@ def _etf_price_performance(dates, closes, *, price_basis=None, price_currency=No
                  if cutoff is not None and _performance_date(d) is not None
                  and _performance_date(d) >= cutoff]
         dates, closes = ([d for d, _ in pairs], [p for _, p in pairs])
-    r1, r3, r5, r10, cumulative, first = _calc_perf(dates, closes)
+    r1, r2, r3, r10, cumulative, first = _calc_perf(dates, closes)
     periods = _etf_period_returns(dates, closes)
     growth = first_p = last_p = None
     if first is not None:
@@ -361,7 +361,7 @@ def _etf_price_performance(dates, closes, *, price_basis=None, price_currency=No
     first_date = first.isoformat() if first is not None else None
     last_date = dates[-1].isoformat() if first is not None else None
     return {"return_ytd": round(periods["ytd"]["return_pct"], 1) if periods["ytd"] else None,
-            "return1y": r1, "return3y": r3, "return5y": r5, "return10y": r10,
+            "return1y": r1, "return2y": r2, "return3y": r3, "return10y": r10,
             "period_returns": periods,
             "cumulative_return": cumulative, "cumulative_growth": growth,
             "first_date": first_date, "last_date": last_date,
@@ -456,7 +456,7 @@ def _etf_lifetime_metrics(item):
 
 
 ETF_CALCULATION_FIELDS = (
-    "return_ytd", "return1y", "return3y", "return5y", "return10y", "cumulative_return", "cumulative_growth",
+    "return_ytd", "return1y", "return2y", "return3y", "return10y", "cumulative_return", "cumulative_growth",
     "lifetime_cagr", "lifetime_years", "first_date", "last_date", "price_start_date", "price_end_date",
     "return_as_of", "initial_adjusted_price", "latest_adjusted_price", "price", "change", "gap")
 
@@ -584,7 +584,7 @@ def validate_etf_market_dates(us, kr, info, comparison_etfs=None):
     groups, ath_members, comparison_members = _etf_audit_universes(us, kr, comparison_etfs)
     keys = ("inception", "inception_source", "inception_verified", "inception_label", "inception_url",
             "trust_inception", "public_quotation_date", "etf_listing_date",
-            "return_ytd", "return1y", "return3y", "return5y", "return10y", "period_returns", "cumulative_return",
+            "return_ytd", "return1y", "return2y", "return3y", "return10y", "period_returns", "cumulative_return",
             "cumulative_growth", "lifetime_cagr", "lifetime_years", "return_as_of",
             "initial_adjusted_price", "latest_adjusted_price", "price_basis", "price_currency",
             "price", "change", "gap", *etf_strategy.STYLE_FIELDS)
@@ -1149,7 +1149,7 @@ def _etf_aum(v):
     return f"{v:,.2f}조" if v < 10 else f"{v:,.1f}조"
 
 def build_etf_info(us, kr, comparison_etfs=None):
-    """Select both ends of the CAGR ranking from the same eligible ETF pool."""
+    """Rank every eligible ETF by descending CAGR."""
     pool = ([s for s in kr + us if s.get("asset_type") == "ETF"] if comparison_etfs is None
             else list(comparison_etfs))
     ranked = []
@@ -1166,9 +1166,7 @@ def build_etf_info(us, kr, comparison_etfs=None):
                 continue
             ranked.append({**item, **metrics, **etf_strategy.management_style_metadata(item)})
     ranked.sort(key=lambda item: item["lifetime_cagr"], reverse=True)
-    lowest = sorted(ranked, key=lambda item: item["lifetime_cagr"])
-    limit = email_layout.ETF_COMPARISON_LIMIT
-    return {"rows": ranked[:limit], "rows_low": lowest[:limit], "pool": len(pool), "with_ret": with_ret,
+    return {"rows": ranked, "pool": len(pool), "with_ret": with_ret,
             "eligible_count": len(ranked), "below_minimum_years": below_minimum_years}
 
 
@@ -1564,7 +1562,7 @@ def _kr_price_history(code: str, count: int = 3000) -> list:
         return []
 
 def _kr_price_history_dated(code: str, count: int = 8000):
-    """네이버 fchart에서 (날짜 리스트, 종가 리스트) 반환 — ETF 1년·3년·5년·10년 및 누적수익률·설립일 계산용"""
+    """네이버 fchart에서 (날짜 리스트, 종가 리스트) 반환 — ETF 1년·2년·3년·10년 및 누적수익률·설립일 계산용"""
     try:
         url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count={count}&requestType=0"
         r = requests.get(url, headers=UA, timeout=20)
@@ -1651,7 +1649,7 @@ def get_kr_ath(usd_krw, kr_last=None, comparison_etfs=None):
             return None
         dates = None
         if etf_flag:
-            dates, closes = _kr_price_history_dated(code, count=8000)   # 설립일/1년·3년·5년·10년 및 누적수익률용 장기 이력
+            dates, closes = _kr_price_history_dated(code, count=8000)   # 설립일/1년·2년·3년·10년 및 누적수익률용 장기 이력
             if kr_last is not None and dates and len(dates) == len(closes):
                 anchor = _performance_date(kr_last)
                 if anchor is not None:
@@ -1786,9 +1784,9 @@ def tbl_html(stocks,title,currency,holiday,date_s,hmsg="",flag=""):
 
 
 def build_email(us,kr,info,usd_krw,new_us=None,new_kr=None,diag=None,indices=None,
-                etf_info=None, etf_low_rows=None):
+                etf_info=None):
     return email_layout.render_email(us, kr, info, usd_krw, new_us, new_kr,
-                                     diag, indices, etf_info, etf_low_rows=etf_low_rows)
+                                     diag, indices, etf_info)
 
 def build_subject(info):
     ut=" [휴장]" if info["us_holiday"] else ""; kt=" [휴장]" if info["kr_holiday"] else ""
@@ -1902,7 +1900,7 @@ def send_email(html, subject, inline_images=None, source_html=None):
     log.info("SMTP_ACCEPTED: %s", json.dumps(receipt, ensure_ascii=False))
     log.info("✅ SMTP 접수 성공 · 수신함 도착 여부는 별도 확인")
 
-CODE_VERSION = "2026-11-04-high-and-low-etf-cagr-rankings"
+CODE_VERSION = "2026-11-05-complete-etf-cagr-ranking-and-two-year-return"
 
 def main(prepare_only=False):
     log.info(f"=== ATH 리포트 시작 (코드버전: {CODE_VERSION}) ===")
@@ -1940,12 +1938,12 @@ def main(prepare_only=False):
     for s in us: s["streak"] = us_streak.get(s["ticker"], 1)
     for s in kr: s["streak"] = kr_streak.get(s["ticker"], 1)
 
-    # ATH와 독립된 전체 비채권 ETF 풀에서 연평균 수익률 양쪽 순위를 선정합니다.
+    # ATH와 독립된 비채권 ETF 풀의 적격 종목 전체를 연평균 수익률로 정렬합니다.
     etf_info = build_etf_info(us, kr, comparison_etfs)
     log.info(f"ETF 섹션: 풀 {etf_info['pool']}개 / 연평균 누적수익률 산출 {etf_info['with_ret']}개 / "
              f"누적연수 {email_layout.ETF_MINIMUM_YEARS}년 이상 {etf_info['eligible_count']}개 / "
              f"{email_layout.ETF_MINIMUM_YEARS}년 미만 {etf_info['below_minimum_years']}개 / "
-             f"높은순 {len(etf_info['rows'])}개 / 낮은순 {len(etf_info['rows_low'])}개")
+             f"높은순 전체 {len(etf_info['rows'])}개")
     for item in comparison_etfs:
         if item.get("ticker") == "TQQQ" and item.get("market") == "US":
             metrics = _etf_lifetime_metrics(item) or {}
@@ -1963,17 +1961,15 @@ def main(prepare_only=False):
             keys = ("inception", "inception_label", "inception_source", "inception_verified",
                     "requested_market_date", "date_status", "return_as_of",
                     "price_start_date", "price_end_date", "initial_adjusted_price", "latest_adjusted_price",
-                    "return_ytd", "return5y", "return10y", "period_returns", "cumulative_return", "lifetime_years", "lifetime_cagr",
+                    "return_ytd", "return2y", "return10y", "period_returns", "cumulative_return", "lifetime_years", "lifetime_cagr",
                     "price_basis", "price_currency")
             log.info("ETF 가격 검증 DFAC: %s", json.dumps({key: audited.get(key) for key in keys}, ensure_ascii=False))
 
     diag = {"us_days_before": us_days_before, "kr_days_before": kr_days_before}
-    email_html = build_email(us, kr, info, usd_krw, new_us, new_kr, diag, indices, etf_info,
-                             etf_low_rows=etf_info["rows_low"])
+    email_html = build_email(us, kr, info, usd_krw, new_us, new_kr, diag, indices, etf_info)
     expected = {"us": [s["ticker"] for s in us], "kr": [s["ticker"] for s in kr],
                 "new": ["KR:" + s["ticker"] for s in new_kr] + ["US:" + s["ticker"] for s in new_us],
-                "etf": [s["ticker"] for s in etf_info["rows"]],
-                "etf_low": [s["ticker"] for s in etf_info["rows_low"]]}
+                "etf": [s["ticker"] for s in etf_info["rows"]]}
     email_layout.validate_inventory(email_html, expected)
     market_dates = bind_market_date_proof(email_html, expected, market_dates)
     email_layout.validate_etf_date_proof(email_html, expected, market_dates)
@@ -1986,7 +1982,7 @@ def main(prepare_only=False):
         directory.mkdir(exist_ok=True)
         (directory / "email-body.html").write_text(email_html, encoding="utf-8")
         reference = email_layout.render_email(us, kr, info, usd_krw, new_us, new_kr, diag, indices,
-                                              etf_info, compact=False, etf_low_rows=etf_info["rows_low"])
+                                              etf_info, compact=False)
         (directory / "email-reference.html").write_text(reference, encoding="utf-8")
         (directory / "email-preview.html").write_text(email_flags.inline_flag_sources(email_html), encoding="utf-8")
         (directory / "report-manifest.json").write_text(json.dumps(expected), encoding="utf-8")
@@ -2005,8 +2001,8 @@ def send_prepared():
     directory = Path("work")
     html = (directory / "email-body.html").read_text(encoding="utf-8")
     manifest = json.loads((directory / "report-manifest.json").read_text(encoding="utf-8"))
-    if "etf_low" not in manifest:
-        raise RuntimeError("Prepared report is missing the low-to-high ETF comparison")
+    if not isinstance(manifest, dict) or set(manifest) != {"us", "kr", "new", "etf"}:
+        raise RuntimeError("Prepared report requires the single complete ETF ranking")
     email_layout.validate_inventory(html, manifest)
     html_bytes = native_email.validate_source_size(html)
     proof = json.loads((directory / "preview-passed.json").read_text(encoding="utf-8"))
