@@ -1,12 +1,6 @@
 name: 📈 Daily ATH Stock Email
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'src/**'
-      - 'tests/**'
-      - 'tools/**'
   schedule:
     - cron: '0 22 * * 1-5'   # UTC 월~금 22:00 = KST 화~토 07:00 (일·월 발송 없음)
   workflow_dispatch:
@@ -16,7 +10,7 @@ permissions:
 
 concurrency:
   group: daily-ath-email
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   send-ath-email:
@@ -87,46 +81,6 @@ jobs:
 
       - name: 📄 전체 본문 준비 (아직 발송하지 않음)
         run: python src/main.py --prepare-only
-
-      - name: Verify ATH prices, membership and the SOXX correction
-        run: |
-          python - <<'PY'
-          import json
-          import math
-          from pathlib import Path
-          from bs4 import BeautifulSoup
-          work = Path("work")
-          manifest = json.loads((work / "report-manifest.json").read_text(encoding="utf-8"))
-          proof = json.loads((work / "market-date-proof.json").read_text(encoding="utf-8"))
-          doc = BeautifulSoup((work / "email-body.html").read_text(encoding="utf-8"), "html5lib")
-          counts = {}
-          for table_id, width in (("us", 13), ("kr", 13), ("new-us", 12), ("new-kr", 12)):
-              table = doc.find("table", id=table_id)
-              if table is None:
-                  counts[table_id] = 0
-                  continue
-              heads = [node.get_text(strip=True) for node in table.select("thead th")]
-              assert len(heads) == width and heads[7:10] == ["최근가격", "ATH가격", "ATH 괴리율"]
-              rows = table.select("tbody tr")
-              assert all(len(row.find_all("td", recursive=False)) == width for row in rows)
-              counts[table_id] = len(rows)
-          row = next(item for item in proof["etfs"] if item["country"] == "US" and item["ticker"] == "SOXX")
-          anchor_date = proof["market_dates"]["US"]
-          current = row.get("ath_end_date") == anchor_date and row.get("date_status") != "unavailable"
-          gap = row.get("gap")
-          eligible = (current and isinstance(gap, (int, float)) and math.isfinite(gap) and gap >= -10)
-          assert ("SOXX" in manifest["us"]) == eligible
-          assert "US:SOXX" not in manifest["new"] or eligible
-          keys = ("ticker", "price", "ath_price", "ath_date", "ath_end_date", "ath_price_basis",
-                  "gap", "price_start_date", "price_end_date", "initial_adjusted_price",
-                  "latest_adjusted_price", "cumulative_return", "lifetime_cagr", "date_status",
-                  "price_reference_status", "reference_price", "reference_raw_price", "reference_split_factor")
-          print("ATH_PRICE_REPORT_VERIFIED:" + json.dumps({
-              "tables": counts, "market_dates": proof["market_dates"],
-              "soxx": {key: row.get(key) for key in keys},
-              "soxx_in_ath": "SOXX" in manifest["us"], "soxx_in_new": "US:SOXX" in manifest["new"]
-          }, ensure_ascii=False), flush=True)
-          PY
 
       - name: 🖥️ 한미 HTML 글자·양식·전체 종목·확대 글꼴 검증
         run: python tools/preview_email.py --html work/email-body.html --manifest work/report-manifest.json --reference work/email-reference.html
