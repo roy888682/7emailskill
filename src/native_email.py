@@ -102,8 +102,33 @@ def _numbers(doc):
 def _semantic_node(node):
     if isinstance(node, NavigableString):
         return str(node)
-    attrs = {key: value for key, value in node.attrs.items() if key != "class"}
+    attrs = {key: value for key, value in node.attrs.items()
+             if key != "class" and not (key == "title" and _redundant_cell_title(node))}
     return [node.name, attrs, [_semantic_node(child) for child in node.children]]
+
+def _redundant_cell_title(cell):
+    """A child keeps the complete visible value and identical hover evidence."""
+    if cell.name not in ("td", "th") or "title" not in cell.attrs:
+        return False
+    clip = cell.find("span", class_=["cl", "nm", "iwc"], recursive=False)
+    if clip is None:
+        return False
+    detail = cell.get("title")
+    expected = cell.get_text() + (" · " + detail if detail else "")
+    return clip.get("title") == expected
+
+
+def _deduplicate_cell_titles(doc):
+    for cell in doc.select("table.data-table td, table.data-table th"):
+        if _redundant_cell_title(cell):
+            del cell["title"]
+
+
+def compact_tooltip_markup(source):
+    """Reduce a previously verified native body without changing its evidence."""
+    doc = BeautifulSoup(source, "html5lib")
+    _deduplicate_cell_titles(doc)
+    return _transport(str(doc))
 
 def semantic_digest(doc):
     payload = json.dumps(_semantic_node(doc.body), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -191,6 +216,7 @@ def _compact(source):
                 metric.attrs.pop("class", None)
     for style in doc.find_all("style"):
         style.string = _trim_css(str(style.string or ""), doc)
+    _deduplicate_cell_titles(doc)
     style = doc.new_tag("style")
     style.string = _column_css()
     doc.head.append(style)

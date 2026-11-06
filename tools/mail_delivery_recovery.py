@@ -110,50 +110,11 @@ def trace_mailbox():
         trace["connection_error_type"] = type(error).__name__
     return trace
 
-result["mailbox_trace"] = trace_mailbox()
-print("ATH_DELIVERY_MAILBOX_TRACE:" + json.dumps(result, ensure_ascii=False), flush=True)
-
-class QueueReceiptSMTP(smtplib.SMTP_SSL):
-    def data(self, message):
-        response = super().data(message)
-        self.queue_response = response
-        return response
-
-now = datetime.now(timezone.utc)
-kst = now.astimezone(timezone(timedelta(hours=9)))
-probe = EmailMessage(policy=SMTP)
-probe["From"], probe["To"] = SENDER, TARGET
-probe["Date"] = email.utils.format_datetime(now)
-probe["Message-ID"] = make_msgid(domain=SENDER.rsplit("@", 1)[-1])
-probe["Subject"] = "[ATH 수신 경로 점검] " + kst.strftime("%m-%d %H:%M KST") + " 진단 메일"
-probe.set_content("이 메일은 요청하신 수신 경로 점검을 위한 짧은 진단 메일입니다.\n"
-                  "11월 6일 18:18에 발송한 전체 리포트가 도착하지 않아 발송 계정의 반송 기록과 수신 경로를 점검하고 있습니다.\n"
-                  "이 진단 메일의 도착 여부를 Codex 대화에 알려주시면 다음 점검에 반영하겠습니다.\n",
-                  charset="utf-8", cte="quoted-printable")
-wire = probe.as_bytes()
-with QueueReceiptSMTP("smtp.gmail.com", 465, timeout=30, context=ssl.create_default_context()) as smtp:
-    smtp.ehlo()
-    smtp.login(SENDER, PASSWORD)
-    refused = smtp.sendmail(SENDER, TARGET, wire)
-    if refused:
-        raise RuntimeError("The diagnostic recipient was refused")
-    code, response = smtp.queue_response
-    if code != 250:
-        raise RuntimeError("The diagnostic message was not queued")
-result["diagnostic"] = {
-    "message_id": probe["Message-ID"],
-    "subject": str(probe["Subject"]),
-    "accepted_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-    "recipient_matches_expected": True, "wire_bytes": len(wire),
-    "attachment_count": 0, "smtp_data_code": code,
-    "smtp_queue_response": response.decode("ascii", errors="replace")[:300],
-    "inbox_delivery_verified": False}
-print("ATH_DELIVERY_DIAGNOSTIC_ACCEPTED:" + json.dumps(result["diagnostic"], ensure_ascii=False), flush=True)
-Path("work").mkdir(exist_ok=True)
-Path("work/mail-path-audit.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
 import hashlib
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from bs4 import BeautifulSoup
+from src import native_email, email_layout
 
 if any(item.get('references_original') and any(str(s.get('Status', '')).startswith('5.') for s in item.get('statuses', [])) for item in result['mailbox_trace'].get('matching_delivery_reports', [])):
     raise RuntimeError('A permanent delivery report refers to the original message; inspect the audit before resending the full report')
@@ -183,6 +144,26 @@ if [addr.casefold() for _, addr in getaddresses(message.get_all("To", []))] != [
 
 Path("work/recovered-report.html").write_text(body, encoding="utf-8")
 
+original_body = body
+original_hash = body_hash
+body = native_email.compact_tooltip_markup(original_body)
+before = BeautifulSoup(original_body, "html5lib")
+after = BeautifulSoup(body, "html5lib")
+if native_email.semantic_digest(before) != native_email.semantic_digest(after):
+    raise RuntimeError("Compaction changed report text, hover evidence, links or metadata")
+original_inventory = email_layout.inventory(original_body)
+if email_layout.inventory(body) != original_inventory or len(original_inventory["etf"]) != 987:
+    raise RuntimeError("Compaction changed the complete report inventory")
+if len(body.encode("utf-8")) >= len(original_body.encode("utf-8")):
+    raise RuntimeError("The compact report is not smaller")
+body_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()
+part = html_parts[0]
+if part.get("Content-Transfer-Encoding") is not None:
+    del part["Content-Transfer-Encoding"]
+part.set_payload(body.replace("\r\n", "\n").replace("\n", "\r\n").encode("utf-8"))
+part["Content-Transfer-Encoding"] = "8bit"
+Path("work/recovered-report.html").write_text(body, encoding="utf-8")
+
 for header in ("Subject", "Date", "Message-ID", "Return-Path", "Received",
                "DKIM-Signature", "ARC-Seal", "ARC-Message-Signature",
                "ARC-Authentication-Results", "Authentication-Results",
@@ -191,7 +172,7 @@ for header in ("Subject", "Date", "Message-ID", "Return-Path", "Received",
         del message[header]
 now = datetime.now(timezone.utc)
 kst = now.astimezone(timezone(timedelta(hours=9)))
-message["Subject"] = "[ATH 전체 리포트 재전송] " + kst.strftime("%m-%d %H:%M KST") + " · 11-05 기준 · ETF 987개"
+message["Subject"] = "[ATH 전체 리포트 경량 재전송] " + kst.strftime("%m-%d %H:%M KST") + " · 11-05 기준 · ETF 987개"
 message["Date"] = email.utils.format_datetime(now)
 message["Message-ID"] = make_msgid(domain=SENDER.rsplit("@", 1)[-1])
 wire = message.as_bytes(policy=SMTP)
@@ -221,7 +202,8 @@ resend = {
     "message_id": message["Message-ID"], "subject": str(message["Subject"]),
     "accepted_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     "recipient_matches_expected": True, "body_bytes": len(body.encode("utf-8")),
-    "wire_bytes": len(wire), "attachment_count": 0, "unchanged_validated_body": True,
+    "wire_bytes": len(wire), "attachment_count": 0, "unchanged_validated_body": False, "same_report_fields_and_hovers": True,
+    "source_body_sha256": original_hash, "original_body_bytes": len(original_body.encode("utf-8")), "counts": {key: len(values) for key, values in original_inventory.items()},
     "body_sha256": body_hash, "smtp_data_code": code,
     "smtp_queue_response": response.decode("ascii", errors="replace")[:300],
     "inbox_delivery_verified": False}
