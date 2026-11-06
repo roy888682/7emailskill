@@ -1,0 +1,31 @@
+name: ATH delivery recovery 20261107
+on:
+  push:
+    branches: [codex/delivery-recovery-20261107]
+    paths:
+      - '.github/workflows/delivery_recovery.yml'
+      - 'tools/mail_delivery_recovery.py'
+permissions:
+  contents: read
+jobs:
+  recover:
+    if: github.event.head_commit.message == 'Run one bounded delivery recovery for the missing ATH report'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Trace the exact report and send one probe plus one verified resend
+        env:
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
+        run: python tools/mail_delivery_recovery.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: delivery-recovery-${{ github.run_id }}
+          path: |
+            work/mail-path-audit.json
+            work/recovered-report.html
+          if-no-files-found: ignore
+          retention-days: 7
