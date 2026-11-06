@@ -33,3 +33,12 @@ for code in ("SOXX.O","SOXX.K","SOXX.P"):
 item={"ticker":"SOXX","market":"US","asset_type":"ETF","name":"SOXX","price_basis":"Yahoo 제공 수정주가(auto_adjust)"}
 perf=m._refresh_etf_market_history(item,"US",anchor)
 print("SOXX_CURRENT_REFETCH:"+json.dumps(perf,ensure_ascii=False),flush=True)
+
+for end in ("2026-11-05","2026-11-06"):
+    for adjusted in (False,True):
+        history=yf.Ticker("SOXX").history(period="max",end=end,auto_adjust=adjusted,timeout=30)
+        summary(history,"end="+end+" auto_adjust="+str(adjusted))
+for adjusted in (False,True):
+    history=yf.Ticker("SOXX").history(period="max",auto_adjust=adjusted,timeout=30)
+    history=history[[stamp.date()<=date(2026,11,4) for stamp in history.index]]
+    summary(history,"noend_trimNov4 auto_adjust="+str(adjusted))
