@@ -32,7 +32,7 @@ def etf(ticker="QQQM", market="US", end="2026-10-28", latest=260.0):
 
 
 def yahoo_history(days, prices):
-    return pd.DataFrame({"Close": prices}, index=pd.to_datetime(days))
+    return pd.DataFrame({"Close": prices, "Adj Close": prices}, index=pd.to_datetime(days))
 
 
 class MarketDateValidationTests(unittest.TestCase):
@@ -200,7 +200,8 @@ class MarketDateSynchronizationTests(unittest.TestCase):
             ticker.return_value.history.return_value = history
             synchronize_etf_market_dates(candidates, [], market_info(), attempts=2)
             self.assertTrue(ticker.return_value.history.called)
-            self.assertEqual(ticker.return_value.history.call_args.kwargs["end"], "2026-10-29")
+            self.assertNotIn("end", ticker.return_value.history.call_args.kwargs)
+            self.assertFalse(ticker.return_value.history.call_args.kwargs["auto_adjust"])
         self.assertEqual([id(row) for row in candidates], before_ids)
         self.assertEqual([row["ticker"] for row in candidates], ["QQQM", "STOCK"])
         self.assertEqual(item["price_end_date"], "2026-10-28")

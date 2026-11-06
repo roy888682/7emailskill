@@ -61,9 +61,9 @@ def _column_css():
         (2, "text-align:center;font-variant-numeric:normal"),
         (3, "text-align:left"),
         (7, "text-align:right;font-variant-numeric:tabular-nums"),
-        (8, "color:#c23932"),
-        (10, "color:#17263d"),
-        (11, "text-align:left;font-variant-numeric:normal"),
+        (10, "color:#c23932"),
+        (12, "color:#17263d"),
+        (13, "text-align:left;font-variant-numeric:normal"),
     )
     for column, declarations in rules:
         groups.append(_selectors(stocks, column) + "{" + declarations + "}")

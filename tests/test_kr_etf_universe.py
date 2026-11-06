@@ -1,5 +1,5 @@
 """Complete Korean ETF pagination and independent comparison regressions."""
-from datetime import date
+from datetime import date, timedelta
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -119,11 +119,11 @@ class KoreanEtfUniverseTests(unittest.TestCase):
         prices = {"225040": [100, 1000, 650], "418660": [100, 500, 370], "409820": [100, 250, 186]}
         histories = {code: ([starts[code], date(2025, 12, 31), date(2026, 11, 2)], prices[code])
                      for code in FUNDS}
+        histories["005930"] = ([date(2026, 10, 4) + timedelta(days=i) for i in range(30)], [100] * 30)
         pool = []
         with (patch("src.main.get_kr_universe", return_value={"005930": {
                     "name": "삼성전자", "market": "KOSPI", "mcap": 1}}),
               patch("src.main.get_kr_etf_universe", return_value=universe),
-              patch("src.main._kr_price_history", return_value=[100] * 30),
               patch("src.main._kr_price_history_dated", side_effect=lambda code, **kw: histories[code]),
               patch("src.main.fetch_kr_etf_base", return_value=None),
               patch("src.main._kr_etf_adjusted_performance", return_value=None)):

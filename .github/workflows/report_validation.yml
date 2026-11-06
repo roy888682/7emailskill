@@ -87,6 +87,7 @@ jobs:
                       last_date="2026-10-07", return_as_of="2026-10-07",
                       price_currency="USD", price_basis="Yahoo 제공 수정주가(auto_adjust)",
                       initial_adjusted_price=.2051851749420166, lifetime_cagr=40.73)
+          tqqq["ath_price"] = tqqq["price"] / (1 + tqqq["gap"] / 100)
           tqqq["lifetime_years"] = (date.fromisoformat(tqqq["price_end_date"]) - date.fromisoformat(tqqq["price_start_date"])).days / 365.25
           tqqq["latest_adjusted_price"] = tqqq["initial_adjusted_price"] * (1 + tqqq["lifetime_cagr"] / 100) ** tqqq["lifetime_years"]
           tqqq["cumulative_growth"] = tqqq["latest_adjusted_price"] / tqqq["initial_adjusted_price"]
@@ -113,7 +114,9 @@ jobs:
           for field in ETF_CALCULATION_FIELDS:
               unavailable[field] = None
           unavailable.update(period_returns={key: None for key in ETF_PERIOD_FIELDS},
-                             requested_market_date="2026-10-07", date_status="unavailable")
+                             requested_market_date="2026-10-07", date_status="unavailable",
+                             ath_price=None, ath_date=None, ath_start_date=None, ath_end_date=None,
+                             ath_price_basis=None)
           set_sample_management_style(unavailable, 2)
           comparison_etfs = cohort + comparison_only + [tqqq, unavailable]
           data["etf_info"] = build_etf_info(data["us"], data["kr"], comparison_etfs=comparison_etfs)

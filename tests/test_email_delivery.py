@@ -225,6 +225,9 @@ class EmailDeliveryTests(unittest.TestCase):
         data = sample_data()
         info = dict(data["info"], us_last=date(2026,10,8), kr_last=date(2026,10,7))
         us = [next(row for row in data["us"] if row.get("asset_type") == "ETF")]
+        # The ATH quote is current while this fixture's adjusted return history
+        # deliberately retains the previous available observation.
+        us[0]["ath_end_date"] = "2026-10-08"
         tqqq = dict(next(row for row in data["us"] if row.get("ticker") == "TQQQ"), gap=-28.6)
         comparison_etfs = [us[0], tqqq]
         etf_info = build_etf_info(us, [], comparison_etfs=comparison_etfs)

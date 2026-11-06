@@ -4,11 +4,13 @@ NASDAQ, NYSE and US ETFs use different Reuters codes and detail routes.
 Using the URL returned by Naver avoids guessing suffixes or treating an ETF as a stock.
 """
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import date, datetime
 from functools import lru_cache
 import logging
+import math
 import re
 import time
-from urllib.parse import quote, urljoin, urlsplit, urlunsplit
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import requests
 
@@ -18,39 +20,21 @@ NAVER_ORIGIN = "https://m.stock.naver.com"
 HEADERS = {"User-Agent": "Mozilla/5.0", "Accept-Language": "ko-KR,ko;q=0.9"}
 
 
-class AmbiguousNaverSymbol(RuntimeError):
-    pass
-
-
-def normalize_exchange(value):
-    """Map only explicit exchange identities shared by the two providers."""
-    value = re.sub(r"[^A-Z0-9]", "", str(value or "").upper())
-    return {"NYSE": "NYSE", "NYS": "NYSE", "NYQ": "NYSE",
-            "NASDAQ": "NASDAQ", "NSQ": "NASDAQ", "NMS": "NASDAQ",
-            "NGM": "NASDAQ", "NCM": "NASDAQ",
-            "AMEX": "AMEX", "ASE": "AMEX"}.get(value)
-
-
 def normalize_symbol(value):
     # Yahoo uses BRK-B, whereas Naver's class-share codes use spaces/dots.
     return re.sub(r"[^A-Z0-9]", "", str(value or "").upper())
 
 
-def matching_url(payload, ticker, exchange=None):
+def matching_url(payload, ticker):
     """Return an exact US-symbol match, never a similarly named security."""
     if not isinstance(payload, dict):
         return None
     wanted = normalize_symbol(ticker)
-    wanted_exchange = normalize_exchange(exchange)
-    if exchange is not None and wanted_exchange is None:
-        return None
     matches = set()
     for item in payload.get("items", []):
         if not isinstance(item, dict) or item.get("nationCode") != "USA":
             continue
         if normalize_symbol(item.get("code")) != wanted:
-            continue
-        if wanted_exchange and normalize_exchange(item.get("typeCode")) != wanted_exchange:
             continue
         raw_url = item.get("url")
         if not isinstance(raw_url, str):
@@ -62,7 +46,7 @@ def matching_url(payload, ticker, exchange=None):
             continue
         matches.add(urlunsplit(url))
     if len(matches) > 1:
-        raise AmbiguousNaverSymbol(f"Ambiguous Naver symbol: {ticker}")
+        raise RuntimeError(f"Ambiguous Naver symbol: {ticker}")
     return next(iter(matches), None)
 
 
@@ -75,13 +59,13 @@ def query_variants(ticker):
     return list(dict.fromkeys(candidates))
 
 
-def _request_json(url, params=None):
+def _request_json(url, params=None, *, expected_type=dict):
     for attempt in range(3):
         try:
             response = requests.get(url, params=params, headers=HEADERS, timeout=12)
             response.raise_for_status()
             payload = response.json()
-            if not isinstance(payload, dict):
+            if not isinstance(payload, expected_type):
                 raise ValueError("Unexpected Naver JSON response")
             return payload
         except (requests.RequestException, ValueError):
@@ -98,12 +82,12 @@ def _search(query):
     return payload
 
 
-def validate_basic(payload, ticker, url, exchange=None):
+def validate_basic(payload, ticker, url):
     """Bind the chosen link to Naver's actual security identity and detail route."""
     path = urlsplit(url).path
     route, reuters_code = path.split("/")[2:4]
-    actual_exchange = payload.get("stockExchangeType") or {}
-    nation = payload.get("nationType") or actual_exchange.get("nationCode")
+    exchange = payload.get("stockExchangeType") or {}
+    nation = payload.get("nationType") or exchange.get("nationCode")
     official = payload.get("stockEndUrl") or payload.get("endUrl") or ""
     normalized_url = url.removesuffix("/total").rstrip("/")
     if (normalize_symbol(payload.get("symbolCode")) != normalize_symbol(ticker)
@@ -112,56 +96,99 @@ def validate_basic(payload, ticker, url, exchange=None):
             or nation != "USA"
             or official.removesuffix("/total").rstrip("/") != normalized_url):
         raise RuntimeError(f"Naver detail identity mismatch: {ticker} -> {url}")
-    if exchange is not None:
-        wanted = normalize_exchange(exchange)
-        observed = {normalize_exchange(value) for value in
-                    (payload.get("stockExchangeName"), actual_exchange.get("name"), actual_exchange.get("code"))}
-        observed.discard(None)
-        if wanted is None or observed != {wanted}:
-            raise RuntimeError(f"Naver detail exchange mismatch: {ticker} -> {url}")
     return url
 
 
-def _verify_url(ticker, url, exchange=None):
+def _verify_url(ticker, url):
     reuters_code = urlsplit(url).path.split("/")[3]
     payload = _request_json(f"https://api.stock.naver.com/stock/{reuters_code}/basic")
-    return validate_basic(payload, ticker, url, exchange=exchange)
+    return validate_basic(payload, ticker, url)
 
 
-def _yahoo_listing_identity(ticker):
-    """Disambiguate only from a matching Yahoo chart's explicit venue/type."""
-    payload = _request_json("https://query1.finance.yahoo.com/v8/finance/chart/" + quote(ticker, safe=""),
-                            {"range": "5d", "interval": "1d"})
-    chart = payload.get("chart")
-    if not isinstance(chart, dict):
-        raise RuntimeError(f"Yahoo listing identity unavailable: {ticker}")
-    results = chart.get("result")
-    if chart.get("error") or not isinstance(results, list) or len(results) != 1:
-        raise RuntimeError(f"Yahoo listing identity unavailable: {ticker}")
-    result = results[0]
-    meta = result.get("meta") if isinstance(result, dict) else None
-    if not isinstance(meta, dict):
-        raise RuntimeError(f"Yahoo listing identity unavailable: {ticker}")
-    route = {"EQUITY": "stock", "ETF": "etf"}.get(meta.get("instrumentType"))
-    exchange = normalize_exchange(meta.get("exchangeName"))
-    if (normalize_symbol(meta.get("symbol")) != normalize_symbol(ticker) or route is None or exchange is None):
-        raise RuntimeError(f"Yahoo listing identity mismatch or unknown exchange: {ticker}")
-    return exchange, route
+def _quote_date(value):
+    if not isinstance(value, str) or not re.match(r"^\d{4}-\d{2}-\d{2}(?:T|$)", value):
+        return None
+    try:
+        return (datetime.fromisoformat(value).date() if len(value) > 10
+                else date.fromisoformat(value)).isoformat()
+    except (ValueError, OverflowError):
+        return None
+
+
+def _positive_price(value):
+    if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+        return None
+    try:
+        number = float(value.replace(",", "") if isinstance(value, str) else value)
+    except (ValueError, OverflowError):
+        return None
+    return number if math.isfinite(number) and number > 0 else None
+
+
+def _chart_date(value):
+    if not isinstance(value, str) or not re.fullmatch(r"\d{8}", value):
+        return None
+    try:
+        return datetime.strptime(value, "%Y%m%d").date().isoformat()
+    except ValueError:
+        return None
+
+
+def verified_close(ticker, url, day=None):
+    """Read Naver's same-day closing quote after verifying the security.
+
+    Historical quotes can be revised after corporate actions. Retain the
+    provider's value without assuming a split or dividend adjustment basis.
+    """
+    if not isinstance(url, str):
+        raise RuntimeError(f"Naver detail identity mismatch: {ticker} -> {url}")
+    parsed = urlsplit(url)
+    if (parsed.scheme != "https" or parsed.netloc != "m.stock.naver.com"
+            or parsed.query or parsed.fragment
+            or not re.fullmatch(r"/worldstock/(?:stock|etf)/[A-Za-z0-9. _-]+(?:/total)?", parsed.path)):
+        raise RuntimeError(f"Naver detail identity mismatch: {ticker} -> {url}")
+    requested = None
+    if day is not None:
+        requested = day.isoformat() if isinstance(day, date) else str(day)
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", requested):
+            raise ValueError("Naver closing quote requires an ISO market date")
+        requested = date.fromisoformat(requested).isoformat()
+    reuters_code = parsed.path.split("/")[3]
+    basic_url = f"https://api.stock.naver.com/stock/{reuters_code}/basic"
+    basic = _request_json(basic_url)
+    validate_basic(basic, ticker, url)
+    observed = _quote_date(basic.get("localTradedAt"))
+    price = _positive_price(basic.get("closePriceRaw")) or _positive_price(basic.get("closePrice"))
+    if observed and price is not None and (requested is None or requested == observed):
+        return {"price": price, "date": observed, "source_url": basic_url}
+    if requested is None:
+        return None
+    compact_date = requested.replace("-", "")
+    chart_url = f"https://api.stock.naver.com/chart/foreign/item/{reuters_code}/day"
+    params = {"startDateTime": compact_date + "0000", "endDateTime": compact_date + "2359"}
+    items = _request_json(chart_url, params, expected_type=list)
+    if not isinstance(items, list):
+        return None
+    quotes = set()
+    for item in items:
+        if not isinstance(item, dict) or _chart_date(item.get("localDate")) != requested:
+            continue
+        close = _positive_price(item.get("closePrice"))
+        if close is not None:
+            quotes.add(close)
+    if len(quotes) > 1:
+        raise RuntimeError(f"Naver daily closing quotes conflict: {ticker} {requested}")
+    if not quotes:
+        return None
+    source_url = chart_url + "?startDateTime=" + params["startDateTime"] + "&endDateTime=" + params["endDateTime"]
+    return {"price": quotes.pop(), "date": requested, "source_url": source_url}
 
 
 @lru_cache(maxsize=4096)
 def resolve_us_url(ticker):
     """Use Naver's returned URL, including its ETF route and actual Reuters code."""
     for query in query_variants(ticker):
-        payload = _search(query)
-        try:
-            url = matching_url(payload, ticker)
-        except AmbiguousNaverSymbol:
-            exchange, route = _yahoo_listing_identity(ticker)
-            url = matching_url(payload, ticker, exchange=exchange)
-            if not url or urlsplit(url).path.split("/")[2] != route:
-                raise RuntimeError(f"Naver has no verified listing match: {ticker}")
-            return _verify_url(ticker, url, exchange=exchange)
+        url = matching_url(_search(query), ticker)
         if url:
             return _verify_url(ticker, url)
     raise RuntimeError(f"Naver has no exact US security match: {ticker}")

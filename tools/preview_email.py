@@ -19,10 +19,16 @@ def make_stock(ticker, market="US", number=0, asset_type="주식"):
     korean = market != "US"
     name = ("한국차세대반도체인공지능산업솔루션장기성장기업 " + ticker if korean else
             "International Artificial Intelligence Semiconductor Infrastructure Holdings " + ticker)
+    price = 178950 if korean else 238.71
+    gap = round(-9.9 + (number % 100) * .099, 2)
     return {"ticker": ticker, "name": name, "market": "KOSPI" if korean else "US",
-            "asset_type": asset_type, "price": 178950 if korean else 238.71,
+            "asset_type": asset_type, "price": price,
+            "ath_price": price / (1 + gap / 100),
+            "ath_date": "2026-09-23",
+            "ath_start_date": "2010-01-04", "ath_end_date": "2026-10-07",
+            "ath_price_basis": "합성 검증용 동일 가격 기준",
             "change": round((number % 13 - 6) * .43, 2),
-            "gap": round(-9.9 + (number % 100) * .099, 2),
+            "gap": gap,
             "mcap": round(1.2 + (number % 80) * .6, 1),
             "industry": "반도체 장비·소재 및 인공지능 인프라",
             "index": ["KOSPI"] if korean else ["S&P500", "NASDAQ"],
@@ -183,8 +189,8 @@ def gmail_host_html(html_source):
 LAYOUT_CHECK = r"""expected => {
  const viewport=window.innerWidth,tolerance=1.5,problems=[];
  const specs=[
-   ["us","us",2,11],["kr","kr",2,11],
-   ["new","new-kr",2,10,"KR"],["new","new-us",2,10,"US"],
+   ["us","us",2,13],["kr","kr",2,13],
+   ["new","new-kr",2,12,"KR"],["new","new-us",2,12,"US"],
    ["etf","returns",2,19]
  ];
  const getRows=id=>{
@@ -197,6 +203,12 @@ LAYOUT_CHECK = r"""expected => {
  for(const [key,id,tickerColumn,cellCount,country] of specs){
    const rows=getRows(id),wanted=key==="new"?expected.new.filter(ticker=>ticker.startsWith(country+":")):expected[key];
    const table=document.getElementById(id);
+   if(table&&id!=="returns"){
+     const headings=Array.from(table.querySelectorAll("thead th")).map(cell=>cell.textContent.trim());
+     if(headings.length!==cellCount||
+        JSON.stringify(headings.slice(7,10))!==JSON.stringify(["최근가격","ATH가격","ATH 괴리율"]))
+       problems.push(id+" must place recent price and ATH price immediately before the ATH gap");
+   }
    if(table&&table.querySelector("th")?.textContent.trim()!==(id==="returns"?"No":"No."))
      problems.push(id+" is missing the No. heading");
    if(table&&getComputedStyle(table).tableLayout!=="fixed")
@@ -360,7 +372,28 @@ LAYOUT_CHECK = r"""expected => {
    previousLifetime=lifetime;
  });
  [...getRows("us"),...getRows("kr"),...getRows("new-kr"),...getRows("new-us")].forEach(row=>{
+   const ticker=row.cells[2]?.querySelector("a")?.textContent.trim();
+   const recent=exactPriceIn(row.cells[7]),peak=exactPriceIn(row.cells[8]);
+   const gap=number(row.cells[9]?.textContent),flag=row.cells[1]?.querySelector("img")?.alt;
+   if(!Number.isFinite(recent)||recent<=0||!Number.isFinite(peak)||peak<=0||
+      recent>peak*(1+1e-11)||!Number.isFinite(gap)||
+      Math.abs((recent/peak-1)*100-gap)>.05500001)
+     problems.push("ATH prices and displayed gap must use the same exact prices: "+ticker);
+   if(Number.isFinite(recent)&&Number.isFinite(peak)&&recent<peak*(.90-1e-10))
+     problems.push("A displayed ATH candidate is more than ten percent below its audited ATH price: "+ticker);
    for(const column of [7,8]){
+     const text=row.cells[column]?.textContent.trim()||"";
+     const titles=priceTitles(row.cells[column]).join(" ");
+     const visible=number(text),exact=column===7?recent:peak;
+     const serializationTolerance=Math.max(1e-12,Math.abs(exact)*5e-12);
+     const valid=flag==="성조기"?/^(?:\d{1,3}(?:,\d{3})*|\d+)\.\d{2}$/.test(text)&&
+       Math.abs(visible-exact)<=.005+serializationTolerance:
+       Number.isInteger(visible)&&text===visible.toLocaleString("en-US")&&
+       visible>=Math.trunc(exact-serializationTolerance)&&visible<=Math.trunc(exact+serializationTolerance);
+     if(!valid||!Number.isFinite(visible)||!titles.includes(flag==="성조기"?"USD":"KRW"))
+       problems.push("ATH price display must retain its currency, exact value and country precision: "+ticker);
+   }
+   for(const column of [9,10]){
      const cell=row.cells[column];
      if(!cell||getComputedStyle(cell).color!=="rgb(194, 57, 50)")
        problems.push("ATH/day-change values must be red");

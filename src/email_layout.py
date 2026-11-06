@@ -168,6 +168,23 @@ def price_exact_text(value):
     return format(value, ".12g")
 
 
+def ath_price_text(value, country):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+        return "-"
+    return f"{value:,.2f}" if country == "US" else f"{int(value):,}"
+
+
+def ath_price_title(row, country, *, peak=False):
+    value = row.get("ath_price" if peak else "price")
+    observed = row.get("ath_date") if peak else (row.get("ath_end_date") or row.get("price_end_date") or row.get("last_date"))
+    basis = row.get("ath_price_basis") or "ATH 가격 기준 미확인"
+    currency = "USD" if country == "US" else "KRW"
+    title = f'정확값 {price_exact_text(value)} · 기준일 {observed or "날짜 미확인"} · {currency} · {basis}'
+    if peak and row.get("ath_start_date") and row.get("ath_end_date"):
+        title += f' · 조회기간 {row["ath_start_date"]} → {row["ath_end_date"]}'
+    return title
+
+
 def table_columns(kind):
     if kind == "returns":
         # Keep each field's width with it when moving the annualized return
@@ -179,11 +196,13 @@ def table_columns(kind):
         # 168px. A fixed 19% is 46–55% of that width across 900–1920px hosts.
         # The three final metric columns share the remaining width; Gmail
         # only needs stable percentage/px col widths, without CSS calc().
-        widths = ("3%", "3%", "9%", "19%", "126px", "5%", "84px", None, None, None)
+        widths = ("3%", "3%", "9%", "19%", "126px", "5%", "84px",
+                  "6.5%", "6.5%", None, None, None)
     elif kind == "details":
         widths = (None, None, None, None, None, None, "96px", None)
     else:
-        widths = ("3%", "3%", "9%", None, "126px", "5%", "84px", "9%", "9%", "8%", "12%")
+        widths = ("3%", "3%", "9%", None, "126px", "5%", "84px",
+                  "6.5%", "6.5%", "6%", "6%", "5%", "8%")
     return '<colgroup>' + ''.join(f'<col style="width:{width}">' if width else '<col>' for width in widths) + '</colgroup>'
 
 
@@ -389,6 +408,8 @@ def _stock_row(row, country, new=False, compact=False, number=1):
              f'<td class="iw" title="{source}"><span class="iwc">{h(brief_investment_text(row))}</span></td>'
              f'<td><span class="asset asset-{kind}">{h(asset)}</span></td>'
              f'<td class="number" data-field="size">{row_size_html(row)}</td>'
+             f'<td class="number" data-field="price" title="{h(ath_price_title(row, country))}">{ath_price_text(row.get("price"), country)}</td>'
+             f'<td class="number" data-field="ath_price" title="{h(ath_price_title(row, country, peak=True))}">{ath_price_text(row.get("ath_price"), country)}</td>'
              f'<td class="number" data-field="gap">{signal_pct(row.get("gap"))}</td>'
              f'<td class="number" data-field="change">{signal_pct(row.get("change"))}</td>'
              f'<td class="number">{h(row.get("streak", 1))}일째</td>')
@@ -396,7 +417,8 @@ def _stock_row(row, country, new=False, compact=False, number=1):
 
 def _stock_head(compact=False):
     return (table_columns("new" if compact else "stocks") + '<thead><tr><th class="number">No.</th><th class="flag-cell">국가</th><th>티커</th><th>종목명</th><th class="iw">업종·투자분야</th><th>구분</th>'
-            '<th class="number">시총·AUM(원화)</th><th class="number">ATH 괴리율</th>'
+            '<th class="number">시총·AUM(원화)</th><th class="number" title="미국 USD · 한국 KRW">최근가격</th>'
+            '<th class="number" title="미국 USD · 한국 KRW">ATH가격</th><th class="number">ATH 괴리율</th>'
             '<th class="number">전일 등락률</th><th class="number">누적일수</th>' +
             ("" if compact else "<th>지수</th>") + "</tr></thead><tbody>")
 
@@ -420,7 +442,8 @@ def new_summary(new_us, new_kr, totals=None, offset=0):
     us_label = security_count(new_us) if total_us == len(new_us) else f"{total_us}종목"
     head = (f'<div class="section new-section" id="new-stocks" data-total="{overall}" data-shown="{count}">'
             f'<h2>오늘의 신규 등장 · 한국 {kr_label} · 미국 {us_label}{note}</h2>'
-            '<p class="intro">직전 거래일에 없던 종목 · 누적일수는 과거 재등장을 포함합니다.</p>')
+            '<p class="intro">직전 거래일에 없던 종목 · 누적일수는 과거 재등장을 포함합니다. '
+            '최근가격·ATH가격은 미국 USD, 한국 KRW이며 ATH가격은 해당 가격 기준의 최고 종가입니다.</p>')
     if not count:
         return head + '<p class="muted">오늘의 신규 등장 종목이 없습니다.</p></div>'
     tables = []
@@ -436,7 +459,8 @@ def stocks_table(stocks, title, currency, holiday, date_s, hmsg="", new_tickers=
     country = "US" if currency == "USD" else "KR"
     new_tickers = set(new_tickers or [])
     head = (f'<div class="section stock-section"><h2>{flag_html(country)}{h(title)}</h2>'
-            f'<p class="intro">{security_count(stocks)} · 기준일 {h(date_s)} · ATH 괴리율 -10%에 가까운 순</p>')
+            f'<p class="intro">{security_count(stocks)} · 기준일 {h(date_s)} · ATH 괴리율 -10%에 가까운 순<br>'
+            f'최근가격·ATH가격은 {currency}이며 ATH가격은 해당 가격 기준의 최고 종가입니다.</p>')
     banner = f'<div class="notice">{h(hmsg)}</div>' if holiday and hmsg else ""
     if not stocks:
         return head + banner + '<p class="muted">해당 종목 없음</p></div>'
@@ -735,14 +759,39 @@ def validate_etf_date_proof(source, manifest, proof):
         if anchor is None or not anchor.get_text(strip=True):
             raise RuntimeError("An audited ETF is missing its ticker link")
         return anchor.get_text(strip=True)
+    def validate_ath_prices(cells, record, country):
+        for column, key, peak in ((7, "price", False), (8, "ath_price", True)):
+            cell = cells[column]
+            text = ath_price_text(record.get(key), country)
+            detail = ath_price_title(record, country, peak=peak)
+            clip = cell.select_one(".cl")
+            if (cell.get_text() != text or cell.get("title") != detail or clip is None
+                    or clip.get("title") != text + " · " + detail):
+                raise RuntimeError(f"Displayed ETF {country}:{record['ticker']} ATH price differs from its audit")
+        if cells[9].get_text() != re.sub(r"<[^>]+>", "", pct(record.get("gap"))):
+            raise RuntimeError(f"Displayed ETF {country}:{record['ticker']} ATH gap differs from its audit")
+        price, peak = record.get("price"), record.get("ath_price")
+        if ath_price_text(price, country) != "-" and ath_price_text(peak, country) != "-":
+            gap = record.get("gap")
+            if (isinstance(gap, bool) or not isinstance(gap, (int, float)) or not math.isfinite(gap)
+                    or not math.isclose(gap, round((price / peak - 1) * 100, 2), rel_tol=0, abs_tol=1e-9)):
+                raise RuntimeError(f"Displayed ETF {country}:{record['ticker']} ATH gap differs from its exact prices")
     observed = set()
     for country in ("US", "KR"):
+        table = doc.find("table", id=country.lower())
+        if table is not None:
+            headings = [cell.get_text(strip=True) for cell in table.select("thead th")]
+            if len(headings) != 13 or headings[7:10] != ["최근가격", "ATH가격", "ATH 괴리율"]:
+                raise RuntimeError("The ATH country table is missing its recent and peak price columns")
         for row in doc.select("#" + country.lower() + " tbody tr"):
             cells = row.find_all("td", recursive=False)
-            if len(cells) != 11:
+            if len(cells) != 13:
                 raise RuntimeError("An ETF country table contains a malformed row")
             if cells[5].get_text(strip=True) == "ETF":
-                observed.add((country, row_ticker(cells)))
+                key = (country, row_ticker(cells))
+                observed.add(key)
+                if key in audits:
+                    validate_ath_prices(cells, audits[key], country)
     audit_ath_members = {key for key, record in audits.items() if record["in_ath_report"]}
     audit_comparison_members = {key for key, record in audits.items() if record["in_comparison_universe"]}
     if observed != audit_ath_members:
@@ -751,12 +800,19 @@ def validate_etf_date_proof(source, manifest, proof):
             or set(audits) != observed | comparison_members):
         raise RuntimeError("ETF market-date proof does not cover every ETF in the ATH/comparison union")
     for country in ("KR", "US"):
+        table = doc.find("table", id="new-" + country.lower())
+        if table is not None:
+            headings = [cell.get_text(strip=True) for cell in table.select("thead th")]
+            if len(headings) != 12 or headings[7:10] != ["최근가격", "ATH가격", "ATH 괴리율"]:
+                raise RuntimeError("The new-security table is missing its recent and peak price columns")
         for row in doc.select("#new-" + country.lower() + " tbody tr"):
             cells = row.find_all("td", recursive=False)
-            if len(cells) != 10:
+            if len(cells) != 12:
                 raise RuntimeError("A newly appearing ETF table contains a malformed row")
             if cells[5].get_text(strip=True) == "ETF" and (country, row_ticker(cells)) not in audit_ath_members:
                 raise RuntimeError("A newly appearing ETF is missing from the market-date audit")
+            if cells[5].get_text(strip=True) == "ETF":
+                validate_ath_prices(cells, audits[(country, row_ticker(cells))], country)
     eligible = []
     for key, record in audits.items():
         cagr = record.get("lifetime_cagr")

@@ -382,6 +382,165 @@ def _performance_date(value):
         return None
 
 
+ATH_PRICE_FIELDS = ("ath_price", "ath_date", "ath_price_basis", "ath_start_date", "ath_end_date")
+PRICE_REFERENCE_FIELDS = ("reference_price", "reference_date", "reference_source",
+                          "reference_raw_price", "reference_split_factor",
+                          "price_reference_status", "price_reference_error")
+
+
+def _ath_price_metrics(dates, prices, *, price_basis, anchor=None, not_before=None):
+    """Keep both sides of the ATH ratio on one exact dated closing-price series."""
+    anchor = _performance_date(anchor) if anchor is not None else None
+    cutoff = _performance_date(not_before) if not_before is not None else None
+    if len(dates) != len(prices):
+        raise ValueError("ATH price dates and values have different lengths")
+    pairs = []
+    for day, value in zip(dates, prices):
+        day = _performance_date(day)
+        if day is None or isinstance(value, bool):
+            raise ValueError("ATH price history has an invalid date or value")
+        price = float(value)
+        if not math.isfinite(price) or price <= 0:
+            raise ValueError("ATH price history must contain positive finite prices")
+        if (anchor is None or day <= anchor) and (cutoff is None or day >= cutoff):
+            pairs.append((day, price))
+    if len(pairs) < 2 or any(a[0] >= b[0] for a, b in zip(pairs, pairs[1:])):
+        raise ValueError("ATH price history must contain two ordered dated observations")
+    latest, previous = pairs[-1][1], pairs[-2][1]
+    peak_day, peak = max(pairs, key=lambda pair: pair[1])
+    return {"price": latest, "ath_price": peak,
+            "gap": round((latest / peak - 1) * 100, 2),
+            "change": round((latest / previous - 1) * 100, 2),
+            "ath_date": peak_day.isoformat(), "ath_start_date": pairs[0][0].isoformat(),
+            "ath_end_date": pairs[-1][0].isoformat(), "ath_price_basis": price_basis}
+
+
+def _ath_is_current(item, anchor=None):
+    """Only a verified closing-price ratio may qualify as a current ATH candidate."""
+    try:
+        latest, peak = item["price"], item["ath_price"]
+        if item.get("price_reference_status") == "mismatch":
+            return False
+        if any(isinstance(value, bool) or not isinstance(value, (int, float))
+               or not math.isfinite(value) or value <= 0 for value in (latest, peak)):
+            return False
+        start, peak_day, end = (_performance_date(item.get(key))
+                                for key in ("ath_start_date", "ath_date", "ath_end_date"))
+        if start is None or peak_day is None or end is None or not start <= peak_day <= end:
+            return False
+        if not isinstance(item.get("ath_price_basis"), str) or not item["ath_price_basis"].strip():
+            return False
+        if anchor is not None and end != _performance_date(anchor):
+            return False
+        gap = item.get("gap")
+        return (isinstance(gap, (int, float)) and not isinstance(gap, bool)
+                and math.isfinite(gap) and math.isclose(gap, round((latest / peak - 1) * 100, 2), abs_tol=1e-9)
+                and latest >= peak * .90)
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
+def _current_ath_rows(rows, comparison_etfs, country, anchor):
+    """Rebuild ETF membership after refresh without pruning the comparison corpus."""
+    candidates = [row for row in rows if row.get("asset_type") != "ETF"]
+    candidates += [row for row in comparison_etfs
+                   if ("US" if row.get("market") == "US" else "KR") == country]
+    result, seen = [], set()
+    for row in candidates:
+        identity = str(row.get("ticker") or "")
+        if identity not in seen and _ath_is_current(row, anchor):
+            seen.add(identity)
+            result.append(row)
+    return sorted(result, key=lambda row: row["gap"])
+
+
+def _history_prices(history, anchor=None):
+    """Read raw and adjusted closes from the same response before trimming dates."""
+    if "Adj Close" not in history:
+        raise RuntimeError("Adjusted closing prices are missing from the provider response")
+    adjusted = history["Adj Close"]
+    adjusted = adjusted.dropna()
+    if getattr(adjusted, "ndim", 1) > 1:
+        adjusted = adjusted.squeeze("columns")
+    raw = history["Close"].reindex(adjusted.index)
+    if getattr(raw, "ndim", 1) > 1:
+        raw = raw.squeeze("columns")
+    ratios = adjusted / raw
+    if any(not math.isfinite(float(value)) or not 0 < float(value) <= 1.0001 for value in ratios):
+        raise RuntimeError("Adjusted prices exceed their matching raw closing prices")
+    for index in range(1, len(ratios)):
+        previous, current = float(ratios.iloc[index - 1]), float(ratios.iloc[index])
+        if not (math.isfinite(previous) and math.isfinite(current) and previous > 0 and current > 0):
+            raise RuntimeError("Price history contains invalid adjustment ratios")
+        change = current / previous
+        day = ratios.index[index]
+        corporate_action = any(field in history and float(history[field].loc[day]) > 0
+                               for field in ("Dividends", "Stock Splits"))
+        if not corporate_action and not .8 <= change <= 1.2:
+            raise RuntimeError("Price history mixes incompatible raw and adjusted price scales")
+    anchor = _performance_date(anchor) if anchor is not None else None
+    values = [(_performance_date(stamp), float(value), float(raw_value))
+              for stamp, value, raw_value in zip(adjusted.index, adjusted.tolist(), raw.tolist())]
+    values = [row for row in values if row[0] is not None and (anchor is None or row[0] <= anchor)]
+    return ([row[0] for row in values], [row[1] for row in values], [row[2] for row in values])
+
+
+def _history_splits(history):
+    if "Stock Splits" not in history:
+        return []
+    return [(_performance_date(stamp), float(value))
+            for stamp, value in history["Stock Splits"].items()
+            if math.isfinite(float(value)) and float(value) > 0]
+
+
+def _split_factor_after(events, day):
+    factor = 1.0
+    observed = _performance_date(day)
+    for event_day, ratio in events:
+        if event_day is not None and event_day > observed:
+            factor *= ratio
+    return factor
+
+
+def _us_reference_metadata(item, raw_price, day, *, adjusted_price=None, split_factor=1.0):
+    """Ground a provider's unadjusted endpoint against an independently identified quote."""
+    result = {"reference_price": None, "reference_date": None, "reference_source": None,
+              "price_reference_status": "unverified", "price_reference_error": None}
+    if not item.get("url") or day is None:
+        return result
+    try:
+        reference = us_naver_links.verified_close(item["ticker"], item["url"], _performance_date(day).isoformat())
+    except Exception as error:
+        log.warning("미국 시세 교차검증 조회 실패 %s: %s", item.get("ticker"), type(error).__name__)
+        return result
+    if reference is None or _performance_date(reference.get("date")) != _performance_date(day):
+        return result
+    expected = reference.get("price")
+    if (isinstance(expected, bool) or not isinstance(expected, (int, float))
+            or not math.isfinite(expected) or expected <= 0):
+        return result
+    alternatives = [(expected, 1.0), (expected / split_factor, split_factor)]
+    normalized, applied_factor = min(alternatives, key=lambda pair: abs(raw_price - pair[0]))
+    result.update(reference_price=normalized, reference_date=_performance_date(day).isoformat(),
+                  reference_raw_price=expected, reference_split_factor=applied_factor,
+                  reference_source=reference.get("source_url"))
+    # The reference is rounded to cents; compare RAW closes, before the provider's
+    # dividend adjustment, so a legitimate adjusted return cannot trigger a mismatch.
+    raw_matches = (math.isfinite(raw_price) and raw_price > 0
+                   and any(abs(raw_price - value) <= max(.02, value * .0002)
+                           for value in (expected, normalized)))
+    adjusted_matches = (applied_factor == 1 or adjusted_price is None
+                        or abs(adjusted_price - normalized) <= max(.02, normalized * .02))
+    if not raw_matches or not adjusted_matches:
+        result.update(price_reference_status="mismatch",
+                      price_reference_error="same-day raw close differs from the independent reference")
+        log.warning("미국 시세 교차검증 불일치 %s %s: 원가격 %s · 독립 종가 %s",
+                    item.get("ticker"), day, raw_price, expected)
+    else:
+        result["price_reference_status"] = "matched"
+    return result
+
+
 def _validated_etf_metadata(item):
     """Reject inception metadata contradicted by actual earlier price history."""
     result = dict(item)
@@ -458,7 +617,8 @@ def _etf_lifetime_metrics(item):
 ETF_CALCULATION_FIELDS = (
     "return_ytd", "return1y", "return2y", "return3y", "return10y", "cumulative_return", "cumulative_growth",
     "lifetime_cagr", "lifetime_years", "first_date", "last_date", "price_start_date", "price_end_date",
-    "return_as_of", "initial_adjusted_price", "latest_adjusted_price", "price", "change", "gap")
+    "return_as_of", "initial_adjusted_price", "latest_adjusted_price", "price", "change", "gap",
+    *ATH_PRICE_FIELDS)
 
 
 def _etf_period_return_error(item, start, end):
@@ -512,6 +672,8 @@ def _etf_market_date_error(item, anchor, country):
         if any(item.get(key) is not None for key in ETF_CALCULATION_FIELDS):
             return "unavailable ETF contains a claimed price, calculation, or observation date"
         return _etf_period_return_error(item, None, None)
+    if item.get("price_reference_status") == "mismatch":
+        return item.get("price_reference_error") or "independent raw-close reference mismatch"
     end = _performance_date(item.get("price_end_date"))
     start = _performance_date(item.get("price_start_date"))
     if end is None or end > anchor:
@@ -587,7 +749,8 @@ def validate_etf_market_dates(us, kr, info, comparison_etfs=None):
             "return_ytd", "return1y", "return2y", "return3y", "return10y", "period_returns", "cumulative_return",
             "cumulative_growth", "lifetime_cagr", "lifetime_years", "return_as_of",
             "initial_adjusted_price", "latest_adjusted_price", "price_basis", "price_currency",
-            "price", "change", "gap", *etf_strategy.STYLE_FIELDS)
+            "price", "change", "gap", *ATH_PRICE_FIELDS, *PRICE_REFERENCE_FIELDS,
+            *etf_strategy.STYLE_FIELDS)
     counts = {"US": 0, "KR": 0}
     status_counts = {"market_close": 0, "latest_available": 0, "unavailable": 0}
     for country, rows in groups:
@@ -641,25 +804,26 @@ def _refresh_etf_market_history(item, country, anchor):
     yahoo = country == "US" or str(item.get("price_basis") or "").startswith("Yahoo")
     if yahoo:
         symbol = ticker if country == "US" else ticker + (".KQ" if item.get("market") == "KOSDAQ" else ".KS")
-        history = yf.Ticker(symbol).history(period="max", end=(anchor + timedelta(days=1)).isoformat(),
-                                             auto_adjust=True, timeout=12)
-        series = history["Close"].dropna()
-        dates = [_performance_date(stamp) for stamp in series.index]
-        prices = [float(value) for value in series.tolist()]
+        # Fetch through the provider's latest action before trimming. An action
+        # after a historical anchor can change the scale of every earlier quote.
+        history = yf.Ticker(symbol).history(period="max", auto_adjust=False, actions=True, timeout=12)
+        dates, prices, raw_prices = _history_prices(history, anchor)
+        split_events = _history_splits(history)
         basis = "Yahoo 제공 수정주가(auto_adjust)"
     else:
         dates, prices = _kr_price_history_dated(ticker, count=8000)
         dates = [_performance_date(value) for value in dates]
         prices = [float(value) for value in prices]
+        raw_prices = list(prices)
         basis = "네이버 차트 종가·배당조정 미확인"
     if len(dates) != len(prices):
         raise RuntimeError("refetched price dates and values have different lengths")
     cutoff = _performance_date(US_ETF_VERIFIED_LAUNCH.get(ticker, {}).get("inception")) if country == "US" else None
-    pairs = [(day, price) for day, price in zip(dates, prices)
+    pairs = [(day, price, raw_price) for day, price, raw_price in zip(dates, prices, raw_prices)
              if day is not None and day <= anchor and (cutoff is None or day >= cutoff)]
     if len(pairs) < 2:
         raise RuntimeError("complete price history has fewer than two observations on or before the market date")
-    if any(not math.isfinite(price) or price <= 0 for _, price in pairs):
+    if any(not math.isfinite(price) or price <= 0 for _, price, _ in pairs):
         raise RuntimeError("refetched price history contains an invalid price")
     if any(pairs[index][0] >= pairs[index + 1][0] for index in range(len(pairs) - 1)):
         raise RuntimeError("refetched price dates are not strictly increasing")
@@ -668,13 +832,18 @@ def _refresh_etf_market_history(item, country, anchor):
         original_first = cutoff  # Excluded predecessor NAV/OTC observations are not ETF price history.
     if original_first is not None and pairs[0][0] > original_first:
         raise RuntimeError("refetched history would discard previously available initial prices")
-    dates, prices = [day for day, _ in pairs], [price for _, price in pairs]
+    dates, prices = [row[0] for row in pairs], [row[1] for row in pairs]
     perf = _etf_price_performance(dates, prices, price_basis=basis,
                                   price_currency="USD" if country == "US" else "KRW")
-    latest, previous, peak = prices[-1], prices[-2], max(prices)
-    perf.update({"price": round(latest, 2) if country == "US" else int(latest),
-                 "change": round((latest / previous - 1) * 100, 2),
-                 "gap": round((latest / peak - 1) * 100, 2)})
+    perf.update(_ath_price_metrics(dates, prices, price_basis=basis, anchor=anchor))
+    if country == "US":
+        perf.update(_us_reference_metadata(item, pairs[-1][2], dates[-1], adjusted_price=prices[-1],
+                                           split_factor=_split_factor_after(split_events, dates[-1])))
+        if (item.get("price_reference_status") == "mismatch"
+                and perf["price_reference_status"] != "matched"):
+            raise RuntimeError("A previously inconsistent raw close requires a matching independent reference")
+        if perf["price_reference_status"] == "mismatch":
+            raise RuntimeError(perf["price_reference_error"])
     return perf
 
 
@@ -726,6 +895,12 @@ def synchronize_etf_market_dates(us, kr, info, attempts=2, *, comparison_etfs=No
                         log.info("ETF 기준일 기존 자료 유지: %s:%s · 기존 %s · 재조회 %s",
                                  country, item["ticker"], item["price_end_date"], updated["price_end_date"])
                         continue
+                    if (_ath_is_current(item, anchors[country])
+                            and _performance_date(updated.get("ath_end_date")) < anchors[country]):
+                        # Return histories may fall back to an older valid date while
+                        # a separate, current ATH closing-price series remains valid.
+                        for key in ("price", "change", "gap", *ATH_PRICE_FIELDS):
+                            updated[key] = item.get(key)
                     item.pop("price_history_inception_mismatch", None)
                     item.pop("date_status", None)
                     item.update(updated)
@@ -1180,11 +1355,15 @@ def dl(tickers, period, chunk=80, sleep=1.2):
         grp=tickers[i:i+chunk]; bn=i//chunk+1
         log.info(f"  US[{bn}/{(n+chunk-1)//chunk}] {i+1}~{min(i+chunk,n)}/{n} ({period})")
         try:
-            raw=yf.download(grp,period=period,progress=False,auto_adjust=True,group_by="ticker")
+            raw=yf.download(grp,period=period,progress=False,auto_adjust=False,actions=True,group_by="ticker")
             if raw.empty: time.sleep(sleep); continue
             for tk in grp:
                 try:
-                    s=(raw[tk]["Close"] if len(grp)>1 else raw["Close"]).dropna()
+                    frame = raw[tk] if tk in raw.columns.get_level_values(0) else raw
+                    dates, prices, raw_prices = _history_prices(frame)
+                    s = pd.Series(prices, index=pd.to_datetime(dates))
+                    s.attrs["raw_close_by_date"] = dict(zip(dates, raw_prices))
+                    s.attrs["split_events"] = _history_splits(frame)
                     if len(s)>=10: out[tk]=s
                 except: pass
         except Exception as e: log.error(f"  US[{bn}] {e}")
@@ -1330,31 +1509,38 @@ US_BOND_ETF_KEYWORDS = ("BOND","TREASURY","MUNICIPAL","MUNI ","T-BILL","TIPS",
                         "HIGH YIELD BOND","CORPORATE BOND","AGGREGATE BOND",
                         "DURATION BOND","FIXED INCOME")
 
-def get_us_ath(usd_krw, comparison_etfs=None):
+def get_us_ath(usd_krw, comparison_etfs=None, us_last=None):
     tickers,exchange_map,sp500_set,security_names,etf_flags=get_us_tickers()
     if not tickers: return []
     compare = comparison_etfs is not None
     etf_targets = [ticker for ticker in tickers if etf_flags.get(ticker, False)
                    and not any(word in security_names.get(ticker, ticker).upper() for word in US_BOND_ETF_KEYWORDS)]
     d1=dl(tickers,"1y",chunk=100,sleep=1.0)
+    anchor = _performance_date(us_last) if us_last is not None else None
+    for ticker, series in list(d1.items()):
+        if anchor is not None:
+            d1[ticker] = series[series.index.date <= anchor]
     cands=[tk for tk,s in d1.items() if len(s)>=2 and float(s.iloc[-1])>=float(s.max())*0.90]
     log.info(f"미국 1단계후보:{len(cands)}")
     full_targets = list(dict.fromkeys(cands + (etf_targets if compare else [])))
     if not full_targets: return []
     d2=dl(full_targets,"max",chunk=25,sleep=2.0)
-    out=[]; ath_tickers=set()
+    out=[]
     for tk,s in d2.items():
         try:
-            last=float(s.iloc[-1]); prev=float(s.iloc[-2]); ath=float(s.max())
+            raw_by_date = s.attrs.get("raw_close_by_date", {})
+            split_events = s.attrs.get("split_events", [])
+            if anchor is not None:
+                s = s[s.index.date <= anchor]
+            dates = [_performance_date(stamp) for stamp in s.index]
+            prices = [float(value) for value in s.tolist()]
+            metrics = _ath_price_metrics(dates, prices, price_basis="Yahoo 제공 수정주가(auto_adjust)", anchor=anchor)
+            last, ath = metrics["price"], metrics["ath_price"]
             is_etf = etf_flags.get(tk, False)
-            if not all(math.isfinite(value) and value > 0 for value in (last, prev, ath)):
-                continue
             if last>=ath*0.90 or (compare and is_etf):
                 sec_name = security_names.get(tk, tk)
                 if is_etf and any(kw in sec_name.upper() for kw in US_BOND_ETF_KEYWORDS):
                     continue   # 채권형 ETF만 제외, 주식형 ETF는 통과
-                if last>=ath*0.90:
-                    ath_tickers.add(tk)
                 mcap=None
                 try:
                     m=getattr(yf.Ticker(tk).fast_info,"market_cap",None) or 0
@@ -1369,20 +1555,19 @@ def get_us_ath(usd_krw, comparison_etfs=None):
                 perf={}
                 if is_etf:
                     try:
-                        dts=[d.date() for d in s.index]
                         perf=_etf_price_performance(
-                            dts, [float(x) for x in s.tolist()],
+                            dates, prices,
                             price_basis="Yahoo 제공 수정주가(auto_adjust)", price_currency="USD",
                             not_before=US_ETF_VERIFIED_LAUNCH.get(tk, {}).get("inception"))
                     except Exception:
                         perf={}
                 out.append({"ticker":tk,"name":sec_name if is_etf else tk,
                             "asset_type":"ETF" if is_etf else "주식",
-                            "price":round(last,2),
-                            "change":round((last-prev)/prev*100,2),
-                            "gap":round((last-ath)/ath*100,2),"mcap":mcap,
+                            "mcap":mcap,
                             "index":idx,"industry":None,
-                            "market":"US","url":url, **perf})
+                            "market":"US","url":url, **perf, **metrics,
+                            "raw_close_price": raw_by_date.get(dates[-1], last),
+                            "raw_close_split_factor": _split_factor_after(split_events, dates[-1])})
         except: pass
     if compare:
         found = {row["ticker"] for row in out if row["asset_type"] == "ETF"}
@@ -1422,9 +1607,16 @@ def get_us_ath(usd_krw, comparison_etfs=None):
                  f"원화 AUM {sum(1 for s in etf_items if s.get('aum'))}/{len(etf_items)}, "
                  f"투자분야 {sum(1 for s in etf_items if s.get('investment_area'))}/{len(etf_items)}")
     us_naver_links.resolve_us_links(out)
+    for item in out:
+        if item.get("raw_close_price") is not None:
+            item.update(_us_reference_metadata(item, item["raw_close_price"], item.get("ath_end_date"),
+                                               adjusted_price=item.get("price"),
+                                               split_factor=item.get("raw_close_split_factor", 1.0)))
     if compare:
         comparison_etfs.extend(etf_items)
-        out = [item for item in out if item["ticker"] in ath_tickers]
+        out = [item for item in out if _ath_is_current(item, anchor)]
+    else:
+        out = [item for item in out if _ath_is_current(item, anchor)]
     out.sort(key=lambda x:x["gap"])
     log.info(f"미국 최종:{len(out)}"); return out
 
@@ -1647,26 +1839,21 @@ def get_kr_ath(usd_krw, kr_last=None, comparison_etfs=None):
         etf_flag = bool(meta.get("is_etf")) or kr_is_etf_name(name)
         if etf_flag and kr_is_bond_etf(name):
             return None
-        dates = None
-        if etf_flag:
-            dates, closes = _kr_price_history_dated(code, count=8000)   # 설립일/1년·2년·3년·10년 및 누적수익률용 장기 이력
-            if kr_last is not None and dates and len(dates) == len(closes):
-                anchor = _performance_date(kr_last)
-                if anchor is not None:
-                    pairs = [(day, price) for day, price in zip(dates, closes)
-                             if _performance_date(day) is not None and _performance_date(day) <= anchor]
-                    dates, closes = [day for day, _ in pairs], [price for _, price in pairs]
-        else:
-            closes = _kr_price_history(code, count=3000)
+        dates, closes = _kr_price_history_dated(code, count=8000 if etf_flag else 3000)
+        anchor = _performance_date(kr_last) if kr_last is not None else None
+        if anchor is not None and dates and len(dates) == len(closes):
+            pairs = [(day, price) for day, price in zip(dates, closes)
+                     if _performance_date(day) is not None and _performance_date(day) <= anchor]
+            dates, closes = [day for day, _ in pairs], [price for _, price in pairs]
         if len(closes) < (2 if compare and etf_flag else 30):
             return None
-        last, prev, ath = closes[-1], closes[-2], max(closes)
-        if last <= 0 or ath <= 0:
+        try:
+            metrics = _ath_price_metrics(dates, closes, price_basis="네이버 차트 종가·배당조정 미확인", anchor=anchor)
+        except (TypeError, ValueError):
             return None
+        last, ath = metrics["price"], metrics["ath_price"]
         if last >= ath * 0.90 or (compare and etf_flag):
-            res = {"ticker":code, "name":name, "price":int(last),
-                   "change":round((last-prev)/prev*100,2),
-                   "gap":round((last-ath)/ath*100,2),
+            res = {"ticker":code, "name":name, **metrics,
                    "mcap":meta.get("mcap"), "aum":meta.get("aum"),
                    "index":[meta.get("market","KR")], "industry":None,
                    "market":meta.get("market","KR"),
@@ -1900,13 +2087,13 @@ def send_email(html, subject, inline_images=None, source_html=None):
     log.info("SMTP_ACCEPTED: %s", json.dumps(receipt, ensure_ascii=False))
     log.info("✅ SMTP 접수 성공 · 수신함 도착 여부는 별도 확인")
 
-CODE_VERSION = "2026-11-05-reordered-etf-columns-85-percent-fonts"
+CODE_VERSION = "2026-11-06-verified-ath-prices-and-consistent-split-history"
 
 def main(prepare_only=False):
     log.info(f"=== ATH 리포트 시작 (코드버전: {CODE_VERSION}) ===")
     info=get_trading_info(); usd_krw=get_usd_krw(); indices=get_market_indices()
     comparison_etfs = []
-    us=get_us_ath(usd_krw, comparison_etfs)
+    us=get_us_ath(usd_krw, comparison_etfs, us_last=info.get("us_last"))
     kr=get_kr_ath(usd_krw, info.get("kr_last"), comparison_etfs)
     # Backwards-compatible mocked collectors may return country rows without
     # populating their output list. Real collectors retain every ETF candidate.
@@ -1915,8 +2102,8 @@ def main(prepare_only=False):
     synchronize_etf_market_dates(us, kr, info, comparison_etfs=comparison_etfs)
     # Updated ETF quotes can change ATH membership; they must never change
     # membership of the independent cumulative-return comparison corpus.
-    us = [row for row in us if row.get("asset_type") != "ETF" or row.get("gap") is None or row["gap"] >= -10]
-    kr = [row for row in kr if row.get("asset_type") != "ETF" or row.get("gap") is None or row["gap"] >= -10]
+    us = _current_ath_rows(us, comparison_etfs, "US", info.get("us_last"))
+    kr = _current_ath_rows(kr, comparison_etfs, "KR", info.get("kr_last"))
     market_dates = validate_etf_market_dates(us, kr, info, comparison_etfs)
 
     # 거래일 기준 스냅샷 비교 (같은 거래일 재실행해도 항상 동일 결과)

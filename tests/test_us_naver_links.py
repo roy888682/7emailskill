@@ -1,5 +1,6 @@
 import unittest
-from unittest.mock import patch
+from datetime import date
+from unittest.mock import Mock, patch
 
 from src import us_naver_links as links
 
@@ -105,87 +106,95 @@ class NaverUSLinkTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "no exact US security"):
                 links.resolve_us_url("NOTLISTED")
 
-    def duplicated_listing(self):
-        return {"items": [
-            {"code": "HLT", "nationCode": "USA", "typeCode": "NASDAQ",
-             "url": "/worldstock/stock/HLT.O/total"},
-            {"code": "HLT", "nationCode": "USA", "typeCode": "NYSE",
-             "url": "/worldstock/stock/HLT/total"},
-        ]}
 
-    def chart_identity(self, **overrides):
-        meta = {"symbol": "HLT", "exchangeName": "NYQ", "instrumentType": "EQUITY"}
-        meta.update(overrides)
-        return {"chart": {"result": [{"meta": meta}], "error": None}}
+class VerifiedNaverCloseTests(unittest.TestCase):
+    url = "https://m.stock.naver.com/worldstock/etf/SOXX.O"
+    basic_url = "https://api.stock.naver.com/stock/SOXX.O/basic"
 
-    def test_ambiguous_symbol_requires_explicit_exchange_and_stays_order_independent(self):
-        payload = self.duplicated_listing()
-        for items in (payload["items"], list(reversed(payload["items"]))):
-            with self.subTest(items=items):
-                with self.assertRaises(links.AmbiguousNaverSymbol):
-                    links.matching_url({"items": items}, "HLT")
-                self.assertEqual(links.matching_url({"items": items}, "HLT", exchange="NYSE"),
-                                 links.NAVER_ORIGIN + "/worldstock/stock/HLT/total")
-                self.assertIsNone(links.matching_url({"items": items}, "HLT", exchange="UNKNOWN"))
+    def basic(self, **changes):
+        payload = {"symbolCode": "SOXX", "reutersCode": "SOXX.O", "stockEndType": "etf",
+                   "nationType": "USA", "stockEndUrl": self.url,
+                   "closePrice": "131.90", "localTradedAt": "2026-11-05T16:00:00-05:00"}
+        return dict(payload, **changes)
 
-    def test_ambiguous_listing_uses_yahoo_identity_then_rechecks_naver_exchange(self):
-        basic = {"symbolCode": "HLT", "reutersCode": "HLT", "stockEndType": "stock",
-                 "nationType": "USA", "stockExchangeName": "NYSE",
-                 "stockExchangeType": {"name": "NYSE", "code": "NYS"},
-                 "stockEndUrl": links.NAVER_ORIGIN + "/worldstock/stock/HLT"}
-        def response(url, params=None):
-            if url.startswith("https://query1.finance.yahoo.com/v8/finance/chart/"):
-                self.assertEqual(params, {"range": "5d", "interval": "1d"})
-                return self.chart_identity()
-            self.assertEqual(url, "https://api.stock.naver.com/stock/HLT/basic")
-            return basic
-        with patch.object(links, "_search", return_value=self.duplicated_listing()), \
-             patch.object(links, "_request_json", side_effect=response) as request:
-            self.assertEqual(links.resolve_us_url("HLT"), basic["stockEndUrl"] + "/total")
-        self.assertEqual(request.call_count, 2)
+    def test_latest_close_is_bound_to_the_verified_symbol_and_local_market_day(self):
+        with patch.object(links, "_request_json", return_value=self.basic(closePrice="1,234.56")) as request:
+            quote = links.verified_close("SOXX", self.url)
+        self.assertEqual(quote, {"price": 1234.56, "date": "2026-11-05", "source_url": self.basic_url})
+        request.assert_called_once_with(self.basic_url)
 
-    def test_ambiguous_listing_blocks_unverified_yahoo_symbol_type_or_exchange(self):
-        for changed in ({"symbol": "HLTH"}, {"instrumentType": "INDEX"},
-                        {"exchangeName": "UNKNOWN"}, {"exchangeName": None},
-                        {"instrumentType": "ETF"}):
-            links.resolve_us_url.cache_clear()
-            with self.subTest(changed=changed), \
-                 patch.object(links, "_search", return_value=self.duplicated_listing()), \
-                 patch.object(links, "_request_json", return_value=self.chart_identity(**changed)), \
-                 patch.object(links, "_verify_url") as verify:
-                with self.assertRaises(RuntimeError):
-                    links.resolve_us_url("HLT")
-                verify.assert_not_called()
+    def test_same_day_uses_basic_close_without_requesting_history(self):
+        with patch.object(links, "_request_json", return_value=self.basic(closePriceRaw="132.125")) as request:
+            quote = links.verified_close("SOXX", self.url + "/total", date(2026, 11, 5))
+        self.assertEqual(quote["price"], 132.125)
+        self.assertEqual(quote["date"], "2026-11-05")
+        request.assert_called_once_with(self.basic_url)
 
-    def test_listing_lookup_failure_or_remaining_ambiguity_never_chooses_first_candidate(self):
-        payload = self.duplicated_listing()
-        payload["items"].append({"code": "HLT", "nationCode": "USA", "typeCode": "NYSE",
-                                 "url": "/worldstock/stock/HLT.NEW/total"})
-        for response in (self.chart_identity(), {"chart": {"result": [], "error": None}},
-                         {"chart": {"result": [{"meta": {}}], "error": {"code": "Not Found"}}}):
-            links.resolve_us_url.cache_clear()
-            with self.subTest(response=response), \
-                 patch.object(links, "_search", return_value=payload), \
-                 patch.object(links, "_request_json", return_value=response), \
-                 patch.object(links, "_verify_url") as verify:
-                with self.assertRaises(RuntimeError):
-                    links.resolve_us_url("HLT")
-                verify.assert_not_called()
-        with patch.object(links, "_search", return_value=payload), \
-             patch.object(links, "_request_json", side_effect=RuntimeError("lookup unavailable")), \
-             patch.object(links, "_verify_url") as verify:
-            with self.assertRaisesRegex(RuntimeError, "lookup unavailable"):
-                links.resolve_us_url("HLT")
-            verify.assert_not_called()
+    def test_detail_identity_mismatch_never_returns_the_other_security_price(self):
+        for key, value in (("symbolCode", "SOXQ"), ("reutersCode", "SOXQ.O"),
+                           ("nationType", "KOR"), ("stockEndType", "stock"),
+                           ("stockEndUrl", "https://m.stock.naver.com/worldstock/etf/SOXQ.O")):
+            with self.subTest(key=key), patch.object(links, "_request_json", return_value=self.basic(**{key: value})):
+                with self.assertRaisesRegex(RuntimeError, "identity mismatch"):
+                    links.verified_close("SOXX", self.url, "2026-11-05")
 
-    def test_basic_exchange_must_match_chart_evidence_and_not_conflict_in_detail(self):
-        url = links.NAVER_ORIGIN + "/worldstock/stock/HLT/total"
-        basic = {"symbolCode": "HLT", "reutersCode": "HLT", "stockEndType": "stock",
-                 "nationType": "USA", "stockEndUrl": url.removesuffix("/total")}
-        for venue in ({}, {"stockExchangeName": "NASDAQ"},
-                      {"stockExchangeName": "NYSE", "stockExchangeType": {"name": "NASDAQ"}}):
-            with self.subTest(venue=venue), self.assertRaisesRegex(RuntimeError, "exchange mismatch"):
-                links.validate_basic({**basic, **venue}, "HLT", url, exchange="NYSE")
+    def test_untrusted_detail_urls_are_rejected_before_requesting_any_quote(self):
+        for url in ("https://example.test/worldstock/etf/SOXX.O",
+                    "https://m.stock.naver.com/worldstock/etf/SOXX.O?other=SOXQ",
+                    "https://m.stock.naver.com/worldstock/etf/SOXX.O#other",
+                    "https://m.stock.naver.com/domestic/stock/SOXX.O", None):
+            with self.subTest(url=url), patch.object(links, "_request_json") as request:
+                with self.assertRaisesRegex(RuntimeError, "identity mismatch"):
+                    links.verified_close("SOXX", url)
+                request.assert_not_called()
+
+    def test_invalid_dates_are_rejected_before_requesting_any_quote(self):
+        for day in ("2026-11-35", "20261105", "2026-11-05T16:00:00", ""):
+            with self.subTest(day=day), patch.object(links, "_request_json") as request:
+                with self.assertRaises(ValueError):
+                    links.verified_close("SOXX", self.url, day)
+                request.assert_not_called()
+
+    def test_latest_missing_or_nonpositive_quote_is_unavailable(self):
+        for price in (None, 0, -1, "NaN", "inf", True, "--"):
+            with self.subTest(price=price), patch.object(links, "_request_json", return_value=self.basic(closePrice=price)):
+                self.assertIsNone(links.verified_close("SOXX", self.url))
+        for traded_at in (None, "2026-02-30", "2026-11-05Tbad", "20261105"):
+            with self.subTest(traded_at=traded_at), patch.object(links, "_request_json", return_value=self.basic(localTradedAt=traded_at)):
+                self.assertIsNone(links.verified_close("SOXX", self.url))
+
+    def test_requested_older_day_uses_only_the_exact_verified_daily_bar(self):
+        params = {"startDateTime": "202611040000", "endDateTime": "202611042359"}
+        chart_url = "https://api.stock.naver.com/chart/foreign/item/SOXX.O/day"
+        # The provider revised this bar after the split. Neither version may be
+        # changed by an assumed split factor inside the quote reader.
+        for closing in (450.41, 150.1365):
+            with self.subTest(provider_close=closing):
+                chart = [{"localDate": "20261103", "closePrice": 464.82},
+                         {"localDate": "20261104", "closePrice": closing}]
+                responses = [Mock(json=Mock(return_value=value)) for value in (self.basic(), chart)]
+                with patch.object(links.requests, "get", side_effect=responses) as request:
+                    quote = links.verified_close("SOXX", self.url, "2026-11-04")
+                self.assertEqual(request.call_args_list[1].args, (chart_url,))
+                self.assertEqual(request.call_args_list[1].kwargs["params"], params)
+                self.assertEqual(quote, {"price": closing, "date": "2026-11-04",
+                                        "source_url": chart_url + "?startDateTime=202611040000&endDateTime=202611042359"})
+
+    def test_missing_requested_bar_does_not_relabel_a_nearby_or_latest_quote(self):
+        for chart in ({}, None, [],
+                      [{"localDate": "20261103", "closePrice": 126.5}],
+                      [{"localDate": "20261104", "closePrice": 0}],
+                      [{"localDate": "20261135", "closePrice": 128.75}],
+                      [{"localDate": "2026-11-04", "closePrice": 128.75}]):
+            with self.subTest(chart=chart), patch.object(links, "_request_json", side_effect=[self.basic(), chart]):
+                self.assertIsNone(links.verified_close("SOXX", self.url, "2026-11-04"))
+
+    def test_conflicting_daily_bars_cannot_claim_one_verified_close(self):
+        chart = [{"localDate": "20261104", "closePrice": 128.75},
+                 {"localDate": "20261104", "closePrice": 129.75}]
+        with patch.object(links, "_request_json", side_effect=[self.basic(), chart]):
+            with self.assertRaisesRegex(RuntimeError, "quotes conflict"):
+                links.verified_close("SOXX", self.url, "2026-11-04")
 
 
 if __name__ == "__main__":

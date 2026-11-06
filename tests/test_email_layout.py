@@ -393,13 +393,52 @@ class EmailLayoutTests(unittest.TestCase):
         self.assertTrue(doc.select(".stock-table b, .new-table b"))
         for row in doc.select("#us tbody tr, #kr tbody tr, #new-kr tbody tr, #new-us tbody tr"):
             cells=row.find_all("td",recursive=False)
-            self.assertIn("r",cells[7].get("class",[]))
-            self.assertIn("r",cells[8].get("class",[]))
+            self.assertIn("r",cells[9].get("class",[]))
+            self.assertIn("r",cells[10].get("class",[]))
+
+    def test_all_ath_and_new_tables_show_recent_and_peak_prices_before_the_gap(self):
+        for country, recent, peak in (("us", 1234.56789, 1500.12345),
+                                       ("kr", 123456.78, 150000.12)):
+            row = self.data[country][0]
+            row.update(price=recent, ath_price=peak, ath_date="2026-09-04",
+                       ath_start_date="2010-01-04", ath_end_date="2026-10-07",
+                       ath_price_basis="동일 기준 가격 검증",
+                       gap=round((recent / peak - 1) * 100, 2))
+            self.data["new_" + country] = [row]
+        doc = BeautifulSoup(render_email(**self.data), "html5lib")
+        for table_id, expected in (("us", ("1,234.57", "1,500.12")),
+                                    ("new-us", ("1,234.57", "1,500.12")),
+                                    ("kr", ("123,456", "150,000")),
+                                    ("new-kr", ("123,456", "150,000"))):
+            table = doc.find("table", id=table_id)
+            self.assertEqual([th.get_text() for th in table.select("thead th")][7:10],
+                             ["최근가격", "ATH가격", "ATH 괴리율"])
+            cells = table.select_one("tbody tr").find_all("td", recursive=False)
+            self.assertEqual(tuple(cell.get_text() for cell in cells[7:9]), expected)
+            self.assertIn("정확값 ", cells[7]["title"])
+            self.assertIn("2026-10-07", cells[7]["title"])
+            self.assertIn("2026-09-04", cells[8]["title"])
+            self.assertIn("동일 기준 가격 검증", cells[8]["title"])
+            self.assertIn(cells[8]["title"], cells[8].select_one(".cl")["title"])
+
+    def test_ath_recent_peak_and_gap_cells_are_bound_to_the_etf_audit(self):
+        source = render_email(**self.data)
+        manifest, proof = manifest_for(self.data), self.market_proof()
+        self.assertEqual(validate_etf_date_proof(source, manifest, proof), proof["market_dates"])
+        for column in (7, 8, 9):
+            with self.subTest(column=column):
+                doc = BeautifulSoup(source, "html5lib")
+                row = next(row for row in doc.select("#us tbody tr")
+                           if row.find_all("td", recursive=False)[5].get_text() == "ETF")
+                row.find_all("td", recursive=False)[column].select_one(".cl").string = "1.23"
+                with self.assertRaisesRegex(RuntimeError, "ATH price|ATH gap"):
+                    validate_etf_date_proof(str(doc), manifest, proof)
+
     def test_every_security_table_has_sequential_no_column(self):
         body = render_email(**self.data)
         doc = BeautifulSoup(body, "html5lib")
-        for table_id, count, columns in (("us",218,11),("kr",17,11),
-                                         ("new-kr",4,10),("new-us",29,10),("returns",20,19)):
+        for table_id, count, columns in (("us",218,13),("kr",17,13),
+                                         ("new-kr",4,12),("new-us",29,12),("returns",20,19)):
             table = doc.find("table", id=table_id)
             self.assertEqual(table.select_one("thead th").get_text(strip=True), "No" if table_id == "returns" else "No.")
             rows = table.select("tbody tr")

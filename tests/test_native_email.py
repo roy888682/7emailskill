@@ -41,6 +41,32 @@ def fixture(count=218, long_names=False, etf_count=None):
 
 
 class NativeEmailTests(unittest.TestCase):
+    def test_recent_and_ath_price_columns_survive_native_delivery_in_every_country_table(self):
+        data = sample_data()
+        for country in ("us", "kr"):
+            data[country] = data[country][:1]
+            data["new_" + country] = data[country]
+            row = data[country][0]
+            row.update(price=123.456789, ath_price=150.123456, ath_date="2026-08-21",
+                       ath_start_date="2010-01-04", ath_end_date="2026-10-07",
+                       ath_price_basis="검증용 동일 가격 기준",
+                       gap=round((123.456789 / 150.123456 - 1) * 100, 2))
+        source, manifest = render_email(**data), manifest_for(data)
+        with tempfile.TemporaryDirectory() as directory:
+            delivery, meta = native_email.prepare(source, manifest, directory)
+            self.assertEqual(native_email.verify_package(source, delivery, manifest, meta, directory), {})
+            doc = BeautifulSoup(delivery, "html5lib")
+            for table_id in ("us", "kr", "new-us", "new-kr"):
+                table = doc.find("table", id=table_id)
+                self.assertEqual([th.get_text() for th in table.select("thead th")][7:10],
+                                 ["최근가격", "ATH가격", "ATH 괴리율"])
+                cells = table.select_one("tbody tr").find_all("td", recursive=False)
+                expected = ("123.46", "150.12") if table_id.endswith("us") else ("123", "150")
+                self.assertEqual(tuple(cell.get_text() for cell in cells[7:9]), expected)
+                self.assertIn("123.456789", cells[7]["title"])
+                self.assertIn("150.123456", cells[8]["title"])
+                self.assertIn("2026-08-21", cells[8].select_one(".cl")["title"])
+
     def test_native_comparison_only_etf_survives_without_entering_ath_country_table(self):
         data = sample_data()
         candidate = next(row for row in data["us"] if row.get("asset_type") == "ETF")
