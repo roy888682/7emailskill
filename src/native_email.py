@@ -119,15 +119,19 @@ def _redundant_cell_title(cell):
 
 
 def _deduplicate_cell_titles(doc):
+    removed = 0
     for cell in doc.select("table.data-table td, table.data-table th"):
         if _redundant_cell_title(cell):
             del cell["title"]
+            removed += 1
+    return removed
 
 
 def compact_tooltip_markup(source):
     """Reduce a previously verified native body without changing its evidence."""
     doc = BeautifulSoup(source, "html5lib")
-    _deduplicate_cell_titles(doc)
+    if not _deduplicate_cell_titles(doc):
+        return source
     return _transport(str(doc))
 
 def semantic_digest(doc):
