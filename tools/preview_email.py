@@ -375,6 +375,10 @@ LAYOUT_CHECK = r"""expected => {
    const ticker=row.cells[2]?.querySelector("a")?.textContent.trim();
    const recent=exactPriceIn(row.cells[7]),peak=exactPriceIn(row.cells[8]);
    const gap=number(row.cells[9]?.textContent),flag=row.cells[1]?.querySelector("img")?.alt;
+   const tableId=row.closest?.("table")?.id;
+   const country=tableId==="us"||tableId==="new-us"?"US":
+     tableId==="kr"||tableId==="new-kr"?"KR":
+     flag==="성조기"?"US":flag==="태극기"?"KR":null;
    if(!Number.isFinite(recent)||recent<=0||!Number.isFinite(peak)||peak<=0||
       recent>peak*(1+1e-11)||!Number.isFinite(gap)||
       Math.abs((recent/peak-1)*100-gap)>.05500001)
@@ -386,11 +390,11 @@ LAYOUT_CHECK = r"""expected => {
      const titles=priceTitles(row.cells[column]).join(" ");
      const visible=number(text),exact=column===7?recent:peak;
      const serializationTolerance=Math.max(1e-12,Math.abs(exact)*5e-12);
-     const valid=flag==="성조기"?/^(?:\d{1,3}(?:,\d{3})*|\d+)\.\d{2}$/.test(text)&&
+     const valid=country==="US"?/^(?:\d{1,3}(?:,\d{3})*|\d+)\.\d{2}$/.test(text)&&
        Math.abs(visible-exact)<=.005+serializationTolerance:
        Number.isInteger(visible)&&text===visible.toLocaleString("en-US")&&
        visible>=Math.trunc(exact-serializationTolerance)&&visible<=Math.trunc(exact+serializationTolerance);
-     if(!valid||!Number.isFinite(visible)||!titles.includes(flag==="성조기"?"USD":"KRW"))
+     if(!country||!valid||!Number.isFinite(visible)||!titles.includes(country==="US"?"USD":"KRW"))
        problems.push("ATH price display must retain its currency, exact value and country precision: "+ticker);
    }
    for(const column of [9,10]){
