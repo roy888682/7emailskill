@@ -215,7 +215,8 @@ class EmailDeliveryTests(unittest.TestCase):
         self.assertEqual(len(send.call_args.args), 2)
         html = send.call_args.args[0]
         keys = ["KR:" + x for x in inventory(html)["kr"]] + ["US:" + x for x in inventory(html)["us"]]
-        self.assertEqual(keys, ["KR:" + r["ticker"] for r in data["kr"]] + ["US:" + r["ticker"] for r in data["us"]])
+        self.assertEqual(keys, ["KR:" + r["ticker"] for r in sorted(data["kr"], key=lambda row: row["gap"])] +
+                              ["US:" + r["ticker"] for r in sorted(data["us"], key=lambda row: row["gap"])])
         self.assertEqual(sum(key.startswith("US:") for key in keys), 218)
         self.assertEqual(sum(key.startswith("KR:") for key in keys), 17)
         self.assertNotIn("첨부", html)

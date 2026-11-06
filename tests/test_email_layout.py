@@ -112,8 +112,11 @@ class EmailLayoutTests(unittest.TestCase):
             start = end - timedelta(days=days)
             item.update(ticker=ticker, name=ticker, market="US", asset_type="ETF",
                         inception=start.isoformat(), inception_verified=False,
-                        inception_source="검증용 최초 가격일", gap=-25.0)
-            item.update(_etf_price_performance([start, end], [100.0, latest],
+                        inception_source="검증용 최초 가격일", price=latest, gap=-5.0,
+                        ath_price=latest / .95, ath_date=(end - timedelta(days=1)).isoformat(),
+                        ath_start_date=start.isoformat(), ath_end_date=end.isoformat(),
+                        ath_price_basis="Yahoo 제공 수정주가(auto_adjust)")
+            item.update(_etf_price_performance([start, end - timedelta(days=1), end], [100.0, latest / .95, latest],
                         price_basis="Yahoo 제공 수정주가(auto_adjust)", price_currency="USD"))
             item.update(_etf_lifetime_metrics(item))
             set_sample_period_returns(item)
