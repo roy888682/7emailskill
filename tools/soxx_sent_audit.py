@@ -8,39 +8,7 @@ from email.policy import default
 from email.header import decode_header, make_header
 
 MESSAGE_ID = "<179393210000.4408.1652338671088769288@gmail.com>"
-class Rows(HTMLParser):
-    def __init__(self):
-        super().__init__(convert_charrefs=True)
-        self.table = None
-        self.row = None
-        self.cell = None
-        self.headers = {}
-        self.matches = []
-    def handle_starttag(self, tag, attrs):
-        values = dict(attrs)
-        if tag == "table":
-            self.table = values.get("id")
-        if tag == "tr" and self.table:
-            self.row = []
-        if tag in ("td", "th") and self.row is not None:
-            self.cell = {"tag": tag, "text": "", "titles": []}
-        if self.cell is not None and values.get("title"):
-            self.cell["titles"].append(values["title"])
-    def handle_data(self, text):
-        if self.cell is not None:
-            self.cell["text"] += text
-    def handle_endtag(self, tag):
-        if tag in ("td", "th") and self.cell is not None:
-            self.row.append(self.cell)
-            self.cell = None
-        if tag == "tr" and self.row is not None:
-            if self.row and self.row[0]["tag"] == "th":
-                self.headers[self.table] = [cell["text"] for cell in self.row]
-            elif any(cell["text"].strip() == "SOXX" for cell in self.row):
-                self.matches.append({"table": self.table, "headers": self.headers.get(self.table), "cells": self.row})
-            self.row = None
-        if tag == "table":
-            self.table = None
+from bs4 import BeautifulSoup
 
 user = os.environ["GMAIL_USER"]
 with imaplib.IMAP4_SSL("imap.gmail.com", timeout=30) as client:
@@ -67,10 +35,21 @@ html = parts[0].get_payload(decode=True).decode("utf-8").replace("\r\n", "\n")
 import hashlib
 if hashlib.sha256(html.encode("utf-8")).hexdigest() != "758ca84b24550a907515a70afa558bd27eb5d98962ce4de14c64c49f816405bb":
     raise RuntimeError("The original report body hash differs")
-parser = Rows()
-parser.feed(html)
+doc = BeautifulSoup(html, "html5lib")
+matches = []
+for table in doc.select("table.data-table"):
+    headers = [cell.get_text(strip=True) for cell in table.select("thead th")]
+    for row in table.select("tbody tr"):
+        cells = row.find_all("td", recursive=False)
+        if any(cell.get_text(strip=True) == "SOXX" for cell in cells):
+            matches.append({"table": table.get("id"), "headers": headers,
+                            "cells": [{"text": cell.get_text(strip=True),
+                                       "titles": [node.get("title") for node in [cell, *cell.select("[title]")] if node.get("title")]}
+                                      for cell in cells]})
+if not matches:
+    raise RuntimeError("SOXX is missing from the exact original report")
 print("SOXX_ACTUAL_SENT_ROWS:" + json.dumps({
     "message_id": MESSAGE_ID, "body_sha256_matches": True,
     "subject": str(make_header(decode_header(message.get("Subject", "")))),
-    "matches": parser.matches
+    "matches": matches
 }, ensure_ascii=False), flush=True)

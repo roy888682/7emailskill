@@ -13,6 +13,7 @@ jobs:
     timeout-minutes: 6
     steps:
       - uses: actions/checkout@v4
+      - run: python -m pip install beautifulsoup4 html5lib
       - name: Read the exact report and its SOXX cells
         env:
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
