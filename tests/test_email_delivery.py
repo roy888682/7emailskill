@@ -214,9 +214,13 @@ class EmailDeliveryTests(unittest.TestCase):
         send.assert_called_once()
         self.assertEqual(len(send.call_args.args), 2)
         html = send.call_args.args[0]
-        keys = ["KR:" + x for x in inventory(html)["kr"]] + ["US:" + x for x in inventory(html)["us"]]
-        self.assertEqual(keys, ["KR:" + r["ticker"] for r in sorted(data["kr"], key=lambda row: row["gap"])] +
-                              ["US:" + r["ticker"] for r in sorted(data["us"], key=lambda row: row["gap"])])
+        actual = inventory(html)
+        keys = ["KR:" + x for x in actual["kr"]] + ["US:" + x for x in actual["us"]]
+        self.assertCountEqual(keys, ["KR:" + row["ticker"] for row in data["kr"]] +
+                                   ["US:" + row["ticker"] for row in data["us"]])
+        for country in ("kr", "us"):
+            gaps = {row["ticker"]: row["gap"] for row in data[country]}
+            self.assertEqual([gaps[ticker] for ticker in actual[country]], sorted(gaps.values()))
         self.assertEqual(sum(key.startswith("US:") for key in keys), 218)
         self.assertEqual(sum(key.startswith("KR:") for key in keys), 17)
         self.assertNotIn("첨부", html)
