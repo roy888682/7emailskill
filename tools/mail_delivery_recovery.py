@@ -161,8 +161,19 @@ body_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()
 part = html_parts[0]
 if part.get("Content-Transfer-Encoding") is not None:
     del part["Content-Transfer-Encoding"]
-part.set_payload(body.replace("\r\n", "\n").replace("\n", "\r\n").encode("utf-8"))
-part["Content-Transfer-Encoding"] = "8bit"
+from email.mime.text import MIMEText
+encoded = MIMEText(body, "html", "utf-8", policy=SMTP)
+part.set_payload(encoded.get_payload())
+part["Content-Transfer-Encoding"] = encoded["Content-Transfer-Encoding"]
+plain = native_email.plain_report(body)
+for plain_part in message.walk():
+    if plain_part.get_content_type() == "text/plain":
+        replacement_plain = MIMEText(plain, "plain", "utf-8", policy=SMTP)
+        if plain_part.get("Content-Transfer-Encoding") is not None:
+            del plain_part["Content-Transfer-Encoding"]
+        plain_part.set_payload(replacement_plain.get_payload())
+        plain_part["Content-Transfer-Encoding"] = replacement_plain["Content-Transfer-Encoding"]
+
 Path("work/recovered-report.html").write_text(body, encoding="utf-8")
 
 for header in ("Subject", "Date", "Message-ID", "Return-Path", "Received",
@@ -173,10 +184,12 @@ for header in ("Subject", "Date", "Message-ID", "Return-Path", "Received",
         del message[header]
 now = datetime.now(timezone.utc)
 kst = now.astimezone(timezone(timedelta(hours=9)))
-message["Subject"] = "[ATH 전체 리포트 경량 재전송] " + kst.strftime("%m-%d %H:%M KST") + " · 11-05 기준 · ETF 987개"
+message["Subject"] = "[ATH 전체 리포트 표준인코딩] " + kst.strftime("%m-%d %H:%M KST") + " · 11-05 기준 · ETF 987개"
 message["Date"] = email.utils.format_datetime(now)
 message["Message-ID"] = make_msgid(domain=SENDER.rsplit("@", 1)[-1])
 wire = message.as_bytes(policy=SMTP)
+if any(value > 127 for value in wire):
+    raise RuntimeError("The compatibility message must be entirely 7-bit ASCII on the wire")
 roundtrip = email.message_from_bytes(wire, policy=SMTP)
 sent_html = [part for part in roundtrip.walk() if part.get_content_type() == "text/html"]
 if len(sent_html) != 1 or hashlib.sha256(sent_html[0].get_payload(decode=True).decode("utf-8").replace("\r\n", "\n").encode("utf-8")).hexdigest() != body_hash:
@@ -193,7 +206,7 @@ with QueueReceiptSMTP("smtp.gmail.com", 465, timeout=60, context=ssl.create_defa
     if not smtp.has_extn("8bitmime"):
         raise RuntimeError("The SMTP relay lacks the report's required MIME extension")
     smtp.login(SENDER, PASSWORD)
-    refused = smtp.sendmail(SENDER, TARGET, wire, mail_options=("BODY=8BITMIME",))
+    refused = smtp.sendmail(SENDER, TARGET, wire)
     if refused:
         raise RuntimeError("The report recipient was refused")
     code, response = smtp.queue_response
@@ -203,7 +216,7 @@ resend = {
     "message_id": message["Message-ID"], "subject": str(message["Subject"]),
     "accepted_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     "recipient_matches_expected": True, "body_bytes": len(body.encode("utf-8")),
-    "wire_bytes": len(wire), "attachment_count": 0, "unchanged_validated_body": False, "same_report_fields_and_hovers": True,
+    "wire_bytes": len(wire), "attachment_count": 0, "unchanged_validated_body": False, "same_report_fields_and_hovers": True, "html_cte": "base64", "seven_bit_wire": True, "complete_plain_text_bytes": len(plain.encode("utf-8")),
     "source_body_sha256": original_hash, "original_body_bytes": len(original_body.encode("utf-8")), "counts": {key: len(values) for key, values in original_inventory.items()},
     "body_sha256": body_hash, "smtp_data_code": code,
     "smtp_queue_response": response.decode("ascii", errors="replace")[:300],
