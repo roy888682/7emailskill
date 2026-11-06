@@ -1,0 +1,20 @@
+name: SOXX sent-report audit
+on:
+  push:
+    branches: [codex/soxx-sent-audit-20261106]
+    paths:
+      - '.github/workflows/soxx_sent_audit.yml'
+      - 'tools/soxx_sent_audit.py'
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read the exact report and its SOXX cells
+        env:
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+        run: python tools/soxx_sent_audit.py
