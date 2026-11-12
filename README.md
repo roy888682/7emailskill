@@ -1,5 +1,35 @@
 # 📈 Daily ATH Stock Emailer
 
+## ETF 연환산수익률 기록실
+
+**[대시보드 열기](https://roy888682.github.io/7emailskill/)** · [날짜별 원본 데이터](data/etf-history) · [자동 업데이트 실행 기록](https://github.com/roy888682/7emailskill/actions/workflows/etf_dashboard.yml)
+
+보고서의 **연환산(CAGR)** 원값을 수집일(한국시간)별로 영구 저장하고, ETF를 클릭하면 해당 선을 굵게 강조합니다. 이름·티커 검색, 한국·미국 필터, 기간·날짜 선택, 선택 ETF 기준 축 조정, 날짜별 관측 표와 CSV 내려받기를 지원합니다. 화면을 열어두면 5분마다 새 데이터를 확인합니다.
+
+- 기존 메일 보고서 실행이 끝나면 그 보고서의 정확한 관측값을 가져와 데이터를 저장하고 GitHub Pages를 다시 게시합니다.
+- **매일 09:35 KST**에도 당일 기록을 확인하고, 기록이 없으면 같은 보고서 수집기를 `--prepare-only`로 실행합니다. 이 보완 수집은 메일을 보내지 않습니다. GitHub 대기열에 따라 시작이 지연될 수 있습니다.
+- 원본은 `data/etf-history/YYYY-MM-DD.json`에 커밋합니다. ETF 식별자는 `국가:티커`입니다. 같은 날 재실행하면 최신의 유효한 스냅샷 하나를 유지하고, 오래된 실행이 최신 기록을 덮어쓰지 않습니다. 보관 기간이 제한된 Actions 캐시나 아티팩트와 독립적으로 Git 이력이 남습니다.
+- 저장 대상은 ATH 여부와 관계없는 전체 비채권 ETF 비교 후보입니다. 기본 화면은 정확한 관측 이력 1년 이상인 후보이며, 체크를 해제하면 미확인·1년 미만 후보도 확인할 수 있습니다.
+- 가격 원값, 최초·최근 가격일, 시장 기준일, 실제 수집시각, 가격 조정 기준과 계산 불가 상태를 함께 저장합니다. 과거 시세를 쓴 값은 해당 날짜를 명시합니다.
+- **저장하지 않았던 날짜는 역산하거나 채우지 않습니다.** 첫날에는 점 하나가 표시됩니다. 확보 가능한 실제 과거 진단 아티팩트는 본문·목록 해시와 CAGR 공식을 검증한 뒤 복구합니다. 테스트/대표 데이터는 가져오지 않습니다.
+- 차트 데이터는 `dashboard/data/history/YYYY-MM.json`으로 나눠 장기간 누적 시 단일 파일이 계속 커지지 않도록 합니다. 정확한 계산은 반올림 전 원값을 쓰고 화면 표시만 소수점 둘째 자리로 반올림합니다. 기간별 변화량은 %p입니다.
+
+GitHub Pages 최초 설정은 저장소 **Settings → Pages → Source → GitHub Actions**입니다. 이후 `ETF CAGR Dashboard` 워크플로우가 데이터 저장과 게시를 처리합니다. GitHub의 비활성 저장소 예약 중지 정책 등이 적용되므로 실행 실패 알림을 확인해 주세요.
+
+로컬 확인 (저장소 루트):
+
+```bash
+pip install -r requirements.txt
+python src/main.py --prepare-only
+python tools/sync_etf_history.py --snapshot work/etf-tracker-snapshot.json
+python -m http.server 8765 --directory dashboard
+# http://localhost:8765
+```
+
+이미 저장된 자료로 화면 데이터만 다시 만들려면 `python tools/sync_etf_history.py --build-only`를 실행합니다. 수집 무결성은 `python -m unittest discover -s tests -p test_etf_history.py -v`, 차트 데이터·필터·빈 구간·CSV는 `node --test tests/test_dashboard.mjs`로 검증합니다. Node는 이 검증에만 필요하고 화면 실행은 추가 라이브러리 없이 가능합니다.
+
+---
+
 월~금 미국(S&P 500)·한국(KOSPI/KOSDAQ) 장 결과의 ATH 후보 종목과 ETF 수익률 비교를 **화~토요일 오전 7시(KST)**에 이메일로 자동 발송하는 GitHub Actions 자동화입니다. 일요일과 월요일에는 예약 발송하지 않습니다.
 
 ---

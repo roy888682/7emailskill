@@ -92,6 +92,15 @@ jobs:
           RECIPIENT_EMAIL:    ${{ secrets.RECIPIENT_EMAIL }}
         run: python src/main.py --send-prepared
 
+      - name: 📊 검증된 ETF 연환산 관측값 보관
+        if: ${{ !cancelled() && hashFiles('work/preview-passed.json') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: etf-observation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: work/etf-tracker-snapshot.json
+          if-no-files-found: error
+          retention-days: 90
+
       - name: 💾 누적 스냅샷 저장 (다음 실행에서 자동 복원됨)
         if: success()
         uses: actions/cache/save@v4

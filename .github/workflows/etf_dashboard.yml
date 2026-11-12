@@ -1,0 +1,102 @@
+name: ETF CAGR Dashboard
+
+on:
+  workflow_run:
+    workflows: ['📈 Daily ATH Stock Email']
+    types: [completed]
+    branches: [main]
+  schedule:
+    - cron: '35 0 * * *' # Every day 09:35 Asia/Seoul; report completion also updates immediately.
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'dashboard/**'
+      - 'src/etf_history.py'
+      - 'tools/sync_etf_history.py'
+      - 'tests/test_etf_history.py'
+      - 'tests/test_dashboard.mjs'
+      - '.github/workflows/etf_dashboard.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: etf-cagr-dashboard
+  cancel-in-progress: false
+
+jobs:
+  update:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Test observation integrity and chart model
+        run: |
+          python -m unittest discover -s tests -p test_etf_history.py -v
+          node --test tests/test_dashboard.mjs
+      - name: Import report observations and recover available historical audits
+        id: history
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python tools/sync_etf_history.py --github
+      - name: Install collector dependencies when today's report is unavailable
+        if: steps.history.outputs.need_collection == 'true'
+        run: pip install -r requirements.txt
+      - name: Collect today's exact report data without sending email
+        if: steps.history.outputs.need_collection == 'true'
+        run: |
+          python src/main.py --prepare-only
+          python tools/sync_etf_history.py --snapshot work/etf-tracker-snapshot.json
+      - name: Save observations and chart data permanently in Git
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add data/etf-history dashboard/data
+          if ! git diff --cached --quiet; then
+            git commit -m 'data: save daily ETF CAGR observations'
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
+      - name: Upload dashboard
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dashboard
+      - name: Save collection diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: etf-dashboard-diagnostics-${{ github.run_id }}
+          path: |
+            work/market-date-proof.json
+            work/etf-tracker-snapshot.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+  deploy:
+    needs: update
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@v5
+      - name: Publish updated chart and data
+        id: deployment
+        uses: actions/deploy-pages@v4

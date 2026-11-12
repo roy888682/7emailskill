@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0c8072">
+  <meta name="description" content="7emailskill의 ETF 연환산수익률을 날짜별로 기록하고, ETF를 선택해 변화를 비교하세요.">
+  <title>ETF 수익률 기록실 | 7emailskill</title>
+  <link rel="icon" href="./icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="./"><svg width="30" height="30" viewBox="0 0 30 30" aria-hidden="true"><rect width="30" height="30" rx="9" fill="#0c8072"/><path d="M7 21V15M15 21V10M23 21V6" stroke="white" stroke-width="3" stroke-linecap="round"/></svg><span>ETF 기록실<span class="brand-by">by 7emailskill</span></span></a>
+    <a class="source-link" href="https://github.com/roy888682/7emailskill" target="_blank" rel="noopener">GitHub 저장소 <span aria-hidden="true">↗</span></a>
+  </header>
+  <main>
+    <section class="intro">
+      <div><p class="eyebrow">DAILY ETF RETURN OBSERVATORY</p><h1>숫자 하나보다,<br>그 숫자가 변해온 흐름.</h1><p class="lead">매일의 연환산수익률을 기록합니다.<br class="mobile-break"> ETF를 클릭하고, 변화에 집중해 보세요.</p></div>
+      <div class="update-card"><span class="live-label"><i></i> 자동으로 쌓이는 기록</span><strong id="update-time">데이터를 불러오는 중</strong><p id="market-dates">보고서의 실제 수익률 데이터를 연결합니다.</p><button id="refresh" class="text-button" type="button">지금 새로고침 ↻</button></div>
+    </section>
+    <div id="notice" class="notice" role="status" hidden></div>
+    <section class="overview" aria-label="수집 현황">
+      <div><span>추적 중인 ETF</span><strong id="etf-count">—</strong><small id="universe-count">보고서 비교 대상</small></div>
+      <div><span>저장한 날짜</span><strong id="day-count">—</strong><small id="history-span">실제 관측 기록</small></div>
+      <div><span>관측하는 지표</span><strong class="metric-title">Lifetime CAGR</strong><small>보고서의 ‘연환산’ 열과 같은 값</small></div>
+    </section>
+    <section class="workspace" aria-label="ETF 탐색과 수익률 차트">
+      <aside class="panel explorer">
+        <div class="explorer-heading"><h2>ETF 찾기</h2><span id="list-count" class="count-badge">0</span></div>
+        <label class="search"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="이름 또는 티커 검색" aria-label="ETF 이름 또는 티커 검색" autocomplete="off"></label>
+        <div id="countries" class="segmented" aria-label="국가 필터"><button type="button" data-country="all" aria-pressed="true">전체</button><button type="button" data-country="KR" aria-pressed="false">한국</button><button type="button" data-country="US" aria-pressed="false">미국</button></div>
+        <div class="list-options"><label><input id="eligible-only" type="checkbox" checked> 이력 1년 이상</label><label class="sr-only" for="sort">ETF 정렬</label><select id="sort"><option value="cagr">연환산 높은 순</option><option value="name">이름 순</option></select></div>
+        <div class="list-heading"><span>ETF · 종목명</span><span>최신 연환산</span></div>
+        <div id="etf-list" class="etf-list" aria-label="ETF 선택 목록"></div>
+        <p class="explorer-foot">종목을 클릭하면 차트가 강조됩니다.</p>
+      </aside>
+      <section class="panel chart-panel">
+        <div class="chart-heading"><div><p class="eyebrow">ANNUALIZED RETURN · %</p><h2 id="chart-title">ETF 연환산수익률 추이</h2><p id="chart-subtitle">선택한 ETF는 진하게, 다른 ETF는 옅게 표시합니다.</p></div><button id="clear-selection" class="outline-button" type="button">전체 보기</button></div>
+        <div id="selected-summary" class="selected-summary" aria-live="polite"></div>
+        <div class="chart-toolbar"><div id="periods" class="periods" aria-label="조회 기간"><button type="button" data-period="30" aria-pressed="false">1개월</button><button type="button" data-period="90" aria-pressed="false">3개월</button><button type="button" data-period="180" aria-pressed="false">6개월</button><button type="button" data-period="365" aria-pressed="false">1년</button><button type="button" data-period="all" aria-pressed="true">전체</button></div><label class="axis-option"><input id="focus-scale" type="checkbox"> 선택 ETF에 축 맞추기</label></div>
+        <div class="date-controls"><label>시작일 <input id="start-date" type="date"></label><span>—</span><label>종료일 <input id="end-date" type="date"></label></div>
+        <div id="chart-wrap" class="chart-wrap"><svg id="chart" viewBox="0 0 1100 430" role="img" aria-label="날짜별 ETF 연환산수익률 차트"></svg><div id="chart-empty" class="chart-empty" hidden></div><div id="tooltip" class="tooltip" role="status" hidden></div></div>
+        <div class="chart-bottom"><span><i class="legend-dot"></i> 선택 ETF <i class="legend-dot muted"></i> 비교 ETF</span><span>가로축: 수집일 (한국시간) · 세로축: 연환산수익률 (%)</span></div>
+        <div class="chart-actions"><p id="selection-note">차트의 선이나 왼쪽 ETF 목록을 클릭해 보세요.</p><button id="download" class="outline-button" type="button">CSV 내려받기 ↓</button></div>
+      </section>
+    </section>
+    <section class="panel observation-panel"><div><p class="eyebrow">THE NUMBERS BEHIND THE LINE</p><h2>선택 ETF의 날짜별 기록</h2></div><p id="table-note">ETF를 선택하면 실제 시세 기준일도 함께 확인할 수 있습니다.</p><div class="table-scroll"><table><thead><tr><th>수집일</th><th>연환산수익률</th><th>이전 관측 대비</th><th>실제 시세 기준일</th><th>자료 상태</th></tr></thead><tbody id="observations"></tbody></table></div><button id="more-observations" class="text-button" type="button" hidden>기록 더 보기</button></section>
+    <details class="method panel"><summary>어떤 수익률을 기록하나요?</summary><div><p>각 수집일에 <strong>7emailskill 보고서의 ‘연환산’ 값</strong>을 저장합니다. 해당 ETF의 실제 최초·최근 가격으로 계산한 설립 이후 복리 연환산수익률(CAGR)이며, 최근 1년 수익률과는 다른 지표입니다.</p><p class="formula">CAGR = [(최근 가격 ÷ 최초 가격)<sup>1 / 경과연수</sup> − 1] × 100<br><small>경과연수 = 실제 최초·최근 가격 날짜 차이 ÷ 365.25</small></p><p>한국 ETF 전체 목록과 설정된 미국 주요 ETF 중 비채권 ETF를 사용합니다. 기본 목록은 가격 이력 1년 이상인 ETF입니다. ‘이력 1년 이상’을 해제하면 미확인·1년 미만 후보도 확인할 수 있습니다. 과거 시세를 사용한 기록은 실제 날짜와 함께 표시합니다.</p><p>당시 저장하지 않은 날짜의 값을 현재 가격으로 역산하지 않습니다. 미수집일과 계산 불가 구간은 선으로 연결하지 않습니다. 첫 수집일에는 점 하나가 표시되며, 기록이 쌓이면 선이 이어집니다. 가격 공급자·조정 기준이 달라질 수 있으므로 원본 스냅샷의 가격 기준도 함께 확인하세요.</p><p>보고서 실행 완료 시 업데이트하고, 매일 오전 9시 35분(KST)에 누락된 당일 기록을 확인합니다. GitHub Actions 대기열에 따라 실행이 지연될 수 있습니다. 이 화면은 5분마다 새 데이터를 확인합니다.</p></div></details>
+    <footer><span>ETF 기록실 <span class="footer-divider">/</span> 관측을 쌓아, 흐름을 읽다.</span><a href="https://github.com/roy888682/7emailskill/tree/main/data/etf-history" target="_blank" rel="noopener">날짜별 원본 데이터 ↗</a></footer>
+  </main>
+  <script type="module" src="./app.mjs"></script>
+</body>
+</html>

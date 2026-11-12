@@ -9,9 +9,9 @@ from email.utils import formatdate, make_msgid, getaddresses
 from pathlib import Path
 
 if __package__:
-    from . import email_layout, email_flags, report_inline, native_email, us_naver_links, etf_strategy
+    from . import email_layout, email_flags, report_inline, native_email, us_naver_links, etf_strategy, etf_history
 else:
-    import email_layout, email_flags, report_inline, native_email, us_naver_links, etf_strategy
+    import email_layout, email_flags, report_inline, native_email, us_naver_links, etf_strategy, etf_history
 from datetime import datetime, timedelta, date, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -2174,6 +2174,8 @@ def main(prepare_only=False):
         (directory / "email-preview.html").write_text(email_flags.inline_flag_sources(email_html), encoding="utf-8")
         (directory / "report-manifest.json").write_text(json.dumps(expected), encoding="utf-8")
         (directory / "market-date-proof.json").write_text(json.dumps(market_dates, ensure_ascii=False, indent=2), encoding="utf-8")
+        etf_history.write_json(directory / "etf-tracker-snapshot.json",
+                               etf_history.make_snapshot(market_dates, comparison_etfs))
         (directory / "email-subject.txt").write_text(subject, encoding="utf-8")
         (directory / "pending-snapshots.json").write_text(json.dumps(snapshots, default=str), encoding="utf-8")
         log.info(f"발송 전 본문 준비 완료: {size:,}바이트 · 아직 발송하지 않음")
