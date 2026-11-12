@@ -4,7 +4,7 @@ const $ = id => document.getElementById(id);
 const NS = 'http://www.w3.org/2000/svg';
 const colors = ['#3d9385','#7693b2','#ac9c7e','#8b92b7','#7faca9','#b88887','#93a779','#a598b0'];
 const state = {index:null, history:mergeShards([]), country:'all', query:'', eligibleOnly:true, sort:'cagr',
-  selected:null, period:'all', start:'', end:'', focusScale:false, visible:[], rowsToShow:30, loadId:0};
+  selected:null, period:'all', start:'', end:'', focusScale:false, visible:[], rowsToShow:30, loadId:0, historyError:false};
 let shardCache = new Map(), chartGeometry = null;
 
 function node(tag, attributes = {}, text = null) {
@@ -48,9 +48,15 @@ async function loadHistory() {
     }));
     if (id !== state.loadId) return;
     state.history = mergeShards(shards);
+    state.historyError=false;
     render();
+    return true;
   } catch (error) {
-    if (id === state.loadId) showNotice(error.message + ' 저장된 원본은 GitHub에서 확인할 수 있습니다.',true);
+    if (id === state.loadId) {
+      state.historyError=true;
+      showNotice(error.message + ' 저장된 원본은 GitHub에서 확인할 수 있습니다.',true);
+    }
+    return false;
   }
 }
 async function refresh(initial = false) {
@@ -58,7 +64,7 @@ async function refresh(initial = false) {
   try {
     const index = await getJSON('./data/index.json');
     if (index.schema_version !== 1 || !Array.isArray(index.etfs) || !Array.isArray(index.dates)) throw new Error('수익률 데이터 형식을 확인해 주세요.');
-    const changed = !state.index || state.index.updated_at !== index.updated_at || JSON.stringify(state.index.dates) !== JSON.stringify(index.dates);
+    const changed = !state.index || state.historyError || state.index.updated_at !== index.updated_at || JSON.stringify(state.index.dates) !== JSON.stringify(index.dates);
     state.index = index;
     if (initial || changed) {
       shardCache = new Map();
@@ -69,7 +75,7 @@ async function refresh(initial = false) {
         state.selected = index.etfs.some(row => row.id === linked) ? linked : candidates[0]?.id ?? null;
       }
       renderOverview();
-      await loadHistory();
+      if (!await loadHistory()) return;
     }
     if (!index.dates.length) showNotice('첫 수집을 기다리고 있습니다. 자동 수집이 완료되면 실제 데이터가 표시됩니다.');
     else if (dayTime(new Date().toLocaleDateString('sv-SE',{timeZone:'Asia/Seoul'})) - dayTime(index.dates.at(-1)) > 2 * DAY)
