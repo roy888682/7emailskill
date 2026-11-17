@@ -1,0 +1,16 @@
+name: Korean ETF API audit
+on:
+  push:
+    branches: [codex/kr-etf-api-audit-20261117]
+    paths:
+      - '.github/workflows/kr_etf_api_audit.yml'
+      - 'tools/kr_etf_api_audit.py'
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - run: python tools/kr_etf_api_audit.py
