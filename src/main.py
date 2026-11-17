@@ -111,6 +111,7 @@ def get_us_industry(ticker: str):
     except Exception:
         return None
 import pytz, yfinance as yf, requests
+import pandas as pd
 from bs4 import BeautifulSoup
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -1118,79 +1119,77 @@ def classify_kr_etf(name: str) -> str:
 
 # ── 한국 ETF 목록/상세 수집 ────────────────────────────────────────────────
 _KR_ETF_DIAG = {"base_logged": False}
+_KR_ETF_CATALOG_URL = "https://finance.naver.com/api/sise/etfItemList.nhn"
+# The official, unpaginated list contained 1,188 ETFs on 2026-11-17.  Reject
+# implausibly small responses (including a truncated 100/300-row page), rather
+# than publishing a report that silently omits most of the Korean universe.
+_KR_ETF_CATALOG_MINIMUM = 1000
+
+
+def _parse_kr_etf_catalog(data) -> dict:
+    if not isinstance(data, dict) or data.get("resultCode") != "success":
+        raise ValueError("ETF full-list resultCode is not success")
+    result = data.get("result")
+    rows = result.get("etfItemList") if isinstance(result, dict) else None
+    if not isinstance(rows, list) or len(rows) < _KR_ETF_CATALOG_MINIMUM:
+        raise ValueError(f"ETF full-list inventory is incomplete: "
+                         f"{len(rows) if isinstance(rows, list) else 'missing'}"
+                         f" < {_KR_ETF_CATALOG_MINIMUM}")
+    out = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            raise ValueError("ETF full-list contains a non-object row")
+        code, name = row.get("itemcode"), row.get("itemname")
+        if (not isinstance(code, str) or not re.fullmatch(r"[0-9A-Z]{6}", code)
+                or not isinstance(name, str) or not name.strip() or code in out):
+            raise ValueError("ETF full-list contains an invalid or duplicate security")
+        # This legacy list reports marketSum in KRW 100 million, unlike the
+        # detail API's totalNetAssets in raw KRW. Market cap is not fund AUM.
+        mcap = None
+        try:
+            raw_mcap = float(str(row.get("marketSum")).replace(",", ""))
+            if math.isfinite(raw_mcap) and raw_mcap > 0:
+                mcap = round(raw_mcap / 10000, 4)
+        except (TypeError, ValueError):
+            pass
+        out[code] = {"name": name.strip(), "mcap": mcap, "aum": None,
+                     "market": "KOSPI", "is_etf": True,
+                     "investment_area": None, "investment_area_source": None}
+    if len(out) != len(rows):
+        raise ValueError("ETF full-list row/unique count differs")
+    return out
 
 def get_kr_etf_universe() -> dict:
-    """Collect every Korean ETF page, verifying the provider's complete inventory."""
-    out = {}
-    url = "https://stock.naver.com/api/stockSecurity/etfs/v2/domestic"
-    expected_total = None
-    # The observed v2 API accepts at most 100 rows and `index` is a page number,
-    # not a row offset. A size=300 request fails and index=0 alone omits funds.
-    for index in range(100):
-        page = None
-        last_error = None
-        for attempt in range(3):
-            try:
-                r = requests.get(url, headers=UA,
-                                 params={"listingType": "aumDesc", "size": 100, "index": index}, timeout=20)
-                if r.status_code != 200:
-                    raise RuntimeError(f"HTTP {r.status_code}")
-                data = r.json()
-                if not isinstance(data, dict) or not isinstance(data.get("items"), list):
-                    raise ValueError("ETF list items are missing")
-                if type(data.get("hasNext")) is not bool:
-                    raise ValueError("ETF list hasNext is not a boolean")
-                if any(isinstance(data.get(key), bool) or not re.fullmatch(r"\d+", str(data.get(key)))
-                       for key in ("index", "totalCount")):
-                    raise ValueError("ETF list index/totalCount are invalid")
-                total = int(data["totalCount"])
-                if int(data["index"]) != index or (expected_total is not None and total != expected_total):
-                    raise ValueError("ETF list page index or total count changed")
-                rows = data["items"]
-                if len(rows) > 100 or (data["hasNext"] and not rows):
-                    raise ValueError("ETF list page length is invalid")
-                parsed = {}
-                for row in rows:
-                    if not isinstance(row, dict):
-                        raise ValueError("ETF list contains a non-object row")
-                    flat = _flatten(row)
-                    code = str(_find_val(flat, [(["itemcode"], [], []),
-                               (["code"], [], ["index", "theme", "type"])]) or "").strip()
-                    name = str(_find_val(flat, [(["itemname"], [], []),
-                               (["name"], [], ["index", "theme", "issuer"])]) or "").strip()
-                    if len(code) != 6 or not name or code in parsed:
-                        raise ValueError("ETF list contains an invalid or duplicate security")
-                    list_aum = parse_kr_etf_base(row).get("aum")
-                    parsed[code] = {"name": name, "mcap": None, "aum": list_aum,
-                                    "market": "KOSPI", "is_etf": True,
-                                    "investment_area": row.get("etfType"),
-                                    "investment_area_source": "Naver ETF 목록 분류"}
-                combined_count = len(set(out) | set(parsed))
-                if rows and not (set(parsed) - set(out)):
-                    raise ValueError("ETF list pagination repeated a page without progress")
-                if combined_count > total or (data["hasNext"] and combined_count >= total):
-                    raise ValueError("ETF list pagination contradicts total count")
-                if not data["hasNext"] and combined_count != total:
-                    raise ValueError(f"ETF list is incomplete: {combined_count}/{total}")
-                page = (parsed, data["hasNext"], total)
-                break
-            except Exception as error:
-                last_error = error
-                log.warning("한국 ETF 목록 page=%s 재시도 %s/3: %s", index, attempt + 1, error)
-                if attempt < 2:
-                    time.sleep(.5 * (attempt + 1))
-        if page is None:
-            raise RuntimeError(f"한국 ETF 전체 목록 수집 실패: page={index}, 확보={len(out)}, "
-                               f"예상={expected_total}: {last_error}") from last_error
-        parsed, has_next, expected_total = page
-        out.update(parsed)
-        log.info("한국 ETF 목록 page=%s: 누적 %s/%s종목, hasNext=%s",
-                 index, len(out), expected_total, has_next)
-        if not has_next:
-            log.info("한국 ETF 전체 유니버스: %s/%s종목 (완전성 확인)", len(out), expected_total)
+    """Read Naver's whole ETF inventory; never substitute an empty/partial page."""
+    last_error = None
+    for attempt in range(3):
+        try:
+            r = requests.get(_KR_ETF_CATALOG_URL, headers=UA, timeout=20)
+            if r.status_code != 200:
+                raise RuntimeError(f"HTTP {r.status_code}")
+            # The live endpoint is CP949 JSON. Decode explicitly instead of
+            # requests' ISO-8859-1 text default; also accept a future UTF-8 move.
+            data = None
+            for codec in ("utf-8-sig", "cp949"):
+                try:
+                    data = json.loads(r.content.decode(codec))
+                    break
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    continue
+            if data is None:
+                raise ValueError("ETF full-list is not valid UTF-8/CP949 JSON")
+            out = _parse_kr_etf_catalog(data)
+            log.info("한국 ETF 전체 유니버스: 원본 %s행 / 고유 %s종목, "
+                     "full-list=%s, 최소검사=%s, encoding=%s (전체 행 검증)",
+                     len(data["result"]["etfItemList"]), len(out),
+                     _KR_ETF_CATALOG_URL, _KR_ETF_CATALOG_MINIMUM, codec)
             return out
-        time.sleep(.1)
-    raise RuntimeError(f"한국 ETF 목록 페이지 안전 한도 초과: 확보={len(out)}, 예상={expected_total}")
+        except Exception as error:
+            last_error = error
+            log.warning("한국 ETF 전체 목록 재시도 %s/3: %s", attempt + 1, error)
+            if attempt < 2:
+                time.sleep(.5 * (attempt + 1))
+    raise RuntimeError(f"한국 ETF 전체 목록 수집 실패: {last_error}") from last_error
 
 def fetch_kr_etf_base(code: str):
     try:
@@ -1349,25 +1348,38 @@ def etf_section_html(etf_info):
     return email_layout.etf_section_html(etf_info)
 
 def dl(tickers, period, chunk=80, sleep=1.2):
-    out={}; n=len(tickers)
+    out={}; n=len(tickers); collected=0
     if not n: return out
     for i in range(0,n,chunk):
         grp=tickers[i:i+chunk]; bn=i//chunk+1
         log.info(f"  US[{bn}/{(n+chunk-1)//chunk}] {i+1}~{min(i+chunk,n)}/{n} ({period})")
         try:
             raw=yf.download(grp,period=period,progress=False,auto_adjust=False,actions=True,group_by="ticker")
-            if raw.empty: time.sleep(sleep); continue
+            if raw.empty:
+                log.warning("  US[%s] 가격 응답이 비어 있습니다 (%s)", bn, period)
+                time.sleep(sleep); continue
             for tk in grp:
                 try:
-                    frame = raw[tk] if tk in raw.columns.get_level_values(0) else raw
+                    if isinstance(raw.columns, pd.MultiIndex):
+                        frame = raw[tk]
+                    elif len(grp) == 1:
+                        frame = raw
+                    else:
+                        raise RuntimeError("여러 종목 응답에 티커 구분이 없습니다")
                     dates, prices, raw_prices = _history_prices(frame)
+                    if not dates:
+                        raise RuntimeError("수정종가 데이터가 비어 있습니다")
                     s = pd.Series(prices, index=pd.to_datetime(dates))
                     s.attrs["raw_close_by_date"] = dict(zip(dates, raw_prices))
                     s.attrs["split_events"] = _history_splits(frame)
+                    collected += 1
                     if len(s)>=10: out[tk]=s
-                except: pass
+                except Exception as e:
+                    log.warning("  US 가격 처리 실패: %s (%s): %s: %s", tk, period, type(e).__name__, e)
         except Exception as e: log.error(f"  US[{bn}] {e}")
         time.sleep(sleep)
+    if not collected:
+        log.error("미국 가격 수집 실패: %s, %s개 종목 모두 유효한 시세 없음", period, n)
     log.info(f"  US완료:{len(out)}/{n}"); return out
 
 # 미국 본토 주요 ETF (시가총액·거래량 상위 위주, 채권형 제외). NASDAQ 심볼 파일이 막혀도
@@ -1520,11 +1532,19 @@ def get_us_ath(usd_krw, comparison_etfs=None, us_last=None):
     for ticker, series in list(d1.items()):
         if anchor is not None:
             d1[ticker] = series[series.index.date <= anchor]
+    stock_targets = {ticker for ticker in tickers if not etf_flags.get(ticker, False)}
+    if stock_targets and not any(ticker in stock_targets and len(series) >= 2
+                                 for ticker, series in d1.items()):
+        raise RuntimeError("미국 일반주 1년 가격 수집 실패: 모든 일반주 시세가 누락됨")
     cands=[tk for tk,s in d1.items() if len(s)>=2 and float(s.iloc[-1])>=float(s.max())*0.90]
     log.info(f"미국 1단계후보:{len(cands)}")
     full_targets = list(dict.fromkeys(cands + (etf_targets if compare else [])))
     if not full_targets: return []
     d2=dl(full_targets,"max",chunk=25,sleep=2.0)
+    stock_candidates = stock_targets.intersection(cands)
+    if stock_candidates and not any(ticker in stock_candidates and len(series) >= 2
+                                    for ticker, series in d2.items()):
+        raise RuntimeError("미국 일반주 전체기간 가격 수집 실패: 모든 일반주 후보 시세가 누락됨")
     out=[]
     for tk,s in d2.items():
         try:

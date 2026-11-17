@@ -1,6 +1,7 @@
-"""Complete Korean ETF pagination and independent comparison regressions."""
+"""Complete Korean ETF full-list decoding and comparison regressions."""
 from datetime import date, timedelta
 from types import SimpleNamespace
+import json
 import unittest
 from unittest.mock import patch
 
@@ -17,102 +18,107 @@ FUNDS = {
 
 def row(code, name=None):
     return {"itemcode": code, "itemname": name or FUNDS.get(code, "TIGER 테스트 " + code),
-            "totalNetAssets": "50000000000", "etfType": "해외주식"}
+            "marketSum": 500, "etfTabCode": 4}
 
 
-def response(index, codes, total, has_next, *, status=200):
-    data = {"items": [row(code) for code in codes], "index": str(index),
-            "size": "100", "totalCount": str(total), "hasNext": has_next}
-    return SimpleNamespace(status_code=status, text="synthetic ETF page", json=lambda: data)
+def catalog(codes=None):
+    if codes is None:
+        codes = list(FUNDS) + ["0167A0"] + [f"{i:06d}" for i in range(100000, 101184)]
+    return {"resultCode": "success", "result": {"etfItemList": [row(code) for code in codes]}}
+
+
+def response(data=None, *, status=200, codec="cp949"):
+    data = catalog() if data is None else data
+    return SimpleNamespace(status_code=status, content=json.dumps(data, ensure_ascii=False).encode(codec))
 
 
 class KoreanEtfUniverseTests(unittest.TestCase):
-    def test_walks_page_numbers_and_short_nonterminal_pages_until_has_next_is_false(self):
-        # A short page is not evidence of completion: only hasNext/totalCount
-        # establish that every candidate was collected, including later pages.
-        pages = [response(0, ["111111", "225040"], 5, True),
-                 response(1, ["418660"], 5, True),
-                 response(2, ["409820", "0167A0"], 5, False)]
-        with patch("src.main.requests.get", side_effect=pages) as request, patch("src.main.time.sleep"):
+    def test_whole_cp949_inventory_preserves_all_rows_names_and_alphanumeric_codes(self):
+        with patch("src.main.requests.get", return_value=response()) as request:
             result = get_kr_etf_universe()
-        self.assertEqual(set(result), {"111111", "225040", "418660", "409820", "0167A0"})
-        self.assertEqual([call.kwargs["params"]["index"] for call in request.call_args_list], [0, 1, 2])
-        self.assertTrue(all(call.kwargs["params"]["size"] == 100 for call in request.call_args_list))
+        self.assertEqual(len(result), 1188)
+        self.assertIn("0167A0", result)
+        self.assertIn("101183", result)
+        request.assert_called_once_with("https://finance.naver.com/api/sise/etfItemList.nhn",
+                                        headers=unittest.mock.ANY, timeout=20)
         for code, name in FUNDS.items():
             self.assertEqual(result[code]["name"], name)
             self.assertTrue(result[code]["is_etf"])
-            self.assertEqual(result[code]["aum"], .05)
-            self.assertEqual(result[code]["investment_area"], "해외주식")
+            self.assertEqual(result[code]["mcap"], .05)
+            self.assertIsNone(result[code]["aum"])
 
-    def test_recovers_transient_failure_without_skipping_the_failed_page(self):
-        pages = [response(0, ["225040"], 2, True),
-                 response(1, [], 2, False, status=503),
-                 response(1, ["418660"], 2, False)]
-        with patch("src.main.requests.get", side_effect=pages) as request, patch("src.main.time.sleep"):
+    def test_also_decodes_utf8_without_corrupting_korean_names(self):
+        with patch("src.main.requests.get", return_value=response(codec="utf-8")):
+            self.assertEqual(get_kr_etf_universe()["409820"]["name"], FUNDS["409820"])
+
+    def test_recovers_transient_failure_by_retrying_the_entire_inventory(self):
+        with patch("src.main.requests.get", side_effect=[response(status=503), response()]) as request, \
+                patch("src.main.time.sleep"):
             result = get_kr_etf_universe()
-        self.assertEqual(set(result), {"225040", "418660"})
-        self.assertEqual([call.kwargs["params"]["index"] for call in request.call_args_list], [0, 1, 1])
+        self.assertEqual(len(result), 1188)
+        self.assertEqual(request.call_count, 2)
+        self.assertTrue(all("params" not in call.kwargs for call in request.call_args_list))
 
-    def test_deduplicates_overlapping_pages_when_the_final_unique_count_is_complete(self):
-        with (patch("src.main.requests.get", side_effect=[
-                response(0, ["225040", "418660"], 3, True),
-                response(1, ["418660", "409820"], 3, False)]),
-              patch("src.main.time.sleep")):
-            self.assertEqual(set(get_kr_etf_universe()), set(FUNDS))
-
-    def test_partial_last_page_is_retried_then_rejected_instead_of_silently_omitting_funds(self):
-        pages = [response(0, ["225040"], 3, True)] + [response(1, ["418660"], 3, False)] * 3
-        with patch("src.main.requests.get", side_effect=pages) as request, patch("src.main.time.sleep"):
-            with self.assertRaisesRegex(RuntimeError, r"page=1.*1.*3.*incomplete: 2/3"):
-                get_kr_etf_universe()
-        self.assertEqual(request.call_count, 4)
-
-    def test_repeated_page_with_no_new_security_is_bounded_and_rejected(self):
-        pages = [response(0, ["225040"], 3, True)] + [response(1, ["225040"], 3, True)] * 3
-        with patch("src.main.requests.get", side_effect=pages) as request, patch("src.main.time.sleep"):
-            with self.assertRaisesRegex(RuntimeError, "without progress"):
-                get_kr_etf_universe()
-        self.assertEqual(request.call_count, 4)
-
-    def test_wrong_page_or_changed_total_is_not_accepted_as_a_complete_universe(self):
-        for bad in (response(0, ["418660"], 2, False), response(1, ["418660"], 3, True)):
-            with self.subTest(bad=bad.json()), patch("src.main.requests.get", side_effect=[
-                    response(0, ["225040"], 2, True), bad, bad, bad]), patch("src.main.time.sleep"):
-                with self.assertRaisesRegex(RuntimeError, "page index or total count changed"):
-                    get_kr_etf_universe()
-
-    def test_invalid_metadata_or_rows_receive_only_three_attempts(self):
-        valid = response(0, ["225040"], 1, False).json()
-        changes = [{"hasNext": "false"}, {"totalCount": True}, {"index": "wrong"},
-                   {"items": None}, {"items": [row("bad")]},
-                   {"items": [row("225040"), row("225040")]},
-                   {"items": [], "hasNext": True}]
-        for change in changes:
-            bad = SimpleNamespace(status_code=200, json=lambda value=dict(valid, **change): value)
-            with self.subTest(change=change), patch("src.main.requests.get", return_value=bad) as request, \
+    def test_empty_or_100_or_300_row_inventory_is_retried_and_never_returned(self):
+        for size in (0, 100, 300):
+            bad = catalog([f"{i:06d}" for i in range(size)])
+            with self.subTest(size=size), patch("src.main.requests.get", return_value=response(bad)) as request, \
                     patch("src.main.time.sleep"):
-                with self.assertRaisesRegex(RuntimeError, "page=0"):
+                with self.assertRaisesRegex(RuntimeError, "inventory is incomplete"):
                     get_kr_etf_universe()
                 self.assertEqual(request.call_count, 3)
 
-    def test_empty_verified_inventory_is_distinct_from_an_incomplete_response(self):
-        with patch("src.main.requests.get", return_value=response(0, [], 0, False)) as request:
-            self.assertEqual(get_kr_etf_universe(), {})
-        request.assert_called_once()
-
-    def test_page_safety_limit_prevents_an_unbounded_provider_loop(self):
-        def many_pages(*args, **kwargs):
-            index = kwargs["params"]["index"]
-            return response(index, [f"{index:06d}"], 10000, True)
-        with patch("src.main.requests.get", side_effect=many_pages) as request, patch("src.main.time.sleep"):
-            with self.assertRaisesRegex(RuntimeError, "페이지 안전 한도 초과"):
+    def test_duplicate_codes_are_rejected_even_when_the_array_is_large(self):
+        data = catalog()
+        data["result"]["etfItemList"][-1] = row("225040")
+        with patch("src.main.requests.get", return_value=response(data)) as request, patch("src.main.time.sleep"):
+            with self.assertRaisesRegex(RuntimeError, "invalid or duplicate"):
                 get_kr_etf_universe()
-        self.assertEqual(request.call_count, 100)
+        self.assertEqual(request.call_count, 3)
+
+    def test_malformed_metadata_and_every_bad_row_are_rejected(self):
+        bad_data = [{}, {"resultCode": "error"}, {"resultCode": "success", "result": {"etfItemList": None}},
+                    {"items": [row("225040")], "hasNext": True, "totalCount": 1188}]
+        for bad_row in (None, row("bad"), row("123 45"), row("225040", "   "),
+                        {"itemcode": "101183", "itemname": None}):
+            data = catalog()
+            data["result"]["etfItemList"][-1] = bad_row
+            bad_data.append(data)
+        for data in bad_data:
+            with self.subTest(data=str(data)[:100]), patch("src.main.requests.get", return_value=response(data)) as request, \
+                    patch("src.main.time.sleep"):
+                with self.assertRaisesRegex(RuntimeError, "한국 ETF 전체 목록 수집 실패"):
+                    get_kr_etf_universe()
+                self.assertEqual(request.call_count, 3)
+
+    def test_invalid_json_and_persistent_http_failures_are_bounded(self):
+        for bad in (SimpleNamespace(status_code=200, content=b"<html>unavailable</html>"), response(status=404)):
+            with self.subTest(status=bad.status_code), patch("src.main.requests.get", return_value=bad) as request, \
+                    patch("src.main.time.sleep"):
+                with self.assertRaisesRegex(RuntimeError, "한국 ETF 전체 목록 수집 실패"):
+                    get_kr_etf_universe()
+                self.assertEqual(request.call_count, 3)
+
+    def test_market_cap_units_are_not_misrepresented_as_raw_won_aum(self):
+        data = catalog()
+        data["result"]["etfItemList"][0]["marketSum"] = "205,525"
+        data["result"]["etfItemList"][1]["marketSum"] = None
+        with patch("src.main.requests.get", return_value=response(data)):
+            result = get_kr_etf_universe()
+        self.assertEqual(result["225040"]["mcap"], 20.5525)
+        self.assertIsNone(result["225040"]["aum"])
+        self.assertIsNone(result["418660"]["mcap"])
+
+    def test_late_malformed_row_is_not_silently_skipped(self):
+        data = catalog()
+        data["result"]["etfItemList"][-1] = {"itemcode": "101183"}
+        with patch("src.main.requests.get", return_value=response(data)), patch("src.main.time.sleep"):
+            with self.assertRaisesRegex(RuntimeError, "invalid or duplicate"):
+                get_kr_etf_universe()
 
     def test_all_three_leveraged_funds_enter_general_cagr_comparison_without_ath_exceptions(self):
-        with patch("src.main.requests.get", side_effect=[
-                response(0, ["225040"], 3, True), response(1, ["418660"], 3, True),
-                response(2, ["409820"], 3, False)]), patch("src.main.time.sleep"):
+        with patch("src.main.requests.get", return_value=response(catalog(list(FUNDS)))), \
+                patch("src.main._KR_ETF_CATALOG_MINIMUM", 3):
             universe = get_kr_etf_universe()
         starts = {"225040": date(2015, 7, 29), "418660": date(2022, 2, 22),
                   "409820": date(2021, 12, 9)}
