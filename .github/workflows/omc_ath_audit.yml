@@ -1,0 +1,24 @@
+name: OMC ATH price audit
+on:
+  push:
+    branches: [codex/omc-ath-audit-20261119]
+    paths: ['tools/omc_ath_audit.py', '.github/workflows/omc_ath_audit.yml']
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python -m tools.omc_ath_audit
+      - uses: actions/upload-artifact@v4
+        with:
+          name: omc-ath-verification
+          path: work/omc-ath-audit.json
+          retention-days: 14
